@@ -25,7 +25,7 @@ setup(
     install_requires=[
         "openai>=1.59.6",
         "anthropic>=0.42.0",
-        "google-genai>=0.4.0",
+        "google-generativeai>=0.4.0",
         "mistralai>=1.2.6",
     ],
 )

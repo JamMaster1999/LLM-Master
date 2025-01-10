@@ -5,6 +5,7 @@ import google.generativeai as genai
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
 import logging
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
