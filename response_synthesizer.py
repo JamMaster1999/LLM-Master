@@ -105,19 +105,7 @@ class QueryLLM:
                         stream=False
                     )
 
-                    # Special handling for Gemini's None response (likely content policy violation)
-                    if response is None and 'gemini' in model_name.lower() and fallback_provider and fallback_model:
-                        logger.info("Gemini returned None response - likely content policy violation. Switching to fallback immediately.")
-                        return self.query(
-                            model_name=fallback_model,
-                            messages=messages,
-                            stream=False,
-                            fallback_provider=None,  # Prevent nested fallbacks
-                            fallback_model=None,
-                            moderation=False
-                        )
-                    
-                    # Regular None response check
+                    # Add error checking for response type
                     if response is None:
                         raise LLMError("Provider returned None response")
 
@@ -144,23 +132,20 @@ class QueryLLM:
                         # If no usage info is available, we just return the raw response
                         return response
 
-                except Exception as e:
-                    # Get status code if available
-                    status_code = getattr(e, 'status_code', None)
+                except ProviderError as e:
+                    if getattr(e, 'status_code', None) == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                        logger.info(f"Content policy violation detected. Switching to fallback model: {fallback_model}")
+                        return self.query(
+                            model_name=fallback_model,
+                            messages=messages,
+                            stream=False,
+                            fallback_provider=None,  # Prevent nested fallbacks
+                            fallback_model=None,
+                            moderation=False
+                        )
                     
-                    # Enhanced error logging
-                    error_details = {
-                        'error_type': type(e).__name__,
-                        'error_msg': str(e),
-                        'status_code': status_code,
-                        'provider': provider.__class__.__name__,
-                        'model': model_name
-                    }
-                    
-                    logger.error(f"Provider error details: {error_details}")
-                    
+                    # For other provider errors, continue with normal retry logic
                     retry_count += 1
-                    # Report only the first error
                     if retry_count == 1:
                         self._report_error(e)
 

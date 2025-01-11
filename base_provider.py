@@ -138,7 +138,14 @@ class UnifiedProvider(BaseLLMProvider):
                 **kwargs
             )
             
+            # Check for Gemini content policy violation
             if self.provider == "gemini":
+                if not response or not response.choices or not response.choices[0].message:
+                    raise ProviderError(
+                        "Gemini content policy violation detected",
+                        status_code="CONTENT_POLICY"
+                    )
+                
                 # Initialize Gemini model for token counting
                 gemini_model = genai.GenerativeModel(f"models/{model}")
                 
