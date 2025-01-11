@@ -132,20 +132,18 @@ class QueryLLM:
                         # If no usage info is available, we just return the raw response
                         return response
 
-                except AttributeError as e:
-                    # Catch specific attribute errors that indicate response format issues
-                    error_msg = f"Invalid response format: {str(e)}"
-                    logger.error(f"AttributeError: {error_msg}")
-                    self._report_error(e, error_type="AttributeError")
-                    raise LLMError(error_msg)  # Re-raise as LLMError to prevent retries
-                    
                 except Exception as e:
+                    # Get status code if available
+                    status_code = getattr(e, 'status_code', None)
+                    if status_code:
+                        logger.error(f"Error {status_code}: {str(e)}")
+                    else:
+                        logger.error(f"Error: {str(e)}")
+
                     retry_count += 1
                     # Report only the first error
                     if retry_count == 1:
-                        error_type = type(e).__name__
-                        logger.error(f"{error_type}: {str(e)}")
-                        self._report_error(e, error_type=error_type)
+                        self._report_error(e)
 
                     # If out of retries but we have fallback
                     if retry_count > self.MAX_RETRIES and fallback_provider and fallback_model:
@@ -161,13 +159,13 @@ class QueryLLM:
                             )
                             return fallback_response
                         except Exception as fallback_e:
-                            error_type = type(fallback_e).__name__
-                            self._report_error(fallback_e, error_type=error_type)
-                            raise LLMError(f"Both primary and fallback providers failed: {error_type} - {str(fallback_e)}")
+                            self._report_error(fallback_e)
+                            raise LLMError("Both primary and fallback providers failed")
 
                     elif retry_count > self.MAX_RETRIES:
-                        error_type = type(e).__name__
-                        raise LLMError(f"Max retries exceeded. {error_type}: {str(e)}")
+                        status = getattr(e, 'status_code', '')
+                        status_str = f" ({status})" if status else ""
+                        raise LLMError(f"Max retries exceeded. Error{status_str}: {str(e)}")
 
                 finally:
                     logger.info(f"Total time: {time.time() - start_time:.2f}s")
@@ -289,7 +287,7 @@ class QueryLLM:
                     'function': function
                 }
             )
-            logger.error(f'Error: {error_msg}')  # Changed to error level for better visibility
+            logger.info(f'Error: {error_msg}; has been recorded in database')
         except Exception as e:
             logger.error(f"Failed to report error: {str(e)}")
 
