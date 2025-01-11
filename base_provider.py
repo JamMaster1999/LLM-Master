@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 class ProviderError(Exception):
     """Base exception for provider-related errors"""
-    pass
+    def __init__(self, message: str, status_code: Optional[str] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 class ConfigurationError(ProviderError):
     """Raised when there's an issue with provider configuration"""
