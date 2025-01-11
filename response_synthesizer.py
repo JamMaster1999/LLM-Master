@@ -20,7 +20,7 @@ class ImageFormatError(LLMError):
 class QueryLLM:
     """Main class for handling LLM interactions with retry logic and fallbacks"""
 
-    SUPPORTED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    SUPPORTED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp']
     ERROR_REPORTING_URL = 'https://xh9i-rdvs-rnon.n7c.xano.io/api:9toeBRNq/error_logs'
     MAX_RETRIES = 3
 
@@ -105,16 +105,19 @@ class QueryLLM:
                         stream=False
                     )
 
-                    # Add explicit check for Gemini content policy violation
-                    if hasattr(response, 'candidates') and response.candidates:
-                        finish_reason = response.candidates[0].finish_reason
-                        if finish_reason == 4:  # Content policy violation
-                            raise ProviderError(
-                                "Content policy violation: The model detected copyrighted material",
-                                status_code="CONTENT_POLICY"
-                            )
-
-                    # Add error checking for response type
+                    # Special handling for Gemini's None response (likely content policy violation)
+                    if response is None and 'gemini' in model_name.lower() and fallback_provider and fallback_model:
+                        logger.info("Gemini returned None response - likely content policy violation. Switching to fallback immediately.")
+                        return self.query(
+                            model_name=fallback_model,
+                            messages=messages,
+                            stream=False,
+                            fallback_provider=None,  # Prevent nested fallbacks
+                            fallback_model=None,
+                            moderation=False
+                        )
+                    
+                    # Regular None response check
                     if response is None:
                         raise LLMError("Provider returned None response")
 
