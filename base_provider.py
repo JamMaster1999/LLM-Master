@@ -31,7 +31,7 @@ class UnifiedProvider(BaseLLMProvider):
         },
         "gemini": {
             "client_class": OpenAI,
-            "base_url": None,
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key_attr": "gemini_api_key",
             "supports_caching": False
         },
