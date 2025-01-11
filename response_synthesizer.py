@@ -311,6 +311,8 @@ class QueryLLM:
 
         text = message.get('text')
         image_paths = message.get('image_paths', [])
+        # Get image details if provided, default all to high if not specified
+        image_details = message.get('image_details', ['auto'] * len(image_paths))
 
         if not image_paths:
             return {"role": message["role"], "content": text}
@@ -319,7 +321,7 @@ class QueryLLM:
         if text:
             content.append({"type": "text", "text": text})
 
-        for path in image_paths:
+        for path, detail in zip(image_paths, image_details):
             try:
                 base64_image = encode_image(path)
                 mime_type = f"image/{Path(path).suffix.lower()[1:]}"
@@ -343,11 +345,16 @@ class QueryLLM:
                     })
                 else:
                     # OpenAI/Gemini format
+                    image_data = {
+                        "url": f"data:{mime_type};base64,{base64_image}"
+                    }
+                    # Only add detail for OpenAI provider
+                    if isinstance(provider, UnifiedProvider) and provider.provider == "openai":
+                        image_data["detail"] = detail
+                    
                     content.append({
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{base64_image}"
-                        }
+                        "image_url": image_data
                     })
             except Exception as e:
                 logger.error(f"Error formatting image {path}: {str(e)}")
