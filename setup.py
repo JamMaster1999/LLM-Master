@@ -27,5 +27,6 @@ setup(
         "anthropic>=0.42.0",
         "google-generativeai>=0.4.0",
         "mistralai>=1.2.6",
+        "requests>=2.31.0",
     ],
 )

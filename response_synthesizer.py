@@ -298,35 +298,82 @@ class QueryLLM:
     def _format_message(self, message: Dict[str, Any], provider) -> Dict[str, Any]:
         """Helper function to format entire message content with text and/or images"""
 
-        def encode_image(image_path: str) -> str:
-            path_obj = Path(image_path)
+        def encode_image(image_input: str) -> str:
+            # If input is already base64
+            if isinstance(image_input, str) and image_input.startswith('data:image/'):
+                return image_input.split(',')[1]
+            if isinstance(image_input, str) and ';base64,' in image_input:
+                return image_input
+
+            # If input is a URL
+            if isinstance(image_input, str) and any(image_input.startswith(prefix) 
+                for prefix in ['http://', 'https://']):
+                try:
+                    response = requests.get(image_input, timeout=10)
+                    response.raise_for_status()
+                    return base64.b64encode(response.content).decode('utf-8')
+                except Exception as e:
+                    raise ImageFormatError(f"Failed to fetch image from URL {image_input}: {str(e)}")
+            
+            # Otherwise treat as file path
+            path_obj = Path(image_input)
             if not path_obj.exists():
                 raise ImageFormatError(f"Image file not found: {path_obj}")
             with open(path_obj, "rb") as image_file:
                 return base64.b64encode(image_file.read()).decode('utf-8')
+
+        def get_mime_type(image_input: str) -> str:
+            """Helper to determine mime type from various input formats"""
+            if isinstance(image_input, str):
+                # From data URI
+                if image_input.startswith('data:image/'):
+                    mime_type = image_input.split(';')[0].split('/')[1]
+                # From URL
+                elif any(image_input.startswith(prefix) for prefix in ['http://', 'https://']):
+                    try:
+                        response = requests.head(image_input, timeout=5)
+                        content_type = response.headers.get('content-type', '')
+                        if content_type.startswith('image/'):
+                            mime_type = content_type.split('/')[1]
+                        else:
+                            # Fallback to extension if content-type is not helpful
+                            mime_type = Path(image_input).suffix.lower()[1:]
+                    except:
+                        # Fallback to extension if request fails
+                        mime_type = Path(image_input).suffix.lower()[1:]
+                # From file path
+                else:
+                    mime_type = Path(image_input).suffix.lower()[1:]
+            else:
+                mime_type = 'png'  # Default fallback
+            
+            # Normalize jpg to jpeg
+            if mime_type == 'jpg':
+                mime_type = 'jpeg'
+            
+            return f"image/{mime_type}"
 
         # If already has 'content', assume it's well-structured
         if 'content' in message:
             return message
 
         text = message.get('text')
-        image_paths = message.get('image_paths', [])
-        # Get image details if provided, default all to high if not specified
-        image_details = message.get('image_details', ['auto'] * len(image_paths))
+        # Support image_paths, direct base64 images, and URLs
+        images = message.get('image_paths', message.get('images', []))
+        image_details = message.get('image_details', ['auto'] * len(images))
 
-        if not image_paths:
+        if not images:
             return {"role": message["role"], "content": text}
 
         content = []
         if text:
             content.append({"type": "text", "text": text})
 
-        for path, detail in zip(image_paths, image_details):
+        for img, detail in zip(images, image_details):
             try:
-                base64_image = encode_image(path)
-                mime_type = f"image/{Path(path).suffix.lower()[1:]}"
-                if mime_type == "image/jpg":
-                    mime_type = "image/jpeg"
+                base64_image = encode_image(img)
+                mime_type = get_mime_type(img)
+                
                 if mime_type not in self.SUPPORTED_MIME_TYPES:
                     raise ImageFormatError(
                         f"Unsupported image type: {mime_type}. "
@@ -357,8 +404,8 @@ class QueryLLM:
                         "image_url": image_data
                     })
             except Exception as e:
-                logger.error(f"Error formatting image {path}: {str(e)}")
-                raise ImageFormatError(f"Failed to format image {path}: {str(e)}")
+                logger.error(f"Error formatting image {img}: {str(e)}")
+                raise ImageFormatError(f"Failed to format image {img}: {str(e)}")
 
         return {"role": message["role"], "content": content}
 
