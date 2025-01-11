@@ -105,6 +105,15 @@ class QueryLLM:
                         stream=False
                     )
 
+                    # Add explicit check for Gemini content policy violation
+                    if hasattr(response, 'candidates') and response.candidates:
+                        finish_reason = response.candidates[0].finish_reason
+                        if finish_reason == 4:  # Content policy violation
+                            raise ProviderError(
+                                "Content policy violation: The model detected copyrighted material",
+                                status_code="CONTENT_POLICY"
+                            )
+
                     # Add error checking for response type
                     if response is None:
                         raise LLMError("Provider returned None response")
@@ -135,11 +144,18 @@ class QueryLLM:
                 except Exception as e:
                     # Get status code if available
                     status_code = getattr(e, 'status_code', None)
-                    if status_code:
-                        logger.error(f"Error {status_code}: {str(e)}")
-                    else:
-                        logger.error(f"Error: {str(e)}")
-
+                    
+                    # Enhanced error logging
+                    error_details = {
+                        'error_type': type(e).__name__,
+                        'error_msg': str(e),
+                        'status_code': status_code,
+                        'provider': provider.__class__.__name__,
+                        'model': model_name
+                    }
+                    
+                    logger.error(f"Provider error details: {error_details}")
+                    
                     retry_count += 1
                     # Report only the first error
                     if retry_count == 1:
