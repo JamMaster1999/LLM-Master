@@ -51,11 +51,15 @@ class QueryLLM:
             self._format_message(msg, provider) for msg in request["messages"]
         ]
         
+        # Get kwargs and remove moderation flag if present
+        kwargs = request.get("kwargs", {}).copy()
+        kwargs.pop("moderation", None)  # Remove moderation flag if present
+        
         # Call the provider using async generate
         response = await provider.generate(
             messages=formatted_messages,
             model=model_name,
-            **request.get("kwargs", {})
+            **kwargs
         )
         
         # Track usage if available
