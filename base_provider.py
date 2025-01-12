@@ -57,9 +57,8 @@ class UnifiedProvider(BaseLLMProvider):
         self.rate_limiters = {}
         for model_name, model_config in ModelRegistry.CONFIGS.items():
             self.rate_limiters[model_name] = RateLimiter(
-                model_config,
-                queue_name=f"llm_queue_{model_name}",
-                dict_name=f"llm_dict_{model_name}"
+                model_config=model_config,
+                model_name=model_name
             )
         
         # Initialize provider client

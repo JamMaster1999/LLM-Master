@@ -60,7 +60,7 @@ class QueryLLM:
         
         # Track usage if available
         if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-            self._rate_limiters[model_name].add_token_usage(
+            await self._rate_limiters[model_name].add_token_usage(
                 provider.last_usage.input_tokens + provider.last_usage.output_tokens
             )
             
@@ -104,15 +104,6 @@ class QueryLLM:
                 # Wait for rate limit capacity
                 await rate_limiter.wait_for_capacity()
                 
-                # Submit request and get response
-                request_id = await rate_limiter.submit_request({
-                    "messages": messages,
-                    "kwargs": {
-                        "stream": stream,
-                        "moderation": moderation
-                    }
-                })
-                
                 # Process the request
                 response = await self._process_request(model_name, {
                     "messages": messages,
@@ -121,9 +112,6 @@ class QueryLLM:
                         "moderation": moderation
                     }
                 })
-                
-                # Store response
-                rate_limiter.store_response(request_id, response)
                 
                 # Calculate and set latency
                 response.latency = time.time() - start_time

@@ -326,7 +326,7 @@ class RateLimiter:
         """Store response for a request"""
         self.response_dict[request_id] = response
         
-    def add_token_usage(self, tokens: int):
+    async def add_token_usage(self, tokens: int):
         """Track token usage"""
         if "token_usage" not in self.rate_dict:
             self.rate_dict["token_usage"] = 0
