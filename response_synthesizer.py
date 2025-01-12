@@ -112,17 +112,17 @@ class QueryLLM:
                 if retry_count > 0:
                     await asyncio.sleep(2 ** (retry_count - 1))
 
-                # Submit request to queue and get request ID
-                request_id = await rate_limiter.submit_request({
+                # Wait for rate limit capacity
+                await rate_limiter.wait_for_capacity()
+                
+                # Process the request directly
+                response = await self._process_request(model_name, {
                     "messages": messages,
                     "kwargs": {
                         "stream": stream,
                         "moderation": moderation
                     }
                 })
-                
-                # Wait for response
-                response = await rate_limiter.wait_for_response(request_id)
                 
                 # Calculate and set latency
                 response.latency = time.time() - start_time
