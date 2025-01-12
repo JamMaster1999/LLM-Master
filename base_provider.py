@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Union, Generator, Optional
 from openai import OpenAI
 from mistralai import Mistral
 import google.generativeai as genai
-from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, CONFIGS
+from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, ModelRegistry
 from .config import LLMConfig
 import logging
 import os
@@ -55,7 +55,7 @@ class UnifiedProvider(BaseLLMProvider):
         
         # Initialize rate limiters for each model
         self.rate_limiters = {}
-        for model_name, model_config in CONFIGS.items():
+        for model_name, model_config in ModelRegistry.CONFIGS.items():
             self.rate_limiters[model_name] = RateLimiter(
                 model_config,
                 queue_name=f"llm_queue_{model_name}",
