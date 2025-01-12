@@ -255,23 +255,34 @@ class RateLimiter:
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
             
+        logger.info(f"Initialized RateLimiter for {model_name} with rate limit of {model_config.rate_limit_rpm} requests/minute")
+            
     def _cleanup_old_requests(self):
         """Remove requests older than 1 minute"""
         import time
         current_time = time.time()
         timestamps = self.rate_dict["request_timestamps"]
+        old_count = len(timestamps)
         self.rate_dict["request_timestamps"] = [ts for ts in timestamps if current_time - ts < 60]
+        new_count = len(self.rate_dict["request_timestamps"])
+        if old_count != new_count:
+            logger.info(f"Cleaned up {old_count - new_count} old requests for {self.model_name}")
         
     async def can_make_request(self) -> bool:
         """Check if we can make a request based on rate limits"""
         self._cleanup_old_requests()
         timestamps = self.rate_dict["request_timestamps"]
-        return len(timestamps) < self.model_config.rate_limit_rpm
+        can_request = len(timestamps) < self.model_config.rate_limit_rpm
+        if not can_request:
+            logger.info(f"Rate limit reached for {self.model_name}: {len(timestamps)}/{self.model_config.rate_limit_rpm} requests in last minute")
+        return can_request
         
     async def wait_for_capacity(self):
         """Wait until there is capacity to make a request"""
         while not await self.can_make_request():
+            logger.info(f"Waiting for capacity on {self.model_name}...")
             await asyncio.sleep(1)  # Wait a second before checking again
+        logger.info(f"Capacity available for {self.model_name}")
             
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
@@ -289,6 +300,9 @@ class RateLimiter:
         timestamps.append(time.time())
         self.rate_dict["request_timestamps"] = timestamps
         
+        queue_size = len(self.request_dict)
+        logger.info(f"Submitted request {request_id[:8]} to {self.model_name}. Queue size: {queue_size}")
+        
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
@@ -301,6 +315,7 @@ class RateLimiter:
                 del self.response_dict[request_id]  # Cleanup
                 if request_id in self.request_dict:
                     del self.request_dict[request_id]  # Cleanup request too
+                logger.info(f"Got response for request {request_id[:8]} from {self.model_name}")
                 return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
@@ -316,6 +331,7 @@ class RateLimiter:
                     # Get actual request data from Dict
                     if request_id in self.request_dict:
                         request = self.request_dict[request_id]
+                        logger.info(f"Processing request {request_id[:8]} from {self.model_name} queue")
                         return request_id, request
                     
                 except TimeoutError:
@@ -325,6 +341,7 @@ class RateLimiter:
     def store_response(self, request_id: str, response: Any):
         """Store response for a request"""
         self.response_dict[request_id] = response
+        logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")
         
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
@@ -332,3 +349,4 @@ class RateLimiter:
             self.rate_dict["token_usage"] = 0
         current_usage = self.rate_dict["token_usage"]
         self.rate_dict["token_usage"] = current_usage + tokens
+        logger.info(f"Added {tokens} tokens to {self.model_name}. Total usage: {current_usage + tokens}")
