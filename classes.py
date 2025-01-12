@@ -9,6 +9,13 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+# Initialize the lock queue for rate limiting
+lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
+
+# Ensure exactly one lock token exists
+if lock_queue.size() == 0:
+    lock_queue.put("LOCK_TOKEN")
+
 class LLMError(Exception):
     """Base exception for LLM-related errors"""
     pass
@@ -236,7 +243,7 @@ class ResponseSynthesizer:
         return self._providers[provider_key]
 
 class RateLimiter:
-    """Distributed rate limiter using Modal Queue and Dict for request-response handling"""
+    """Distributed rate limiter using a lock queue plus timestamp-based checking."""
     def __init__(self, model_config: ModelConfig, model_name: str):
         self.model_config = model_config
         self.model_name = model_name
@@ -254,71 +261,78 @@ class RateLimiter:
         # Initialize rate tracking
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
-
-    @staticmethod
-    def _attempt_add_timestamp_atomic(data: Dict[str, Any], rpm_limit: int) -> bool:
-        """Helper function to atomically update rate limit data
-        
-        Args:
-            data: Dictionary containing request_timestamps
-            rpm_limit: Maximum requests per minute allowed
-            
-        Returns:
-            bool: True if timestamp was added, False if at limit
+    
+    async def wait_for_capacity(self):
+        """
+        Acquire our distributed 'lock_queue' to ensure 
+        read/check/write is atomic. We'll loop until capacity is found.
         """
         import time
-        now = time.time()
-
-        # Grab the timestamps from data
-        timestamps = data.get("request_timestamps", [])
         
-        # 1) Prune old timestamps
-        timestamps = [ts for ts in timestamps if now - ts < 60]
-
-        # 2) Check capacity
-        if len(timestamps) < rpm_limit:
-            # 3) Append new timestamp
-            timestamps.append(now)
-            data["request_timestamps"] = timestamps
-            return True
-        else:
-            # No capacity, but still update pruned timestamps
-            data["request_timestamps"] = timestamps
-            return False
-
-    async def wait_for_capacity(self):
-        """Wait until there is capacity to make a request, using an atomic update."""
         first_wait = True
         while True:
-            # Run the helper function in a single, atomic transaction
-            appended = await self.rate_dict.update(
-                None,  # No specific key, we want the entire dict
-                lambda data: self._attempt_add_timestamp_atomic(data, self.model_config.rate_limit_rpm)
-            )
+            # 1) Acquire the lock
+            await lock_queue.get()
+            try:
+                # 2) Read timestamps
+                timestamps = self.rate_dict["request_timestamps"]
+                
+                # 3) Prune old
+                now = time.time()
+                timestamps = [ts for ts in timestamps if now - ts < 60]
+                
+                # 4) Check capacity
+                if len(timestamps) < self.model_config.rate_limit_rpm:
+                    # We have capacity => append
+                    timestamps.append(now)
+                    self.rate_dict["request_timestamps"] = timestamps
+
+                    # Log if we had to wait
+                    if not first_wait:
+                        logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                    
+                    return  # Done
+                else:
+                    # No capacity => must wait
+                    if first_wait:
+                        logger.info(
+                            f"Rate limit reached for {self.model_name} "
+                            f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                        )
+                        first_wait = False
+            finally:
+                # 5) Release the lock so other tasks can check
+                await lock_queue.put("LOCK_TOKEN")
             
-            if appended:
-                # We succeeded in adding a timestamp => we have capacity
-                if not first_wait:
-                    logger.info(f"Capacity available for {self.model_name}, resuming processing")
-                return
-            else:
-                # We are at capacity
-                if first_wait:
-                    current_len = len(self.rate_dict["request_timestamps"])
-                    logger.info(
-                        f"Rate limit reached for {self.model_name} "
-                        f"({current_len}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
-                    )
-                    first_wait = False
-                await asyncio.sleep(1)
+            # Wait a second before re-checking
+            await asyncio.sleep(1)
 
     async def can_make_request(self) -> bool:
-        """Check if we can make a request based on rate limits, using atomic update."""
-        return await self.rate_dict.update(
-            None,
-            lambda data: self._attempt_add_timestamp_atomic(data, self.model_config.rate_limit_rpm)
-        )
+        """
+        Do the same logic, but return True/False immediately 
+        instead of blocking until capacity.
+        """
+        import time
         
+        # Acquire the lock
+        await lock_queue.get()
+        try:
+            timestamps = self.rate_dict["request_timestamps"]
+            now = time.time()
+            timestamps = [ts for ts in timestamps if now - ts < 60]
+            
+            if len(timestamps) < self.model_config.rate_limit_rpm:
+                # Append now
+                timestamps.append(now)
+                self.rate_dict["request_timestamps"] = timestamps
+                return True
+            else:
+                # Update pruned timestamps even when at capacity
+                self.rate_dict["request_timestamps"] = timestamps
+                return False
+        finally:
+            await lock_queue.put("LOCK_TOKEN")
+
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
         if "token_usage" not in self.rate_dict:
