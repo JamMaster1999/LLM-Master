@@ -264,17 +264,18 @@ class RateLimiter:
         
         # Get current state
         timestamps = self.rate_dict["request_timestamps"]
+        old_count = len(timestamps)
         
         # Filter old timestamps
         new_timestamps = [ts for ts in timestamps if current_time - ts < 60]
+        new_count = len(new_timestamps)
         
-        # Update atomically
-        self.rate_dict["request_timestamps"] = new_timestamps
-        self.rate_dict["request_count"] = len(new_timestamps)
-        
-        if len(timestamps) != len(new_timestamps):
-            logger.info(f"Cleaned up {len(timestamps) - len(new_timestamps)} old requests for {self.model_name}")
-        
+        # Only update and log if there's a change
+        if old_count != new_count:
+            self.rate_dict["request_timestamps"] = new_timestamps
+            self.rate_dict["request_count"] = new_count
+            logger.debug(f"Cleaned up {old_count - new_count} old requests for {self.model_name}")
+            
     async def can_make_request(self) -> bool:
         """Check if we can make a request based on rate limits"""
         self._cleanup_old_requests()
@@ -288,7 +289,8 @@ class RateLimiter:
         first_wait = True
         while not await self.can_make_request():
             if first_wait:
-                logger.info(f"Rate limit reached for {self.model_name}. Waiting for capacity...")
+                current_count = self.rate_dict["request_count"]
+                logger.info(f"Rate limit reached for {self.model_name} ({current_count}/{self.model_config.rate_limit_rpm}). Waiting for capacity...")
                 first_wait = False
             await asyncio.sleep(1)  # Wait a second before checking again
         
@@ -299,10 +301,8 @@ class RateLimiter:
         self.rate_dict["request_timestamps"] = timestamps
         self.rate_dict["request_count"] = current_count + 1
         
-        # if first_wait:  # Only log if we didn't have to wait
-        #     logger.info(f"Processing request for {self.model_name} ({current_count + 1}/{self.model_config.rate_limit_rpm} requests in window)")
-        # else:
-        #     logger.info(f"Capacity available for {self.model_name}, resuming processing")
+        if not first_wait:  # Only log if we had to wait
+            logger.info(f"Capacity available for {self.model_name}, resuming processing")
             
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
