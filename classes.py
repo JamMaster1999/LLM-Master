@@ -281,16 +281,15 @@ class RateLimiter:
         
         # Get current count atomically
         current_count = self.rate_dict["request_count"]
-        can_request = current_count < self.model_config.rate_limit_rpm
-        
-        if not can_request:
-            logger.info(f"Rate limit reached for {self.model_name}: {current_count}/{self.model_config.rate_limit_rpm} requests in last minute")
-        return can_request
+        return current_count < self.model_config.rate_limit_rpm
         
     async def wait_for_capacity(self):
         """Wait until there is capacity to make a request"""
+        first_wait = True
         while not await self.can_make_request():
-            logger.info(f"Waiting for capacity on {self.model_name}...")
+            if first_wait:
+                logger.info(f"Rate limit reached for {self.model_name}. Waiting for capacity...")
+                first_wait = False
             await asyncio.sleep(1)  # Wait a second before checking again
         
         # Increment counter and add timestamp atomically
@@ -300,7 +299,10 @@ class RateLimiter:
         self.rate_dict["request_timestamps"] = timestamps
         self.rate_dict["request_count"] = current_count + 1
         
-        logger.info(f"Capacity available for {self.model_name} (requests in last minute: {current_count + 1})")
+        # if first_wait:  # Only log if we didn't have to wait
+        #     logger.info(f"Processing request for {self.model_name} ({current_count + 1}/{self.model_config.rate_limit_rpm} requests in window)")
+        # else:
+        #     logger.info(f"Capacity available for {self.model_name}, resuming processing")
             
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
