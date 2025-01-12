@@ -251,30 +251,40 @@ class RateLimiter:
         # Dict for rate limiting
         self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{model_name}", create_if_missing=True)
         
-        # Initialize rate tracking
+        # Initialize rate tracking with atomic counter
+        if "request_count" not in self.rate_dict:
+            self.rate_dict["request_count"] = 0
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
-            
-        logger.info(f"Initialized RateLimiter for {model_name} with rate limit of {model_config.rate_limit_rpm} requests/minute")
-            
+                
     def _cleanup_old_requests(self):
-        """Remove requests older than 1 minute"""
+        """Remove requests older than 1 minute and update counter atomically"""
         import time
         current_time = time.time()
+        
+        # Get current state
         timestamps = self.rate_dict["request_timestamps"]
-        old_count = len(timestamps)
-        self.rate_dict["request_timestamps"] = [ts for ts in timestamps if current_time - ts < 60]
-        new_count = len(self.rate_dict["request_timestamps"])
-        if old_count != new_count:
-            logger.info(f"Cleaned up {old_count - new_count} old requests for {self.model_name}")
+        
+        # Filter old timestamps
+        new_timestamps = [ts for ts in timestamps if current_time - ts < 60]
+        
+        # Update atomically
+        self.rate_dict["request_timestamps"] = new_timestamps
+        self.rate_dict["request_count"] = len(new_timestamps)
+        
+        if len(timestamps) != len(new_timestamps):
+            logger.info(f"Cleaned up {len(timestamps) - len(new_timestamps)} old requests for {self.model_name}")
         
     async def can_make_request(self) -> bool:
         """Check if we can make a request based on rate limits"""
         self._cleanup_old_requests()
-        timestamps = self.rate_dict["request_timestamps"]
-        can_request = len(timestamps) < self.model_config.rate_limit_rpm
+        
+        # Get current count atomically
+        current_count = self.rate_dict["request_count"]
+        can_request = current_count < self.model_config.rate_limit_rpm
+        
         if not can_request:
-            logger.info(f"Rate limit reached for {self.model_name}: {len(timestamps)}/{self.model_config.rate_limit_rpm} requests in last minute")
+            logger.info(f"Rate limit reached for {self.model_name}: {current_count}/{self.model_config.rate_limit_rpm} requests in last minute")
         return can_request
         
     async def wait_for_capacity(self):
@@ -282,7 +292,15 @@ class RateLimiter:
         while not await self.can_make_request():
             logger.info(f"Waiting for capacity on {self.model_name}...")
             await asyncio.sleep(1)  # Wait a second before checking again
-        logger.info(f"Capacity available for {self.model_name}")
+        
+        # Increment counter and add timestamp atomically
+        current_count = self.rate_dict["request_count"]
+        timestamps = self.rate_dict["request_timestamps"]
+        timestamps.append(time.time())
+        self.rate_dict["request_timestamps"] = timestamps
+        self.rate_dict["request_count"] = current_count + 1
+        
+        logger.info(f"Capacity available for {self.model_name} (requests in last minute: {current_count + 1})")
             
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
@@ -294,11 +312,6 @@ class RateLimiter:
         
         # Only queue the request ID
         await self.request_queue.put(request_id)
-        
-        # Track this request
-        timestamps = self.rate_dict["request_timestamps"]
-        timestamps.append(time.time())
-        self.rate_dict["request_timestamps"] = timestamps
         
         queue_size = len(self.request_dict)
         logger.info(f"Submitted request {request_id[:8]} to {self.model_name}. Queue size: {queue_size}")
