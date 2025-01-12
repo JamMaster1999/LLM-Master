@@ -156,14 +156,16 @@ class BaseLLMProvider(ABC):
     """
     
     @abstractmethod
-    def generate(self, 
+    async def generate(self, 
                 messages: List[Dict[str, Any]], 
+                model: str,
                 stream: bool = False,
                 **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
         """Generate a response from the LLM
         
         Args:
             messages: List of message dictionaries
+            model: Name of the model to use
             stream: Whether to stream the response
             **kwargs: Additional provider-specific parameters
             
@@ -239,10 +241,11 @@ class RateLimiter:
         self.model_config = model_config
         self.model_name = model_name
         
-        # Queue for all requests
+        # Queue only stores request IDs for coordination
         self.request_queue = modal.Queue.from_name(f"llm_queue_{model_name}", create_if_missing=True)
         
-        # Dict for storing responses
+        # Dict stores actual request/response data
+        self.request_dict = modal.Dict.from_name(f"llm_requests_{model_name}", create_if_missing=True)
         self.response_dict = modal.Dict.from_name(f"llm_responses_{model_name}", create_if_missing=True)
         
         # Dict for rate limiting
@@ -266,10 +269,15 @@ class RateLimiter:
         return len(timestamps) < self.model_config.rate_limit_rpm
         
     async def submit_request(self, request: dict) -> str:
-        """Submit request to queue and return request ID"""
+        """Submit request and store in Dict"""
         import uuid
         request_id = str(uuid.uuid4())
-        await self.request_queue.put((request_id, request))
+        
+        # Store actual request data in Dict
+        self.request_dict[request_id] = request
+        
+        # Only queue the request ID
+        await self.request_queue.put(request_id)
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
@@ -280,6 +288,8 @@ class RateLimiter:
             if request_id in self.response_dict:
                 response = self.response_dict[request_id]
                 del self.response_dict[request_id]  # Cleanup
+                if request_id in self.request_dict:
+                    del self.request_dict[request_id]  # Cleanup request too
                 return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
@@ -289,14 +299,19 @@ class RateLimiter:
         while True:
             if await self.can_make_request():
                 try:
-                    request_id, request = await self.request_queue.get(timeout=1)
+                    # Get only the request ID from queue
+                    request_id = await self.request_queue.get(timeout=1)
                     
-                    # Track this request
-                    timestamps = self.rate_dict["request_timestamps"]
-                    timestamps.append(time.time())
-                    self.rate_dict["request_timestamps"] = timestamps
-                    
-                    return request_id, request
+                    # Get actual request data from Dict
+                    if request_id in self.request_dict:
+                        request = self.request_dict[request_id]
+                        
+                        # Track this request
+                        timestamps = self.rate_dict["request_timestamps"]
+                        timestamps.append(time.time())
+                        self.rate_dict["request_timestamps"] = timestamps
+                        
+                        return request_id, request
                     
                 except TimeoutError:
                     pass

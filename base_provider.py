@@ -128,20 +128,25 @@ class UnifiedProvider(BaseLLMProvider):
         
         return total_tokens
 
-    def generate(self, 
+    async def generate(self, 
             messages: List[Dict[str, Any]], 
+            model: str,
             stream: bool = False,
             **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
+        """Async generate method"""
         if stream:
-            return self._stream_response(messages, **kwargs)
+            return self._stream_response(messages, model=model, **kwargs)
         
+        loop = asyncio.get_event_loop()
         if self.provider in ["openai", "gemini"]:
-            model = kwargs.pop('model', None)
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=False,
-                **kwargs
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=False,
+                    **kwargs
+                )
             )
             
             # Check for Gemini content policy violation
@@ -156,10 +161,16 @@ class UnifiedProvider(BaseLLMProvider):
                 gemini_model = genai.GenerativeModel(f"models/{model}")
                 
                 # Count input tokens including images
-                input_tokens = self._count_gemini_tokens(messages, model, gemini_model)
+                input_tokens = await loop.run_in_executor(
+                    None,
+                    lambda: self._count_gemini_tokens(messages, model, gemini_model)
+                )
                 
                 # Count output tokens
-                output_count = gemini_model.count_tokens(response.choices[0].message.content)
+                output_count = await loop.run_in_executor(
+                    None,
+                    lambda: gemini_model.count_tokens(response.choices[0].message.content)
+                )
                 
                 usage = Usage(
                     input_tokens=input_tokens,
@@ -183,13 +194,14 @@ class UnifiedProvider(BaseLLMProvider):
             
             content = response.choices[0].message.content
         
-            
         else:  # mistral
-            model = kwargs.pop('model', None)
-            response = self.client.chat.complete(
-                model=model,
-                messages=messages,
-                **kwargs
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.chat.complete(
+                    model=model,
+                    messages=messages,
+                    **kwargs
+                )
             )
             
             usage = Usage(
