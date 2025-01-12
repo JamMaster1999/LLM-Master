@@ -35,12 +35,15 @@ class QueryLLM:
         self.config = config or LLMConfig.from_env()
         self._providers = {}
         self._rate_limiters = {}
+        self._background_tasks = {}
         
         # Initialize rate limiters for each model
         for model_name, model_config in ModelRegistry.CONFIGS.items():
             self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
+            # Start background processor for each model
+            self._background_tasks[model_name] = asyncio.create_task(self._process_queue(model_name))
             
-        logger.info("Initialized QueryLLM handler with rate limiters")
+        logger.info("Initialized QueryLLM handler with rate limiters and background processors")
 
     async def _process_request(self, model_name: str, request: dict) -> LLMResponse:
         """Process a single request"""
@@ -105,17 +108,17 @@ class QueryLLM:
                     logger.info(f"Retrying in {delay} seconds...")
                     await asyncio.sleep(delay)
 
-                # Wait for rate limit capacity
-                await rate_limiter.wait_for_capacity()
-                
-                # Process the request
-                response = await self._process_request(model_name, {
+                # Submit request to queue and get request ID
+                request_id = await rate_limiter.submit_request({
                     "messages": messages,
                     "kwargs": {
                         "stream": stream,
                         "moderation": moderation
                     }
                 })
+                
+                # Wait for response
+                response = await rate_limiter.wait_for_response(request_id)
                 
                 # Calculate and set latency
                 response.latency = time.time() - start_time
@@ -425,3 +428,24 @@ class QueryLLM:
         if self._providers:
             for provider in self._providers.values():
                 provider.stop_generation()
+
+    async def _process_queue(self, model_name: str):
+        """Background task to process queued requests"""
+        rate_limiter = self._rate_limiters[model_name]
+        
+        while True:
+            try:
+                # Wait for rate limit capacity
+                await rate_limiter.wait_for_capacity()
+                
+                # Get next request from queue
+                request_id, request = await rate_limiter.process_queue()
+                if request_id and request:
+                    # Process the request
+                    response = await self._process_request(model_name, request)
+                    # Store the response
+                    rate_limiter.store_response(request_id, response)
+            except Exception as e:
+                logger.error(f"Error processing queue for {model_name}: {str(e)}")
+                await asyncio.sleep(1)  # Avoid tight loop on errors
+                continue
