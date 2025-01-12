@@ -287,23 +287,30 @@ class RateLimiter:
     async def wait_for_capacity(self):
         """Wait until there is capacity to make a request"""
         first_wait = True
-        while not await self.can_make_request():
+        while True:
+            self._cleanup_old_requests()
+            
+            # Get current state atomically
+            current_count = self.rate_dict["request_count"]
+            timestamps = self.rate_dict["request_timestamps"]
+            
+            # Check if we have capacity
+            if current_count < self.model_config.rate_limit_rpm:
+                # Update state atomically
+                timestamps.append(time.time())
+                self.rate_dict["request_timestamps"] = timestamps
+                self.rate_dict["request_count"] = current_count + 1
+                
+                if not first_wait:  # Only log if we had to wait
+                    logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                return
+            
+            # No capacity, wait
             if first_wait:
-                current_count = self.rate_dict["request_count"]
                 logger.info(f"Rate limit reached for {self.model_name} ({current_count}/{self.model_config.rate_limit_rpm}). Waiting for capacity...")
                 first_wait = False
             await asyncio.sleep(1)  # Wait a second before checking again
         
-        # Increment counter and add timestamp atomically
-        current_count = self.rate_dict["request_count"]
-        timestamps = self.rate_dict["request_timestamps"]
-        timestamps.append(time.time())
-        self.rate_dict["request_timestamps"] = timestamps
-        self.rate_dict["request_count"] = current_count + 1
-        
-        if not first_wait:  # Only log if we had to wait
-            logger.info(f"Capacity available for {self.model_name}, resuming processing")
-            
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
         import uuid
