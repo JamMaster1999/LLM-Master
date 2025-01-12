@@ -300,14 +300,11 @@ class RateLimiter:
                 timestamps.append(time.time())
                 self.rate_dict["request_timestamps"] = timestamps
                 self.rate_dict["request_count"] = current_count + 1
-                
-                if not first_wait:  # Only log if we had to wait
-                    logger.info(f"Capacity available for {self.model_name}, resuming processing")
                 return
             
             # No capacity, wait
             if first_wait:
-                logger.info(f"Rate limit reached for {self.model_name} ({current_count}/{self.model_config.rate_limit_rpm}). Waiting for capacity...")
+                logger.info(f"Rate limit reached for {self.model_name} ({current_count}/{self.model_config.rate_limit_rpm})")
                 first_wait = False
             await asyncio.sleep(1)  # Wait a second before checking again
         
@@ -322,9 +319,7 @@ class RateLimiter:
         # Only queue the request ID
         await self.request_queue.put(request_id)
         
-        queue_size = len(self.request_dict)
-        logger.info(f"Submitted request {request_id[:8]} to {self.model_name}. Queue size: {queue_size}")
-        
+        logger.debug(f"Submitted request {request_id[:8]} to {self.model_name}")
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
@@ -337,7 +332,7 @@ class RateLimiter:
                 del self.response_dict[request_id]  # Cleanup
                 if request_id in self.request_dict:
                     del self.request_dict[request_id]  # Cleanup request too
-                logger.info(f"Got response for request {request_id[:8]} from {self.model_name}")
+                logger.debug(f"Got response for request {request_id[:8]}")
                 return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
@@ -353,7 +348,7 @@ class RateLimiter:
                     # Get actual request data from Dict
                     if request_id in self.request_dict:
                         request = self.request_dict[request_id]
-                        logger.info(f"Processing request {request_id[:8]} from {self.model_name} queue")
+                        logger.debug(f"Processing request {request_id[:8]}")
                         return request_id, request
                     
                 except TimeoutError:
@@ -363,7 +358,7 @@ class RateLimiter:
     def store_response(self, request_id: str, response: Any):
         """Store response for a request"""
         self.response_dict[request_id] = response
-        logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")
+        logger.debug(f"Stored response for {request_id[:8]}")
         
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
@@ -371,4 +366,4 @@ class RateLimiter:
             self.rate_dict["token_usage"] = 0
         current_usage = self.rate_dict["token_usage"]
         self.rate_dict["token_usage"] = current_usage + tokens
-        logger.info(f"Added {tokens} tokens to {self.model_name}. Total usage: {current_usage + tokens}")
+        logger.debug(f"Added {tokens} tokens to {self.model_name}. Total: {current_usage + tokens}")
