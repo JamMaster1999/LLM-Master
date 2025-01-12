@@ -268,6 +268,11 @@ class RateLimiter:
         timestamps = self.rate_dict["request_timestamps"]
         return len(timestamps) < self.model_config.rate_limit_rpm
         
+    async def wait_for_capacity(self):
+        """Wait until there is capacity to make a request"""
+        while not await self.can_make_request():
+            await asyncio.sleep(1)  # Wait a second before checking again
+            
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
         import uuid
@@ -278,6 +283,12 @@ class RateLimiter:
         
         # Only queue the request ID
         await self.request_queue.put(request_id)
+        
+        # Track this request
+        timestamps = self.rate_dict["request_timestamps"]
+        timestamps.append(time.time())
+        self.rate_dict["request_timestamps"] = timestamps
+        
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
@@ -305,12 +316,6 @@ class RateLimiter:
                     # Get actual request data from Dict
                     if request_id in self.request_dict:
                         request = self.request_dict[request_id]
-                        
-                        # Track this request
-                        timestamps = self.rate_dict["request_timestamps"]
-                        timestamps.append(time.time())
-                        self.rate_dict["request_timestamps"] = timestamps
-                        
                         return request_id, request
                     
                 except TimeoutError:
