@@ -51,8 +51,8 @@ class QueryLLM:
             self._format_message(msg, provider) for msg in request["messages"]
         ]
         
-        # Call the provider
-        response = provider.generate(
+        # Call the provider using async generate
+        response = await provider.generate(
             messages=formatted_messages,
             model=model_name,
             **request.get("kwargs", {})
@@ -78,7 +78,7 @@ class QueryLLM:
         Queue and process a request while respecting rate limits
         """
         if stream:
-            return self._streaming_query(
+            return await self._streaming_query(
                 model_name=model_name,
                 messages=messages,
                 fallback_provider=fallback_provider,
@@ -98,72 +98,60 @@ class QueryLLM:
             try:
                 if retry_count > 0:
                     delay = 2 ** (retry_count - 1)
-                    time.sleep(delay)
-                    logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
+                    logger.info(f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
 
-                # Submit request to queue
+                # Wait for rate limit capacity
+                await rate_limiter.wait_for_capacity()
+                
+                # Submit request and get response
                 request_id = await rate_limiter.submit_request({
                     "messages": messages,
                     "kwargs": {
-                        "stream": False,
-                        "fallback_provider": fallback_provider,
-                        "fallback_model": fallback_model
+                        "stream": stream,
+                        "moderation": moderation
                     }
                 })
                 
-                # Process requests from queue in background
-                async def process_background():
-                    while True:
-                        req_id, request = await rate_limiter.process_queue()
-                        if req_id:
-                            try:
-                                response = await self._process_request(model_name, request)
-                                rate_limiter.store_response(req_id, response)
-                            except Exception as e:
-                                # Store error as response
-                                rate_limiter.store_response(req_id, e)
+                # Process the request
+                response = await self._process_request(model_name, {
+                    "messages": messages,
+                    "kwargs": {
+                        "stream": stream,
+                        "moderation": moderation
+                    }
+                })
                 
-                # Start background processing
-                asyncio.create_task(process_background())
+                # Store response
+                rate_limiter.store_response(request_id, response)
                 
-                # Wait for our specific response
-                try:
-                    response = await rate_limiter.wait_for_response(request_id)
-                    if isinstance(response, Exception):
-                        raise response
-                        
-                    if isinstance(response, LLMResponse):
-                        response.latency = time.time() - start_time
-                    return response
-                    
-                except TimeoutError:
-                    retry_count += 1
-                    continue
+                # Calculate and set latency
+                response.latency = time.time() - start_time
+                return response
 
             except ProviderError as e:
-                # Handle fallback logic
-                if getattr(e, 'status_code', None) == "CONTENT_POLICY" and fallback_provider and fallback_model:
-                    logger.info(f"Content policy violation detected. Switching to fallback model: {fallback_model}")
+                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                    logger.warning(f"Content policy violation, falling back to {fallback_model}")
                     return await self.query(
                         model_name=fallback_model,
                         messages=messages,
-                        stream=False,
-                        fallback_provider=None,
-                        fallback_model=None,
-                        moderation=False
+                        stream=stream,
+                        moderation=moderation
                     )
-                
-                retry_count += 1
-                if retry_count == 1:
-                    self._report_error(e)
+                elif retry_count < self.MAX_RETRIES:
+                    retry_count += 1
+                    continue
+                else:
+                    raise
 
-                if retry_count > self.MAX_RETRIES:
-                    raise LLMError(f"Max retries exceeded. Error: {str(e)}")
+            except Exception as e:
+                if retry_count < self.MAX_RETRIES:
+                    retry_count += 1
+                    continue
+                else:
+                    raise
 
-            finally:
-                logger.info(f"Total time: {time.time() - start_time:.2f}s")
-
-    def _streaming_query(self,
+    async def _streaming_query(self,
                          model_name: str,
                          messages: List[Dict[str, Any]],
                          fallback_provider: Optional[str] = None,
@@ -176,6 +164,7 @@ class QueryLLM:
         start_time = time.time()
         retry_count = 0
         provider = self._get_provider(model_name)
+        rate_limiter = self._rate_limiters[model_name]
 
         if moderation:
             self._moderate_content(messages)
@@ -184,12 +173,11 @@ class QueryLLM:
             try:
                 if retry_count > 0:
                     delay = 2 ** (retry_count - 1)
-                    time.sleep(delay)
-                    logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
+                    await asyncio.sleep(delay)
+                    logger.info(f"Retrying in {delay} seconds...")
 
-                # Wait for rate limit before proceeding
-                import asyncio
-                asyncio.run(self._wait_for_rate_limit(model_name))
+                # Wait for rate limit capacity
+                await rate_limiter.wait_for_capacity()
 
                 # Format messages for the provider
                 formatted_messages = [
@@ -198,46 +186,43 @@ class QueryLLM:
 
                 # Use the provider in streaming mode
                 full_response = ""
-                stream_gen = provider.generate(
+                async for chunk in provider.generate(
                     messages=formatted_messages,
                     model=model_name,
                     stream=True
-                )
-
-                for chunk in stream_gen:
+                ):
                     full_response += chunk
                     yield chunk  # <--- The actual streaming output to the caller
 
                 # Post-stream, handle usage if available
                 if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-                    # Track token usage for rate limiting
-                    self._track_token_usage(model_name, provider.last_usage)
+                    self._rate_limiters[model_name].add_token_usage(
+                        provider.last_usage.input_tokens + provider.last_usage.output_tokens
+                    )
+                return
 
-                break  # If we got this far, it succeeded—stop retrying
-
-            except Exception as e:
-                retry_count += 1
-                # Report only the first error
-                if retry_count == 1:
-                    self._report_error(e)
-
-                if retry_count > self.MAX_RETRIES and fallback_provider and fallback_model:
-                    logger.info(f"Switching to fallback provider (stream): {fallback_model}")
-                    # Use `yield from` so we can stream fallback chunks
-                    yield from self._streaming_query(
+            except ProviderError as e:
+                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                    logger.warning(f"Content policy violation, falling back to {fallback_model}")
+                    async for chunk in self._streaming_query(
                         model_name=fallback_model,
                         messages=messages,
-                        fallback_provider=None,
-                        fallback_model=None,
-                        moderation=False  # Already moderated
-                    )
+                        moderation=moderation
+                    ):
+                        yield chunk
                     return
+                elif retry_count < self.MAX_RETRIES:
+                    retry_count += 1
+                    continue
+                else:
+                    raise
 
-                elif retry_count > self.MAX_RETRIES:
-                    raise LLMError(f"Max retries exceeded (stream). Last error: {str(e)}")
-
-            finally:
-                logger.info(f"Total time (stream): {time.time() - start_time:.2f}s")
+            except Exception as e:
+                if retry_count < self.MAX_RETRIES:
+                    retry_count += 1
+                    continue
+                else:
+                    raise
 
     def _moderate_content(self, messages: List[Dict[str, Any]]):
         """Perform content moderation on the last user message"""
