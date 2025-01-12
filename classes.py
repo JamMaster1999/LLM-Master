@@ -14,7 +14,7 @@ lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=Tr
 
 # Ensure exactly one lock token exists
 if lock_queue.len() == 0:
-    lock_queue.put("LOCK_TOKEN")
+    lock_queue.put("LOCK_TOKEN", block=False)  # Non-blocking put for initialization
 
 class LLMError(Exception):
     """Base exception for LLM-related errors"""
@@ -272,7 +272,7 @@ class RateLimiter:
         first_wait = True
         while True:
             # 1) Acquire the lock
-            await lock_queue.get()
+            await lock_queue.get.aio()
             try:
                 # 2) Read timestamps
                 timestamps = self.rate_dict["request_timestamps"]
@@ -302,7 +302,7 @@ class RateLimiter:
                         first_wait = False
             finally:
                 # 5) Release the lock so other tasks can check
-                await lock_queue.put("LOCK_TOKEN")
+                await lock_queue.put.aio("LOCK_TOKEN")
             
             # Wait a second before re-checking
             await asyncio.sleep(1)
@@ -315,7 +315,7 @@ class RateLimiter:
         import time
         
         # Acquire the lock
-        await lock_queue.get()
+        await lock_queue.get.aio()
         try:
             timestamps = self.rate_dict["request_timestamps"]
             now = time.time()
@@ -331,7 +331,7 @@ class RateLimiter:
                 self.rate_dict["request_timestamps"] = timestamps
                 return False
         finally:
-            await lock_queue.put("LOCK_TOKEN")
+            await lock_queue.put.aio("LOCK_TOKEN")
 
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
@@ -350,7 +350,7 @@ class RateLimiter:
         self.request_dict[request_id] = request
         
         # Only queue the request ID
-        await self.request_queue.put(request_id)
+        await self.request_queue.put.aio(request_id)
         
         queue_size = len(self.request_dict)
         logger.info(f"Submitted request {request_id[:8]} to {self.model_name}. Queue size: {queue_size}")
