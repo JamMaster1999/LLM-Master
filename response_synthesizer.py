@@ -37,8 +37,14 @@ class QueryLLM:
         self._rate_limiters = {}
         self._background_tasks = {}
         
-        logger.info("Initialized QueryLLM handler")
-        
+        # Initialize rate limiters for each model
+        for model_name, model_config in ModelRegistry.CONFIGS.items():
+            self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
+            # Start background processor for each model
+            self._background_tasks[model_name] = asyncio.create_task(self._process_queue(model_name))
+            
+        logger.info("Initialized QueryLLM handler with rate limiters and background processors")
+
     def _ensure_rate_limiter(self, model_name: str):
         """Lazily initialize rate limiter and background task for a model"""
         if model_name not in self._rate_limiters:
@@ -98,9 +104,6 @@ class QueryLLM:
             
         start_time = time.time()
         retry_count = 0
-        
-        # Ensure rate limiter exists for this model
-        self._ensure_rate_limiter(model_name)
         rate_limiter = self._rate_limiters[model_name]
 
         # Content moderation if enabled
@@ -110,19 +113,21 @@ class QueryLLM:
         while retry_count <= self.MAX_RETRIES:
             try:
                 if retry_count > 0:
-                    await asyncio.sleep(2 ** (retry_count - 1))
+                    delay = 2 ** (retry_count - 1)
+                    logger.info(f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
 
-                # Wait for rate limit capacity
-                await rate_limiter.wait_for_capacity()
-                
-                # Process the request directly
-                response = await self._process_request(model_name, {
+                # Submit request to queue and get request ID
+                request_id = await rate_limiter.submit_request({
                     "messages": messages,
                     "kwargs": {
                         "stream": stream,
                         "moderation": moderation
                     }
                 })
+                
+                # Wait for response
+                response = await rate_limiter.wait_for_response(request_id)
                 
                 # Calculate and set latency
                 response.latency = time.time() - start_time
@@ -450,7 +455,6 @@ class QueryLLM:
                     # Store the response
                     rate_limiter.store_response(request_id, response)
             except Exception as e:
-                if not isinstance(e, TimeoutError):  # Don't log timeout errors
-                    logger.error(f"Error processing request for {model_name}: {str(e)}")
+                logger.error(f"Error processing queue for {model_name}: {str(e)}")
                 await asyncio.sleep(1)  # Avoid tight loop on errors
                 continue
