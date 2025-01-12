@@ -5,6 +5,7 @@ import requests
 import os
 from pathlib import Path
 from typing import Dict, Optional, List, Union, Any, Generator
+import asyncio
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
@@ -37,25 +38,35 @@ class QueryLLM:
         
         # Initialize rate limiters for each model
         for model_name, model_config in ModelRegistry.CONFIGS.items():
-            self._rate_limiters[model_name] = RateLimiter(
-                model_config,
-                queue_name=f"llm_queue_{model_name}",
-                dict_name=f"llm_dict_{model_name}"
-            )
+            self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
+            
         logger.info("Initialized QueryLLM handler with rate limiters")
 
-    async def _wait_for_rate_limit(self, model_name: str):
-        """Wait for rate limit capacity"""
-        if model_name in self._rate_limiters:
-            await self._rate_limiters[model_name].wait_for_capacity()
+    async def _process_request(self, model_name: str, request: dict) -> LLMResponse:
+        """Process a single request"""
+        provider = self._get_provider(model_name)
+        
+        # Format messages for the provider
+        formatted_messages = [
+            self._format_message(msg, provider) for msg in request["messages"]
+        ]
+        
+        # Call the provider
+        response = provider.generate(
+            messages=formatted_messages,
+            model=model_name,
+            **request.get("kwargs", {})
+        )
+        
+        # Track usage if available
+        if hasattr(provider, 'last_usage') and provider.last_usage is not None:
+            self._rate_limiters[model_name].add_token_usage(
+                provider.last_usage.input_tokens + provider.last_usage.output_tokens
+            )
+            
+        return response
 
-    def _track_token_usage(self, model_name: str, usage):
-        """Track token usage for rate limiting"""
-        if model_name in self._rate_limiters and usage:
-            total_tokens = usage.input_tokens + usage.output_tokens
-            self._rate_limiters[model_name].add_token_usage(total_tokens)
-
-    def query(self,
+    async def query(self,
               model_name: str,
               messages: List[Dict[str, Any]],
               stream: bool = False,
@@ -64,28 +75,9 @@ class QueryLLM:
               moderation: bool = False
     ) -> Union[LLMResponse, str]:
         """
-        Generate a response (non-stream) or produce a generator (stream).
-
-        If stream=True, we hand off to `_streaming_query` to yield chunks.
-        Otherwise, we handle everything right here and return an LLMResponse/string.
-
-        Args:
-            model_name: Name of the model to use
-            messages: List of message dictionaries
-            stream: Whether to stream the response
-            fallback_provider: Optional fallback provider if primary fails
-            fallback_model: Optional fallback model name
-            moderation: Whether to perform content moderation
-
-        Returns:
-            - If stream=False: An LLMResponse (or string) with the full final output
-            - If stream=True: A generator that yields partial chunks
+        Queue and process a request while respecting rate limits
         """
         if stream:
-            # ---------------------------
-            # STREAMING MODE:
-            # Return a generator by calling `_streaming_query`
-            # ---------------------------
             return self._streaming_query(
                 model_name=model_name,
                 messages=messages,
@@ -93,113 +85,83 @@ class QueryLLM:
                 fallback_model=fallback_model,
                 moderation=moderation
             )
-        else:
-            # ---------------------------
-            # NON-STREAMING MODE:
-            # No yield => we return an actual object (LLMResponse/string)
-            # ---------------------------
-            start_time = time.time()
-            retry_count = 0
-            provider = self._get_provider(model_name)
+            
+        start_time = time.time()
+        retry_count = 0
+        rate_limiter = self._rate_limiters[model_name]
 
-            # Content moderation if enabled
-            if moderation:
-                self._moderate_content(messages)
+        # Content moderation if enabled
+        if moderation:
+            self._moderate_content(messages)
 
-            while retry_count <= self.MAX_RETRIES:
+        while retry_count <= self.MAX_RETRIES:
+            try:
+                if retry_count > 0:
+                    delay = 2 ** (retry_count - 1)
+                    time.sleep(delay)
+                    logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
+
+                # Submit request to queue
+                request_id = await rate_limiter.submit_request({
+                    "messages": messages,
+                    "kwargs": {
+                        "stream": False,
+                        "fallback_provider": fallback_provider,
+                        "fallback_model": fallback_model
+                    }
+                })
+                
+                # Process requests from queue in background
+                async def process_background():
+                    while True:
+                        req_id, request = await rate_limiter.process_queue()
+                        if req_id:
+                            try:
+                                response = await self._process_request(model_name, request)
+                                rate_limiter.store_response(req_id, response)
+                            except Exception as e:
+                                # Store error as response
+                                rate_limiter.store_response(req_id, e)
+                
+                # Start background processing
+                asyncio.create_task(process_background())
+                
+                # Wait for our specific response
                 try:
-                    if retry_count > 0:
-                        delay = 2 ** (retry_count - 1)
-                        time.sleep(delay)
-                        logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
-
-                    # Wait for rate limit before proceeding
-                    import asyncio
-                    asyncio.run(self._wait_for_rate_limit(model_name))
-
-                    # Format messages for the provider
-                    formatted_messages = [
-                        self._format_message(msg, provider) for msg in messages
-                    ]
-
-                    # Call the provider with stream=False -> returns LLMResponse or string
-                    response = provider.generate(
-                        messages=formatted_messages,
-                        model=model_name,
-                        stream=False
-                    )
-
-                    # Add error checking for response type
-                    if response is None:
-                        raise LLMError("Provider returned None response")
-
-                    # If the provider tracks usage details
-                    if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-                        # Track token usage for rate limiting
-                        self._track_token_usage(model_name, provider.last_usage)
+                    response = await rate_limiter.wait_for_response(request_id)
+                    if isinstance(response, Exception):
+                        raise response
                         
-                        # Wrap final result in an LLMResponse that includes usage, cost, etc.
-                        if isinstance(response, LLMResponse):
-                            # The provider might already return an LLMResponse,
-                            # but let's ensure we update the latency
-                            response.latency = time.time() - start_time
-                            return response
-                        else:
-                            # E.g. if `response` is raw text or something else:
-                            from .classes import Usage
-                            usage = provider.last_usage
-                            final = LLMResponse(
-                                content=str(response),
-                                model_name=model_name,
-                                usage=usage,
-                                latency=time.time() - start_time
-                            )
-                            return final
-                    else:
-                        # If no usage info is available, we just return the raw response
-                        return response
-
-                except ProviderError as e:
-                    if getattr(e, 'status_code', None) == "CONTENT_POLICY" and fallback_provider and fallback_model:
-                        logger.info(f"Content policy violation detected. Switching to fallback model: {fallback_model}")
-                        return self.query(
-                            model_name=fallback_model,
-                            messages=messages,
-                            stream=False,
-                            fallback_provider=None,  # Prevent nested fallbacks
-                            fallback_model=None,
-                            moderation=False
-                        )
+                    if isinstance(response, LLMResponse):
+                        response.latency = time.time() - start_time
+                    return response
                     
-                    # For other provider errors, continue with normal retry logic
+                except TimeoutError:
                     retry_count += 1
-                    if retry_count == 1:
-                        self._report_error(e)
+                    continue
 
-                    # If out of retries but we have fallback
-                    if retry_count > self.MAX_RETRIES and fallback_provider and fallback_model:
-                        logger.info(f"Switching to fallback provider: {fallback_model}")
-                        try:
-                            fallback_response = self.query(
-                                model_name=fallback_model,
-                                messages=messages,
-                                stream=False,
-                                fallback_provider=None,
-                                fallback_model=None,
-                                moderation=False
-                            )
-                            return fallback_response
-                        except Exception as fallback_e:
-                            self._report_error(fallback_e)
-                            raise LLMError("Both primary and fallback providers failed")
+            except ProviderError as e:
+                # Handle fallback logic
+                if getattr(e, 'status_code', None) == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                    logger.info(f"Content policy violation detected. Switching to fallback model: {fallback_model}")
+                    return await self.query(
+                        model_name=fallback_model,
+                        messages=messages,
+                        stream=False,
+                        fallback_provider=None,
+                        fallback_model=None,
+                        moderation=False
+                    )
+                
+                retry_count += 1
+                if retry_count == 1:
+                    self._report_error(e)
 
-                    elif retry_count > self.MAX_RETRIES:
-                        status = getattr(e, 'status_code', '')
-                        status_str = f" ({status})" if status else ""
-                        raise LLMError(f"Max retries exceeded. Error{status_str}: {str(e)}")
+                if retry_count > self.MAX_RETRIES:
+                    raise LLMError(f"Max retries exceeded. Error: {str(e)}")
 
-                finally:
-                    logger.info(f"Total time: {time.time() - start_time:.2f}s")
+            finally:
+                logger.info(f"Total time: {time.time() - start_time:.2f}s")
 
     def _streaming_query(self,
                          model_name: str,

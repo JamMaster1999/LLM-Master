@@ -5,6 +5,7 @@ import time
 from enum import Enum
 import logging
 import modal
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -233,17 +234,23 @@ class ResponseSynthesizer:
         return self._providers[provider_key]
 
 class RateLimiter:
-    """Distributed rate limiter using Modal Queue and Dict"""
-    def __init__(self, model_config: ModelConfig, queue_name: str = None, dict_name: str = None):
+    """Distributed rate limiter using Modal Queue and Dict for request-response handling"""
+    def __init__(self, model_config: ModelConfig, model_name: str):
         self.model_config = model_config
-        self.queue = modal.Queue.from_name(queue_name) if queue_name else modal.Queue.ephemeral()
-        self.rate_dict = modal.Dict.from_name(dict_name) if dict_name else modal.Dict.ephemeral()
+        self.model_name = model_name
         
-        # Initialize rate tracking if not exists
+        # Queue for all requests
+        self.request_queue = modal.Queue.from_name(f"llm_queue_{model_name}", create_if_missing=True)
+        
+        # Dict for storing responses
+        self.response_dict = modal.Dict.from_name(f"llm_responses_{model_name}", create_if_missing=True)
+        
+        # Dict for rate limiting
+        self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{model_name}", create_if_missing=True)
+        
+        # Initialize rate tracking
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
-        if "token_usage" not in self.rate_dict:
-            self.rate_dict["token_usage"] = 0
             
     def _cleanup_old_requests(self):
         """Remove requests older than 1 minute"""
@@ -252,34 +259,56 @@ class RateLimiter:
         timestamps = self.rate_dict["request_timestamps"]
         self.rate_dict["request_timestamps"] = [ts for ts in timestamps if current_time - ts < 60]
         
-    def can_make_request(self) -> bool:
+    async def can_make_request(self) -> bool:
         """Check if we can make a request based on rate limits"""
-        import time
         self._cleanup_old_requests()
-        
-        current_time = time.time()
         timestamps = self.rate_dict["request_timestamps"]
+        return len(timestamps) < self.model_config.rate_limit_rpm
         
-        # Check requests per minute
-        requests_last_minute = len(timestamps)
-        if requests_last_minute >= self.model_config.rpm:
-            return False
-            
-        return True
+    async def submit_request(self, request: dict) -> str:
+        """Submit request to queue and return request ID"""
+        import uuid
+        request_id = str(uuid.uuid4())
+        await self.request_queue.put((request_id, request))
+        return request_id
         
-    async def wait_for_capacity(self):
-        """Wait until we have capacity to make a request"""
-        import asyncio
-        while not self.can_make_request():
-            await asyncio.sleep(1)
-            
-        # Add timestamp for this request
+    async def wait_for_response(self, request_id: str, timeout: int = 60):
+        """Wait for specific request ID's response"""
         import time
-        timestamps = self.rate_dict["request_timestamps"]
-        timestamps.append(time.time())
-        self.rate_dict["request_timestamps"] = timestamps
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if request_id in self.response_dict:
+                response = self.response_dict[request_id]
+                del self.response_dict[request_id]  # Cleanup
+                return response
+            await asyncio.sleep(0.1)
+        raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
+        
+    async def process_queue(self):
+        """Process queue (runs in background)"""
+        while True:
+            if await self.can_make_request():
+                try:
+                    request_id, request = await self.request_queue.get(timeout=1)
+                    
+                    # Track this request
+                    timestamps = self.rate_dict["request_timestamps"]
+                    timestamps.append(time.time())
+                    self.rate_dict["request_timestamps"] = timestamps
+                    
+                    return request_id, request
+                    
+                except TimeoutError:
+                    pass
+            await asyncio.sleep(0.1)
+        
+    def store_response(self, request_id: str, response: Any):
+        """Store response for a request"""
+        self.response_dict[request_id] = response
         
     def add_token_usage(self, tokens: int):
         """Track token usage"""
+        if "token_usage" not in self.rate_dict:
+            self.rate_dict["token_usage"] = 0
         current_usage = self.rate_dict["token_usage"]
         self.rate_dict["token_usage"] = current_usage + tokens
