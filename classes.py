@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
 
 # Ensure exactly one lock token exists
-if lock_queue.size() == 0:
+if lock_queue.len() == 0:
     lock_queue.put("LOCK_TOKEN")
 
 class LLMError(Exception):
