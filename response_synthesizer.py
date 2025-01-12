@@ -8,7 +8,7 @@ from typing import Dict, Optional, List, Union, Any, Generator
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
-from .classes import LLMResponse, LLMError, ModelRegistry
+from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,27 @@ class QueryLLM:
         """
         self.config = config or LLMConfig.from_env()
         self._providers = {}
-        logger.info("Initialized QueryLLM handler")
+        self._rate_limiters = {}
+        
+        # Initialize rate limiters for each model
+        for model_name, model_config in ModelRegistry.CONFIGS.items():
+            self._rate_limiters[model_name] = RateLimiter(
+                model_config,
+                queue_name=f"llm_queue_{model_name}",
+                dict_name=f"llm_dict_{model_name}"
+            )
+        logger.info("Initialized QueryLLM handler with rate limiters")
+
+    async def _wait_for_rate_limit(self, model_name: str):
+        """Wait for rate limit capacity"""
+        if model_name in self._rate_limiters:
+            await self._rate_limiters[model_name].wait_for_capacity()
+
+    def _track_token_usage(self, model_name: str, usage):
+        """Track token usage for rate limiting"""
+        if model_name in self._rate_limiters and usage:
+            total_tokens = usage.input_tokens + usage.output_tokens
+            self._rate_limiters[model_name].add_token_usage(total_tokens)
 
     def query(self,
               model_name: str,
@@ -93,6 +113,10 @@ class QueryLLM:
                         time.sleep(delay)
                         logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
 
+                    # Wait for rate limit before proceeding
+                    import asyncio
+                    asyncio.run(self._wait_for_rate_limit(model_name))
+
                     # Format messages for the provider
                     formatted_messages = [
                         self._format_message(msg, provider) for msg in messages
@@ -111,6 +135,9 @@ class QueryLLM:
 
                     # If the provider tracks usage details
                     if hasattr(provider, 'last_usage') and provider.last_usage is not None:
+                        # Track token usage for rate limiting
+                        self._track_token_usage(model_name, provider.last_usage)
+                        
                         # Wrap final result in an LLMResponse that includes usage, cost, etc.
                         if isinstance(response, LLMResponse):
                             # The provider might already return an LLMResponse,
@@ -198,6 +225,10 @@ class QueryLLM:
                     time.sleep(delay)
                     logger.info(f"Retry attempt {retry_count} after {delay}s delay...")
 
+                # Wait for rate limit before proceeding
+                import asyncio
+                asyncio.run(self._wait_for_rate_limit(model_name))
+
                 # Format messages for the provider
                 formatted_messages = [
                     self._format_message(msg, provider) for msg in messages
@@ -217,8 +248,8 @@ class QueryLLM:
 
                 # Post-stream, handle usage if available
                 if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-                    # You could log or store usage here if you want
-                    pass
+                    # Track token usage for rate limiting
+                    self._track_token_usage(model_name, provider.last_usage)
 
                 break  # If we got this far, it succeeded—stop retrying
 

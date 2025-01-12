@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import time
 from enum import Enum
 import logging
+import modal
 
 logger = logging.getLogger(__name__)
 
@@ -230,3 +231,55 @@ class ResponseSynthesizer:
             self._providers[provider_key] = provider_class()
             
         return self._providers[provider_key]
+
+class RateLimiter:
+    """Distributed rate limiter using Modal Queue and Dict"""
+    def __init__(self, model_config: ModelConfig, queue_name: str = None, dict_name: str = None):
+        self.model_config = model_config
+        self.queue = modal.Queue.from_name(queue_name) if queue_name else modal.Queue.ephemeral()
+        self.rate_dict = modal.Dict.from_name(dict_name) if dict_name else modal.Dict.ephemeral()
+        
+        # Initialize rate tracking if not exists
+        if "request_timestamps" not in self.rate_dict:
+            self.rate_dict["request_timestamps"] = []
+        if "token_usage" not in self.rate_dict:
+            self.rate_dict["token_usage"] = 0
+            
+    def _cleanup_old_requests(self):
+        """Remove requests older than 1 minute"""
+        import time
+        current_time = time.time()
+        timestamps = self.rate_dict["request_timestamps"]
+        self.rate_dict["request_timestamps"] = [ts for ts in timestamps if current_time - ts < 60]
+        
+    def can_make_request(self) -> bool:
+        """Check if we can make a request based on rate limits"""
+        import time
+        self._cleanup_old_requests()
+        
+        current_time = time.time()
+        timestamps = self.rate_dict["request_timestamps"]
+        
+        # Check requests per minute
+        requests_last_minute = len(timestamps)
+        if requests_last_minute >= self.model_config.rpm:
+            return False
+            
+        return True
+        
+    async def wait_for_capacity(self):
+        """Wait until we have capacity to make a request"""
+        import asyncio
+        while not self.can_make_request():
+            await asyncio.sleep(1)
+            
+        # Add timestamp for this request
+        import time
+        timestamps = self.rate_dict["request_timestamps"]
+        timestamps.append(time.time())
+        self.rate_dict["request_timestamps"] = timestamps
+        
+    def add_token_usage(self, tokens: int):
+        """Track token usage"""
+        current_usage = self.rate_dict["token_usage"]
+        self.rate_dict["token_usage"] = current_usage + tokens

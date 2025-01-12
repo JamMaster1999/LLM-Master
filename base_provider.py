@@ -2,10 +2,12 @@ from typing import List, Dict, Any, Union, Generator, Optional
 from openai import OpenAI
 from mistralai import Mistral
 import google.generativeai as genai
-from .classes import BaseLLMProvider, LLMResponse, Usage
+from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, CONFIGS
 from .config import LLMConfig
 import logging
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -46,49 +48,51 @@ class UnifiedProvider(BaseLLMProvider):
     }
 
     def __init__(self, provider: str = "openai", config: Optional[LLMConfig] = None):
-        """
-        Initialize the provider with configuration
-        
-        Args:
-            provider: The provider to use ("openai", "gemini", or "mistral")
-            config: LLMConfig instance. If None, will attempt to load from environment
-        """
+        """Initialize the provider with configuration"""
+        super().__init__()
         self.provider = provider
-        self.config = config or LLMConfig.from_env()
+        self.config = config or LLMConfig()
         
+        # Initialize rate limiters for each model
+        self.rate_limiters = {}
+        for model_name, model_config in CONFIGS.items():
+            self.rate_limiters[model_name] = RateLimiter(
+                model_config,
+                queue_name=f"llm_queue_{model_name}",
+                dict_name=f"llm_dict_{model_name}"
+            )
+        
+        # Initialize provider client
         provider_config = self.PROVIDER_CONFIGS.get(provider)
         if not provider_config:
             raise ConfigurationError(f"Unsupported provider: {provider}")
             
-        # Get API key from config
-        api_key = getattr(self.config, provider_config["api_key_attr"])
-        if not api_key:
-            raise ConfigurationError(f"Missing API key for provider: {provider}")
+        self._setup_client(provider_config)
+        
+    async def generate_parallel(self, requests: List[Dict], model: str, **kwargs) -> List[LLMResponse]:
+        """Generate responses in parallel while respecting rate limits"""
+        rate_limiter = self.rate_limiters[model]
+        responses = []
+        
+        async def process_request(request):
+            await rate_limiter.wait_for_capacity()
+            return await self.generate_async(request, **kwargs)
             
-        try:
-            if provider == "gemini":
-                genai.configure(api_key=api_key)
-                
-            if provider in ["openai", "gemini"]:
-                self.client = provider_config["client_class"](
-                    base_url=provider_config["base_url"],
-                    api_key=api_key
-                )
-            else:  # mistral
-                self.client = provider_config["client_class"](
-                    api_key=api_key
-                )
-                
-            self.supports_caching = provider_config["supports_caching"]
-            self._current_generation = None
-            self.last_usage = None
-            self.last_response = None
-            
-            logger.info(f"Successfully initialized {provider} provider")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize {provider} provider: {str(e)}")
-            raise ConfigurationError(f"Failed to initialize {provider} provider: {str(e)}")
+        # Process requests in parallel
+        tasks = [process_request(req) for req in requests]
+        responses = await asyncio.gather(*tasks)
+        
+        return responses
+        
+    async def generate_async(self, messages: List[Dict[str, Any]], **kwargs) -> LLMResponse:
+        """Async version of generate"""
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            response = await loop.run_in_executor(
+                executor,
+                lambda: self.generate(messages, **kwargs)
+            )
+        return response
 
     def _count_gemini_tokens(self, messages: List[Dict[str, Any]], model: str, gemini_model=None) -> int:
         """Helper function to count tokens for Gemini, including images"""
@@ -315,3 +319,35 @@ class UnifiedProvider(BaseLLMProvider):
             if self.provider in ["openai", "gemini"]:
                 self._current_generation.close()
             self._current_generation = None
+
+    def _setup_client(self, provider_config: Dict):
+        """Set up the provider client with configuration"""
+        # Get API key from config
+        api_key = getattr(self.config, provider_config["api_key_attr"])
+        if not api_key:
+            raise ConfigurationError(f"Missing API key for provider: {self.provider}")
+            
+        try:
+            if self.provider == "gemini":
+                genai.configure(api_key=api_key)
+                
+            if self.provider in ["openai", "gemini"]:
+                self.client = provider_config["client_class"](
+                    base_url=provider_config["base_url"],
+                    api_key=api_key
+                )
+            else:  # mistral
+                self.client = provider_config["client_class"](
+                    api_key=api_key
+                )
+                
+            self.supports_caching = provider_config["supports_caching"]
+            self._current_generation = None
+            self.last_usage = None
+            self.last_response = None
+            
+            logger.info(f"Successfully initialized {self.provider} provider")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize {self.provider} provider: {str(e)}")
+            raise ConfigurationError(f"Failed to initialize {self.provider} provider: {str(e)}")
