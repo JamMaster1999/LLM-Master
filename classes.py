@@ -255,58 +255,69 @@ class RateLimiter:
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
 
-    def _cleanup_and_check_capacity(self) -> bool:
-        """Clean up old timestamps and check if we have capacity
+    @staticmethod
+    def _attempt_add_timestamp_atomic(data: Dict[str, Any], rpm_limit: int) -> bool:
+        """Helper function to atomically update rate limit data
         
+        Args:
+            data: Dictionary containing request_timestamps
+            rpm_limit: Maximum requests per minute allowed
+            
         Returns:
-            bool: True if we can make a request, False if at limit
+            bool: True if timestamp was added, False if at limit
         """
         import time
         now = time.time()
-        
-        # Get current timestamps
-        timestamps = self.rate_dict["request_timestamps"]
-        
-        # Remove timestamps older than 60 seconds
-        timestamps = [ts for ts in timestamps if now - ts < 60]
-        
-        # Update timestamps in dict
-        self.rate_dict["request_timestamps"] = timestamps
-        
-        # Check if we have capacity
-        return len(timestamps) < self.model_config.rate_limit_rpm
 
-    def _add_timestamp(self):
-        """Add current timestamp to the list"""
-        import time
-        timestamps = self.rate_dict["request_timestamps"]
-        timestamps.append(time.time())
-        self.rate_dict["request_timestamps"] = timestamps
+        # Grab the timestamps from data
+        timestamps = data.get("request_timestamps", [])
+        
+        # 1) Prune old timestamps
+        timestamps = [ts for ts in timestamps if now - ts < 60]
+
+        # 2) Check capacity
+        if len(timestamps) < rpm_limit:
+            # 3) Append new timestamp
+            timestamps.append(now)
+            data["request_timestamps"] = timestamps
+            return True
+        else:
+            # No capacity, but still update pruned timestamps
+            data["request_timestamps"] = timestamps
+            return False
 
     async def wait_for_capacity(self):
-        """Wait until there is capacity to make a request"""
+        """Wait until there is capacity to make a request, using an atomic update."""
         first_wait = True
         while True:
-            if self._cleanup_and_check_capacity():
-                self._add_timestamp()
+            # Run the helper function in a single, atomic transaction
+            appended = await self.rate_dict.update(
+                None,  # No specific key, we want the entire dict
+                lambda data: self._attempt_add_timestamp_atomic(data, self.model_config.rate_limit_rpm)
+            )
+            
+            if appended:
+                # We succeeded in adding a timestamp => we have capacity
                 if not first_wait:
                     logger.info(f"Capacity available for {self.model_name}, resuming processing")
                 return
             else:
+                # We are at capacity
                 if first_wait:
-                    timestamps = self.rate_dict["request_timestamps"]
-                    logger.info(f"Rate limit reached for {self.model_name} "
-                              f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). "
-                              "Waiting for capacity...")
+                    current_len = len(self.rate_dict["request_timestamps"])
+                    logger.info(
+                        f"Rate limit reached for {self.model_name} "
+                        f"({current_len}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                    )
                     first_wait = False
                 await asyncio.sleep(1)
 
     async def can_make_request(self) -> bool:
-        """Check if we can make a request based on rate limits"""
-        if self._cleanup_and_check_capacity():
-            self._add_timestamp()
-            return True
-        return False
+        """Check if we can make a request based on rate limits, using atomic update."""
+        return await self.rate_dict.update(
+            None,
+            lambda data: self._attempt_add_timestamp_atomic(data, self.model_config.rate_limit_rpm)
+        )
         
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
