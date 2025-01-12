@@ -251,74 +251,62 @@ class RateLimiter:
         # Dict for rate limiting
         self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{model_name}", create_if_missing=True)
         
-        # Initialize rate tracking with atomic counter
-        if "request_count" not in self.rate_dict:
-            self.rate_dict["request_count"] = 0
+        # Initialize rate tracking
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
 
-    @staticmethod
-    def _attempt_to_add_timestamp(data: dict, rpm_limit: int) -> bool:
-        """Helper function to atomically update rate limit data
+    def _cleanup_and_check_capacity(self) -> bool:
+        """Clean up old timestamps and check if we have capacity
         
-        Args:
-            data: Dictionary containing request_timestamps and request_count
-            rpm_limit: Maximum requests per minute allowed
-            
         Returns:
-            bool: True if timestamp was added, False if at limit
+            bool: True if we can make a request, False if at limit
         """
         import time
-        timestamps = data["request_timestamps"]
         now = time.time()
+        
+        # Get current timestamps
+        timestamps = self.rate_dict["request_timestamps"]
         
         # Remove timestamps older than 60 seconds
         timestamps = [ts for ts in timestamps if now - ts < 60]
         
-        # Only append if under limit
-        if len(timestamps) < rpm_limit:
-            timestamps.append(now)
-            data["request_timestamps"] = timestamps
-            data["request_count"] = len(timestamps)
-            return True
+        # Update timestamps in dict
+        self.rate_dict["request_timestamps"] = timestamps
         
-        # Update pruned timestamps even if at limit
-        data["request_timestamps"] = timestamps
-        data["request_count"] = len(timestamps)
-        return False
+        # Check if we have capacity
+        return len(timestamps) < self.model_config.rate_limit_rpm
+
+    def _add_timestamp(self):
+        """Add current timestamp to the list"""
+        import time
+        timestamps = self.rate_dict["request_timestamps"]
+        timestamps.append(time.time())
+        self.rate_dict["request_timestamps"] = timestamps
 
     async def wait_for_capacity(self):
         """Wait until there is capacity to make a request"""
         first_wait = True
         while True:
-            # Use modal.Dict.update to run the function atomically in server
-            result = await self.rate_dict.update(
-                None,  # No specific key, we want the entire dict
-                lambda data: self._attempt_to_add_timestamp(data, self.model_config.rate_limit_rpm)
-            )
-            
-            if result:
-                # Successfully added timestamp
+            if self._cleanup_and_check_capacity():
+                self._add_timestamp()
                 if not first_wait:
                     logger.info(f"Capacity available for {self.model_name}, resuming processing")
                 return
             else:
                 if first_wait:
-                    current_count = self.rate_dict["request_count"]
+                    timestamps = self.rate_dict["request_timestamps"]
                     logger.info(f"Rate limit reached for {self.model_name} "
-                              f"({current_count}/{self.model_config.rate_limit_rpm}). "
+                              f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). "
                               "Waiting for capacity...")
                     first_wait = False
                 await asyncio.sleep(1)
 
     async def can_make_request(self) -> bool:
         """Check if we can make a request based on rate limits"""
-        # Try to add timestamp - if successful, we can make request
-        result = await self.rate_dict.update(
-            None,
-            lambda data: self._attempt_to_add_timestamp(data, self.model_config.rate_limit_rpm)
-        )
-        return result
+        if self._cleanup_and_check_capacity():
+            self._add_timestamp()
+            return True
+        return False
         
     async def add_token_usage(self, tokens: int):
         """Track token usage"""
