@@ -60,7 +60,7 @@ class ModelRegistry:
         "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
         "gemini-2.0-flash-exp": ModelConfig(0.075, 0.30, None, 10),
-        "gemini-2.0-flash-thinking-exp": ModelConfig(0.075, 0.30, None, 10),
+        "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
         # Mistral Models
         "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300)
     }
