@@ -52,6 +52,7 @@ class ModelRegistry:
         # OpenAI Models
         "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 5000),
         "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
+        "o3-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
         "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
         # Anthropic Models
         "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
@@ -59,7 +60,7 @@ class ModelRegistry:
         # Gemini Models
         "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
-        "gemini-2.0-flash-exp": ModelConfig(0.075, 0.30, None, 10),
+        "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
         "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
         # Mistral Models
         "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300)
