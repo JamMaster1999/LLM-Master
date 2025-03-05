@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Union, Generator, Optional
+from typing import List, Dict, Any, Union, Generator, Optional, AsyncGenerator
+import asyncio
 from anthropic import Anthropic
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
@@ -44,7 +45,7 @@ class AnthropicProvider(BaseLLMProvider):
             logger.error(f"Failed to initialize Anthropic provider: {str(e)}")
             raise ConfigurationError(f"Failed to initialize Anthropic provider: {str(e)}")
 
-    def generate(self, 
+    async def generate(self, 
                 messages: List[Dict[str, Any]], 
                 stream: bool = False,
                 **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
@@ -70,11 +71,15 @@ class AnthropicProvider(BaseLLMProvider):
             
             logger.debug(f"Generating response with model: {model}")
             
-            response = self.client.messages.create(
-                model=model,
-                max_tokens=kwargs.get('max_tokens', 1024),
-                messages=messages,
-                **kwargs
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.messages.create(
+                    model=model,
+                    max_tokens=kwargs.get('max_tokens', 1024),
+                    messages=messages,
+                    **kwargs
+                )
             )
 
             usage = Usage(

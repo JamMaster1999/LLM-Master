@@ -1,32 +1,46 @@
+import os 
+import sys
+import os
+sys.path.insert(0, os.path.abspath('..'))
+# Initialize
+import time, base64, json, requests
+import asyncio
+from typing import List, Dict, Union, Any 
+
+# Import our providers
 from llm_master import QueryLLM, LLMConfig
 
-# Initialize
-config = LLMConfig.from_env()
-llm = QueryLLM(config)
+async def main():
+    config = LLMConfig.from_env()
+    llm = QueryLLM(config)
 
-# Prepare messages
-messages = [
-    {
-        "role": "user",
-        "content": "Hello!",
-        "image_paths": ["path/to/image.jpg"]  # Optional
-    }
-]
+    messages = [
+        {
+            "role": "user", 
+            "content": "Hi What is your name? ",
+        },
+    ]
 
-# Generate response with fallback and moderation
-try:
-    response = llm.query(
-        model_name="claude-3-5-sonnet-latest",
-        messages=messages,
-        stream=True,
-        fallback_provider="openai",
-        fallback_model="gpt-4o",
-        moderation=True
-    )
-    
-    # Handle streaming response
-    for chunk in response:
-        print(chunk, end="", flush=True)
+    try:
+        # The query method returns a coroutine that resolves to an async generator
+        response_generator = await llm.query(
+            model_name="gemini-2.0-flash",
+            messages=messages,
+            stream=True,
+            fallback_provider="openai",
+            fallback_model="gpt-4o",
+            moderation=False
+        )
         
-except Exception as e:
-    print(f"Error: {str(e)}")
+        # Iterate through the async generator
+        async for chunk in response_generator:
+            print(chunk, end="", flush=True)
+            
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+# Run the async function
+if __name__ == "__main__":
+    asyncio.run(main())

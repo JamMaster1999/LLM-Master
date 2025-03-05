@@ -1,5 +1,6 @@
 from .base_provider import UnifiedProvider
 from .anthropic_provider import AnthropicProvider
+from .bfl_provider import BFLProvider
 from .classes import (
     LLMResponse, 
     Usage, 
@@ -15,6 +16,7 @@ __version__ = "0.1.0"
 __all__ = [
     "UnifiedProvider",
     "AnthropicProvider",
+    "BFLProvider",
     "LLMResponse",
     "Usage",
     "ModelRegistry",

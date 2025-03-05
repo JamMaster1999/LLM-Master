@@ -8,6 +8,7 @@ import logging
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -31,20 +32,40 @@ class UnifiedProvider(BaseLLMProvider):
             "client_class": OpenAI,
             "base_url": None,
             "api_key_attr": "openai_api_key",
-            "supports_caching": True
+            "supports_caching": True,
+            "generate_map": {}  # Default generation functions
         },
         "gemini": {
             "client_class": OpenAI,
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key_attr": "gemini_api_key",
-            "supports_caching": False
+            "supports_caching": False,
+            "generate_map": {}
         },
         "mistral": {
             "client_class": Mistral,
             "base_url": None,
             "api_key_attr": "mistral_api_key",
-            "supports_caching": False
-        }
+            "supports_caching": False,
+            "generate_map": {}
+        },
+        "recraft": {
+            "client_class": OpenAI,
+            "base_url": "https://external.api.recraft.ai/v1",
+            "api_key_attr": "recraft_api_key",
+            "supports_caching": False,
+            "generate_map": {
+                "recraftv3": "_generate_recraft_image"
+            }
+        },
+        "fireworks": {
+            "client_class": OpenAI,
+            "base_url": "https://api.fireworks.ai/inference/v1",
+            "api_key_attr": "fireworks_api_key",
+            "supports_caching": False,
+            "generate_map": {}
+        },
+
     }
 
     def __init__(self, provider: str = "openai", config: Optional[LLMConfig] = None):
@@ -60,6 +81,10 @@ class UnifiedProvider(BaseLLMProvider):
                 model_config=model_config,
                 model_name=model_name
             )
+        self.openai_compatible_providers = [
+            p for p, cfg in self.PROVIDER_CONFIGS.items() 
+            if cfg["client_class"] == OpenAI
+        ]
         
         # Initialize provider client
         provider_config = self.PROVIDER_CONFIGS.get(provider)
@@ -94,7 +119,16 @@ class UnifiedProvider(BaseLLMProvider):
         return response
 
     def _count_gemini_tokens(self, messages: List[Dict[str, Any]], model: str, gemini_model=None) -> int:
-        """Helper function to count tokens for Gemini, including images"""
+        """Count tokens for Gemini models
+        
+        Args:
+            messages: List of message dictionaries
+            model: Model name
+            gemini_model: Optional pre-initialized model
+            
+        Returns:
+            Total token count
+        """
         if gemini_model is None:
             gemini_model = genai.GenerativeModel(f"models/{model}")
         
@@ -133,19 +167,42 @@ class UnifiedProvider(BaseLLMProvider):
             stream: bool = False,
             **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
         """Async generate method"""
+        # Check if there's a custom generator for this model
+        provider_config = self.PROVIDER_CONFIGS.get(self.provider, {})
+        custom_generator = provider_config.get("generate_map", {}).get(model)
+        
+        if custom_generator:
+            # Call the custom generator
+            generator_method = getattr(self, custom_generator)
+            return await generator_method(messages, model, **kwargs)
+        
+        # Standard generation flow
         if stream:
             return self._stream_response(messages, model=model, **kwargs)
         
         loop = asyncio.get_event_loop()
-        if self.provider in ["openai", "gemini"]:
+        if self.provider in self.openai_compatible_providers:
+            # Extract modalities and audio parameters if provided
+            modalities = kwargs.pop('modality', None)
+            audio_params = kwargs.pop('audio', None)
+            
+            # Create completion parameters
+            completion_params = {
+                'model': model,
+                'messages': messages,
+                'stream': False,
+                **kwargs
+            }
+            
+            # Add modalities and audio parameters if they exist
+            if modalities:
+                completion_params['modalities'] = modalities
+            if audio_params:
+                completion_params['audio'] = audio_params
+            
             response = await loop.run_in_executor(
                 None,
-                lambda: self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    stream=False,
-                    **kwargs
-                )
+                lambda: self.client.chat.completions.create(**completion_params)
             )
             
             # Check for Gemini content policy violation
@@ -192,6 +249,11 @@ class UnifiedProvider(BaseLLMProvider):
                 )
             
             content = response.choices[0].message.content
+            
+            # Extract audio data if it exists in the response
+            audio_data = None
+            if hasattr(response.choices[0].message, 'audio') and response.choices[0].message.audio:
+                audio_data = response.choices[0].message.audio.data
         
         else:  # mistral
             response = await loop.run_in_executor(
@@ -210,17 +272,19 @@ class UnifiedProvider(BaseLLMProvider):
             )
             
             content = response.choices[0].message.content
+            audio_data = None
         
         return LLMResponse(
             content=content,
             model_name=model,
             usage=usage,
-            latency=0  # Will be set by ResponseSynthesizer
+            latency=0,  # Will be set by ResponseSynthesizer
+            audio_data=audio_data
         )
 
     def _stream_response(self, messages: List[Dict[str, Any]], **kwargs) -> Generator[str, None, None]:
         try:
-            if self.provider in ["openai", "gemini"]:
+            if self.provider in self.openai_compatible_providers:
                 model = kwargs.pop('model', None)
                 full_response = ""  # Initialize before the loop
                 
@@ -235,14 +299,16 @@ class UnifiedProvider(BaseLLMProvider):
                     model=model,
                     messages=messages,
                     stream=True,
-                    stream_options={"include_usage": True} if self.provider == "openai" else None,
+                    #! error for gemini might be here stream_options={"include_usage": True} if self.provider in ["openai", "fireworks"] else None,
+                    stream_options={"include_usage": True} if self.provider in self.openai_compatible_providers else None,
                     **kwargs
                 )
                 
                 self._current_generation = stream
                 
                 for chunk in stream:
-                    if self.provider == "openai":
+                    if self.provider in self.openai_compatible_providers:
+                    #! error for gemini might be here if self.provider in ["openai", "fireworks"]:
                         # OpenAI usage handling
                         if not chunk.choices and hasattr(chunk, 'usage') and chunk.usage:
                             self.last_usage = Usage(
@@ -327,7 +393,7 @@ class UnifiedProvider(BaseLLMProvider):
     def stop_generation(self):
         """Stop the current generation if any"""
         if self._current_generation:
-            if self.provider in ["openai", "gemini"]:
+            if self.provider in self.openai_compatible_providers:
                 self._current_generation.close()
             self._current_generation = None
 
@@ -342,12 +408,14 @@ class UnifiedProvider(BaseLLMProvider):
             if self.provider == "gemini":
                 genai.configure(api_key=api_key)
                 
-            if self.provider in ["openai", "gemini"]:
+            if provider_config["client_class"] == OpenAI:
+                # Use the OpenAI client for all providers that use it
                 self.client = provider_config["client_class"](
                     base_url=provider_config["base_url"],
                     api_key=api_key
                 )
-            else:  # mistral
+                logger.info(f"Initialized {self.provider} provider with base URL: {provider_config['base_url']}")
+            else:  # For clients that don't use base_url
                 self.client = provider_config["client_class"](
                     api_key=api_key
                 )
@@ -362,3 +430,62 @@ class UnifiedProvider(BaseLLMProvider):
         except Exception as e:
             logger.error(f"Failed to initialize {self.provider} provider: {str(e)}")
             raise ConfigurationError(f"Failed to initialize {self.provider} provider: {str(e)}")
+
+    async def _generate_recraft_image(self, messages: List[Dict[str, Any]], model: str, **kwargs) -> LLMResponse:
+        """Generate an image using Recraft's image generation API
+        
+        Args:
+            messages: List of message dictionaries (will extract prompt from the last user message)
+            model: The model to use for generation
+            **kwargs: Additional arguments to pass to the API
+            
+        Returns:
+            LLMResponse containing the image URL
+        """
+        # Extract prompt from messages or from kwargs
+        prompt = kwargs.get("prompt")
+        
+        # If prompt not in kwargs, try to extract from messages
+        if not prompt and messages:
+            for message in reversed(messages):  # Start from the most recent message
+                if message.get("role") == "user" and message.get("content"):
+                    prompt = message.get("content")
+                    break
+        
+        if not prompt:
+            raise ProviderError("No prompt provided for image generation")
+            
+        # Get style from kwargs if provided
+        style = kwargs.get("style", "digital_illustration")
+        
+        try:
+            # Debug info
+            logger.info(f"Generating image with Recraft provider. Base URL: {self.client.base_url}")
+            
+            loop = asyncio.get_event_loop()
+            start_time = time.time()
+            
+            # Call the OpenAI client's images.generate method
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.client.images.generate(
+                    prompt=prompt,
+                    style=style,
+                    model=model,
+                    **{k: v for k, v in kwargs.items() if k not in ["prompt", "style"]}
+                )
+            )
+            
+            latency = time.time() - start_time
+            
+            # Return the LLMResponse with the image URL
+            return LLMResponse(
+                content=response.data[0].url,
+                model_name=model,
+                usage=Usage(input_tokens=0, output_tokens=1),  # 1 output token = 1 image for pricing
+                latency=latency
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating image with Recraft: {str(e)}")
+            raise ProviderError(f"Failed to generate image: {str(e)}")
