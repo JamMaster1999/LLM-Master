@@ -66,6 +66,7 @@ class ModelRegistry:
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
         "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
         "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
+        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
         # Mistral Models
         "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),
         # Recraft Models

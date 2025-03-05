@@ -40,7 +40,9 @@ class UnifiedProvider(BaseLLMProvider):
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key_attr": "gemini_api_key",
             "supports_caching": False,
-            "generate_map": {}
+            "generate_map": {
+                "imagen-3.0-generate-002": "_generate_recraft_image"
+            }
         },
         "mistral": {
             "client_class": Mistral,
@@ -432,7 +434,7 @@ class UnifiedProvider(BaseLLMProvider):
             raise ConfigurationError(f"Failed to initialize {self.provider} provider: {str(e)}")
 
     async def _generate_recraft_image(self, messages: List[Dict[str, Any]], model: str, **kwargs) -> LLMResponse:
-        """Generate an image using Recraft's image generation API
+        """Generate an image using either Recraft or Imagen image generation APIs
         
         Args:
             messages: List of message dictionaries (will extract prompt from the last user message)
@@ -440,7 +442,7 @@ class UnifiedProvider(BaseLLMProvider):
             **kwargs: Additional arguments to pass to the API
             
         Returns:
-            LLMResponse containing the image URL
+            LLMResponse containing the image URL or base64 data
         """
         # Extract prompt from messages or from kwargs
         prompt = kwargs.get("prompt")
@@ -454,14 +456,21 @@ class UnifiedProvider(BaseLLMProvider):
         
         if not prompt:
             raise ProviderError("No prompt provided for image generation")
-            
-        # Get style from kwargs if provided
-        style = kwargs.get("style", "digital_illustration")
         
-        try:
-            # Debug info
+        # Determine which model we're using
+        is_imagen = "imagen" in model.lower()
+        
+        # Set model-specific parameters
+        if is_imagen:
+            # For Imagen models - MUST use b64_json format
+            style_params = {"response_format": "b64_json"}
+            logger.info(f"Generating image with Imagen provider. Base URL: {self.client.base_url}")
+        else:
+            # For Recraft models
+            style_params = {"style": kwargs.get("style", "digital_illustration")}
             logger.info(f"Generating image with Recraft provider. Base URL: {self.client.base_url}")
             
+        try:
             loop = asyncio.get_event_loop()
             start_time = time.time()
             
@@ -470,22 +479,24 @@ class UnifiedProvider(BaseLLMProvider):
                 None,
                 lambda: self.client.images.generate(
                     prompt=prompt,
-                    style=style,
                     model=model,
-                    **{k: v for k, v in kwargs.items() if k not in ["prompt", "style"]}
+                    n=kwargs.get("n", 1),
+                    **{**style_params, **{k: v for k, v in kwargs.items() 
+                       if k not in ["prompt", "style", "n"]}}
                 )
             )
             
             latency = time.time() - start_time
             
-            # Return the LLMResponse with the image URL
+            # Return response with the appropriate content format
             return LLMResponse(
-                content=response.data[0].url,
+                content=response.data[0].b64_json if is_imagen else response.data[0].url,
                 model_name=model,
-                usage=Usage(input_tokens=0, output_tokens=1),  # 1 output token = 1 image for pricing
+                usage=Usage(input_tokens=0, output_tokens=1),
                 latency=latency
             )
             
         except Exception as e:
-            logger.error(f"Error generating image with Recraft: {str(e)}")
+            provider_name = "Imagen" if is_imagen else "Recraft"
+            logger.error(f"Error generating image with {provider_name}: {str(e)}")
             raise ProviderError(f"Failed to generate image: {str(e)}")

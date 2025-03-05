@@ -5,6 +5,7 @@ import time
 import logging
 from typing import List, Dict, Any, Union, Generator, Optional
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
 
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
@@ -12,6 +13,12 @@ from .base_provider import ProviderError, ConfigurationError
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Special exception for content moderation that should not be retried
+class ContentModerationError(ProviderError):
+    """Exception raised when content is moderated and should not be retried"""
+    def __init__(self, message: str):
+        super().__init__(message, status_code="BFL_CONTENT_MODERATED")
 
 class BFLProvider(BaseLLMProvider):
     """Provider for Black Forest Labs (BFL) image generation API"""
@@ -53,6 +60,7 @@ class BFLProvider(BaseLLMProvider):
             **kwargs: Additional arguments to pass to the API
                 - width: Image width (default: 1024)
                 - height: Image height (default: 768)
+                - timeout: Maximum time to wait for generation in seconds (default: 120)
         
         Returns:
             LLMResponse containing the image URL
@@ -75,6 +83,7 @@ class BFLProvider(BaseLLMProvider):
         # Get image dimensions
         width = kwargs.get("width", 1024)
         height = kwargs.get("height", 768)
+        timeout = kwargs.get("timeout", 120)  # Default timeout of 2 minutes
         
         start_time = time.time()
         
@@ -95,9 +104,9 @@ class BFLProvider(BaseLLMProvider):
                             'prompt': prompt,
                             'width': width,
                             'height': height,
-                            'safety_tolerance': 6,
-                            **{k: v for k, v in kwargs.items() if k not in ['prompt', 'width', 'height']}
+                            **{k: v for k, v in kwargs.items() if k not in ['prompt', 'width', 'height', 'timeout', 'fallback_provider', 'fallback_model']}
                         },
+                        timeout=30,  # Request timeout
                     ).json()
                 )
             
@@ -105,12 +114,15 @@ class BFLProvider(BaseLLMProvider):
                 raise ProviderError(f"Failed to initiate BFL image generation: {request_data}")
             
             request_id = request_data["id"]
+            logger.info(f"BFL image generation initiated with request ID: {request_id}")
             
-            # Poll for result
-            result = None
-            while True:
+            # Poll for result with timeout
+            deadline = start_time + timeout
+            poll_count = 0
+            
+            async def poll_once():
                 with ThreadPoolExecutor() as executor:
-                    poll_result = await loop.run_in_executor(
+                    return await loop.run_in_executor(
                         executor,
                         lambda: requests.get(
                             f"{self.base_url}/get_result",
@@ -121,20 +133,70 @@ class BFLProvider(BaseLLMProvider):
                             params={
                                 'id': request_id,
                             },
+                            timeout=10,  # Request timeout
                         ).json()
                     )
+            
+            while time.time() < deadline:
+                poll_count += 1
+                poll_result = await poll_once()
                 
                 if poll_result.get("status") == "Ready":
+                    logger.info(f"BFL image generation completed after {poll_count} polls")
                     result = poll_result
                     break
                 elif poll_result.get("status") == "Failed":
                     raise ProviderError(f"BFL image generation failed: {poll_result}")
+                elif poll_result.get("status") == "Content Moderated":
+                    logger.warning(f"BFL image generation rejected due to content moderation")
+                    
+                    # Check if fallback provider and model are specified
+                    fallback_provider = kwargs.get("fallback_provider")
+                    fallback_model = kwargs.get("fallback_model")
+                    
+                    if fallback_provider and fallback_model:
+                        logger.info(f"Attempting fallback to {fallback_provider} with model {fallback_model}")
+                        
+                        try:
+                            # Dynamically import the provider module
+                            module_name = f".{fallback_provider}_provider"
+                            provider_module = import_module(module_name, package=__package__)
+                            
+                            # Get the provider class (convention: ProviderNameProvider)
+                            provider_class_name = f"{fallback_provider.title()}Provider"
+                            provider_class = getattr(provider_module, provider_class_name)
+                            
+                            # Initialize provider with same config
+                            fallback_provider_instance = provider_class(self.config)
+                            
+                            # Generate using fallback - only pass essential parameters
+                            # Don't pass BFL-specific parameters that might not be supported by the fallback
+                            return await fallback_provider_instance.generate(
+                                messages=messages,
+                                model=fallback_model,
+                                stream=False  # Always use non-streaming for fallback
+                            )
+                        except Exception as e:
+                            logger.error(f"Fallback to {fallback_provider} failed: {str(e)}")
+                            raise ContentModerationError(f"BFL content moderated and fallback failed: {str(e)}")
+                    else:
+                        raise ContentModerationError(
+                            "BFL image generation rejected due to content moderation. Specify fallback_provider and fallback_model to use a different provider."
+                        )
+                    
+                    # No need to continue polling, content moderation won't change
+                    break
                 
-                # Wait before polling again
+                logger.debug(f"BFL image poll {poll_count}: Status={poll_result.get('status')}")
+                
+                # Wait before polling again (500ms)
                 await asyncio.sleep(0.5)
+            else:
+                # Timeout reached
+                raise ProviderError(f"BFL image generation timed out after {timeout} seconds")
             
             # Extract image URL
-            if result and "result" in result and "sample" in result["result"]:
+            if "result" in result and "sample" in result["result"]:
                 image_url = result["result"]["sample"]
                 
                 # Calculate latency
@@ -147,6 +209,8 @@ class BFLProvider(BaseLLMProvider):
                 self.last_response = result
                 self.last_usage = usage
                 
+                logger.info(f"BFL image generated successfully in {latency:.2f} seconds")
+                
                 return LLMResponse(
                     content=image_url,
                     model_name=model,
@@ -156,6 +220,15 @@ class BFLProvider(BaseLLMProvider):
             else:
                 raise ProviderError(f"Invalid response from BFL: {result}")
             
+        except requests.RequestException as e:
+            logger.error(f"Network error during BFL image generation: {str(e)}")
+            raise ProviderError(f"Network error with BFL API: {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout during BFL image generation")
+            raise ProviderError(f"BFL image generation timed out")
+        except ContentModerationError:
+            # Re-raise content moderation errors without wrapping them
+            raise
         except Exception as e:
             logger.error(f"Error during BFL image generation: {str(e)}")
             raise ProviderError(f"BFL image generation failed: {str(e)}")

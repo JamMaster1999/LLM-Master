@@ -9,7 +9,7 @@ import asyncio
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
-from .bfl_provider import BFLProvider
+from .bfl_provider import BFLProvider, ContentModerationError
 from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
 
@@ -153,6 +153,21 @@ class QueryLLM:
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
                         **kwargs
                     )
+                # Special handling for BFL content moderation errors (no retry)
+                elif isinstance(e, ContentModerationError) or e.status_code == "BFL_CONTENT_MODERATED":
+                    logger.warning("BFL content moderation error detected, not retrying")
+                    if fallback_provider and fallback_model and not _is_fallback:
+                        logger.info(f"Using fallback provider {fallback_provider} with model {fallback_model}")
+                        return await self.query(
+                            model_name=fallback_model,
+                            messages=messages,
+                            stream=stream,
+                            moderation=moderation,
+                            _is_fallback=True,
+                            # Do NOT pass any kwargs to fallback provider for BFL fallbacks
+                        )
+                    else:
+                        raise
                 # Regular retry logic
                 elif retry_count < self.MAX_RETRIES:
                     retry_count += 1
@@ -265,7 +280,6 @@ class QueryLLM:
                     async for chunk in fallback_generator:
                         yield chunk
                     return
-                
                 # Regular retry logic
                 elif retry_count < self.MAX_RETRIES:
                     retry_count += 1
@@ -501,6 +515,7 @@ class QueryLLM:
             "mistral": ("mistral", UnifiedProvider),
             "recraft": ("recraft", UnifiedProvider),
             "fireworks": ("fireworks", UnifiedProvider),
+            "imagen": ("gemini", UnifiedProvider),  # Use gemini provider for imagen models
             "flux": (None, BFLProvider)  # Use "flux" instead of "bfl" to match BFL model names
         }
 
