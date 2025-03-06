@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Union, Generator, Optional
 from openai import OpenAI
-from mistralai import Mistral
+# from mistralai import Mistral
 import google.generativeai as genai
 from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, ModelRegistry
 from .config import LLMConfig
