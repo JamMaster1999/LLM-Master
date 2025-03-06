@@ -44,13 +44,13 @@ class UnifiedProvider(BaseLLMProvider):
                 "imagen-3.0-generate-002": "_generate_recraft_image"
             }
         },
-        "mistral": {
-            "client_class": Mistral,
-            "base_url": None,
-            "api_key_attr": "mistral_api_key",
-            "supports_caching": False,
-            "generate_map": {}
-        },
+        # "mistral": {
+        #     "client_class": Mistral,
+        #     "base_url": None,
+        #     "api_key_attr": "mistral_api_key",
+        #     "supports_caching": False,
+        #     "generate_map": {}
+        # },
         "recraft": {
             "client_class": OpenAI,
             "base_url": "https://external.api.recraft.ai/v1",
