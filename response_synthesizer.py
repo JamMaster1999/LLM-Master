@@ -37,11 +37,27 @@ class QueryLLM:
         self._providers = {}
         self._rate_limiters = {}
         
-        # Initialize rate limiters for each model
-        for model_name, model_config in ModelRegistry.CONFIGS.items():
-            self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
-            
+        # No longer initializing all rate limiters upfront
+        # Instead, we'll initialize them on demand when needed
+        
         logger.info("Initialized QueryLLM handler with rate limiters")
+
+    def _get_rate_limiter(self, model_name: str) -> RateLimiter:
+        """
+        Get or create a rate limiter for the model
+        
+        Args:
+            model_name: Name of the model to get/create rate limiter for
+            
+        Returns:
+            RateLimiter instance
+        """
+        if model_name not in self._rate_limiters:
+            # Create rate limiter on demand
+            model_config = ModelRegistry.get_config(model_name)
+            self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
+        
+        return self._rate_limiters[model_name]
 
     async def _process_request(self, model_name: str, request: dict) -> LLMResponse:
         """Process a single request"""
@@ -65,7 +81,7 @@ class QueryLLM:
         
         # Track usage if available
         if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-            await self._rate_limiters[model_name].add_token_usage(
+            await self._get_rate_limiter(model_name).add_token_usage(
                 provider.last_usage.input_tokens + provider.last_usage.output_tokens
             )
             
@@ -111,7 +127,7 @@ class QueryLLM:
             
         start_time = time.time()
         retry_count = 0
-        rate_limiter = self._rate_limiters[model_name]
+        rate_limiter = self._get_rate_limiter(model_name)
 
         # Content moderation if enabled
         if moderation:
@@ -220,7 +236,7 @@ class QueryLLM:
         start_time = time.time()
         retry_count = 0
         provider = self._get_provider(model_name)
-        rate_limiter = self._rate_limiters[model_name]
+        rate_limiter = self._get_rate_limiter(model_name)
 
         if moderation:
             self._moderate_content(messages)
@@ -256,7 +272,7 @@ class QueryLLM:
 
                 # Post-stream, handle usage if available
                 if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-                    await self._rate_limiters[model_name].add_token_usage(
+                    await self._get_rate_limiter(model_name).add_token_usage(
                         provider.last_usage.input_tokens + provider.last_usage.output_tokens
                     )
                 return

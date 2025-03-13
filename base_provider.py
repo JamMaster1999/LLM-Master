@@ -76,13 +76,9 @@ class UnifiedProvider(BaseLLMProvider):
         self.provider = provider
         self.config = config or LLMConfig()
         
-        # Initialize rate limiters for each model
+        # Initialize rate limiters dictionary but don't create them yet
         self.rate_limiters = {}
-        for model_name, model_config in ModelRegistry.CONFIGS.items():
-            self.rate_limiters[model_name] = RateLimiter(
-                model_config=model_config,
-                model_name=model_name
-            )
+        
         self.openai_compatible_providers = [
             p for p, cfg in self.PROVIDER_CONFIGS.items() 
             if cfg["client_class"] == OpenAI
@@ -95,9 +91,29 @@ class UnifiedProvider(BaseLLMProvider):
             
         self._setup_client(provider_config)
         
+    def _get_rate_limiter(self, model_name: str) -> RateLimiter:
+        """
+        Get or create a rate limiter for the model
+        
+        Args:
+            model_name: Name of the model to get/create rate limiter for
+            
+        Returns:
+            RateLimiter instance
+        """
+        if model_name not in self.rate_limiters:
+            # Create rate limiter on demand
+            model_config = ModelRegistry.get_config(model_name)
+            self.rate_limiters[model_name] = RateLimiter(
+                model_config=model_config,
+                model_name=model_name
+            )
+        
+        return self.rate_limiters[model_name]
+        
     async def generate_parallel(self, requests: List[Dict], model: str, **kwargs) -> List[LLMResponse]:
         """Generate responses in parallel while respecting rate limits"""
-        rate_limiter = self.rate_limiters[model]
+        rate_limiter = self._get_rate_limiter(model)
         responses = []
         
         async def process_request(request):
