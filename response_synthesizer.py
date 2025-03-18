@@ -532,7 +532,8 @@ class QueryLLM:
             "recraft": ("recraft", UnifiedProvider),
             "fireworks": ("fireworks", UnifiedProvider),
             "imagen": ("gemini", UnifiedProvider),  # Use gemini provider for imagen models
-            "flux": (None, BFLProvider)  # Use "flux" instead of "bfl" to match BFL model names
+            "flux": (None, BFLProvider),  # Use "flux" instead of "bfl" to match BFL model names
+            "perplexity": ("sonar", UnifiedProvider)
         }
 
         try:

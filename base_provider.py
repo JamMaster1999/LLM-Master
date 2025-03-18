@@ -67,7 +67,13 @@ class UnifiedProvider(BaseLLMProvider):
             "supports_caching": False,
             "generate_map": {}
         },
-
+        "perplexity": {
+            "client_class": OpenAI,
+            "base_url": "https://api.perplexity.ai",
+            "api_key_attr": "perplexity_api_key",
+            "supports_caching": False,
+            "generate_map": {}
+        }
     }
 
     def __init__(self, provider: str = "openai", config: Optional[LLMConfig] = None):

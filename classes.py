@@ -75,7 +75,12 @@ class ModelRegistry:
         "accounts/fireworks/models/deepseek-r1": ModelConfig(3, 8, None, 600),
         # BFL Models
         "flux-dev": ModelConfig(0.00, 0.025, None, 24),
-        "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24)
+        "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        # Perplexity Models
+        "sonar": ModelConfig(1, 1, None, 50),
+        "sonar-pro": ModelConfig(3, 15, None, 50),
+        "sonar-reasoning": ModelConfig(1, 5, None, 50),
+        "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
     }
 
     @classmethod
