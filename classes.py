@@ -328,9 +328,7 @@ class RateLimiter:
         # Only queue the request ID
         await self.request_queue.put.aio(request_id)
         
-        queue_size = len(self.request_dict)
-        logger.info(f"Submitted request {request_id[:8]} to {self.model_name}. Queue size: {queue_size}")
-        
+        logger.debug(f"Submitted request {request_id[:8]} to {self.model_name}")
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
@@ -343,7 +341,7 @@ class RateLimiter:
                 del self.response_dict[request_id]  # Cleanup
                 if request_id in self.request_dict:
                     del self.request_dict[request_id]  # Cleanup request too
-                logger.info(f"Got response for request {request_id[:8]} from {self.model_name}")
+                logger.debug(f"Got response for request {request_id[:8]}")
                 return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
@@ -359,7 +357,7 @@ class RateLimiter:
                     # Get actual request data from Dict
                     if request_id in self.request_dict:
                         request = self.request_dict[request_id]
-                        logger.info(f"Processing request {request_id[:8]} from {self.model_name} queue")
+                        logger.debug(f"Processing request {request_id[:8]}")
                         return request_id, request
                     
                 except TimeoutError:
