@@ -4,11 +4,12 @@ import logging
 import requests
 import os
 from pathlib import Path
-from typing import Dict, Optional, List, Union, Any, Generator
+from typing import Dict, Optional, List, Union, Any, Generator, AsyncGenerator
 import asyncio
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
+from .bfl_provider import BFLProvider, ContentModerationError
 from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
 
@@ -37,22 +38,27 @@ class QueryLLM:
         self._rate_limiters = {}
         self._background_tasks = {}
         
-        # Initialize rate limiters for each model
-        for model_name, model_config in ModelRegistry.CONFIGS.items():
-            self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
-            # Start background processor for each model
-            self._background_tasks[model_name] = asyncio.create_task(self._process_queue(model_name))
-            
-        logger.info("Initialized QueryLLM handler with rate limiters and background processors")
+        # No longer initializing all rate limiters upfront
+        # Instead, we'll initialize them on demand when needed
+        
+        logger.info("Initialized QueryLLM handler with rate limiters")
 
-    def _ensure_rate_limiter(self, model_name: str):
-        """Lazily initialize rate limiter and background task for a model"""
+    def _get_rate_limiter(self, model_name: str) -> RateLimiter:
+        """
+        Get or create a rate limiter for the model
+        
+        Args:
+            model_name: Name of the model to get/create rate limiter for
+            
+        Returns:
+            RateLimiter instance
+        """
         if model_name not in self._rate_limiters:
+            # Create rate limiter on demand
             model_config = ModelRegistry.get_config(model_name)
             self._rate_limiters[model_name] = RateLimiter(model_config, model_name)
-            # Start background processor for this model
-            self._background_tasks[model_name] = asyncio.create_task(self._process_queue(model_name))
-            logger.debug(f"Initialized rate limiter for {model_name}")
+        
+        return self._rate_limiters[model_name]
 
     async def _process_request(self, model_name: str, request: dict) -> LLMResponse:
         """Process a single request"""
@@ -76,7 +82,7 @@ class QueryLLM:
         
         # Track usage if available
         if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-            await self._rate_limiters[model_name].add_token_usage(
+            await self._get_rate_limiter(model_name).add_token_usage(
                 provider.last_usage.input_tokens + provider.last_usage.output_tokens
             )
             
@@ -88,23 +94,41 @@ class QueryLLM:
               stream: bool = False,
               fallback_provider: Optional[str] = None,
               fallback_model: Optional[str] = None,
-              moderation: bool = False
-    ) -> Union[LLMResponse, str]:
+              moderation: bool = False,
+              _is_fallback: bool = False,  # Internal parameter to prevent infinite recursion
+              **kwargs
+    ) -> Union[LLMResponse, AsyncGenerator[str, None]]:
         """
         Queue and process a request while respecting rate limits
+        
+        Args:
+            model_name: Name of the model to use
+            messages: List of message dictionaries
+            stream: Whether to stream the response
+            fallback_provider: Provider to fallback to if the primary fails
+            fallback_model: Model to fallback to if the primary fails
+            moderation: Whether to run content moderation
+            _is_fallback: Internal parameter to prevent infinite recursion on fallbacks
+            **kwargs: Additional model-specific parameters (e.g., temperature, reasoning_effort)
+            
+        Returns:
+            Either a LLMResponse object or an AsyncGenerator for streaming
         """
         if stream:
-            return await self._streaming_query(
+            # Return the async generator directly without awaiting it
+            return self._streaming_query(
                 model_name=model_name,
                 messages=messages,
-                fallback_provider=fallback_provider,
-                fallback_model=fallback_model,
-                moderation=moderation
+                fallback_provider=fallback_provider if not _is_fallback else None,
+                fallback_model=fallback_model if not _is_fallback else None,
+                moderation=moderation,
+                _is_fallback=_is_fallback,
+                **kwargs
             )
             
         start_time = time.time()
         retry_count = 0
-        rate_limiter = self._rate_limiters[model_name]
+        rate_limiter = self._get_rate_limiter(model_name)
 
         # Content moderation if enabled
         if moderation:
@@ -122,7 +146,8 @@ class QueryLLM:
                     "messages": messages,
                     "kwargs": {
                         "stream": stream,
-                        "moderation": moderation
+                        "moderation": moderation,
+                        **kwargs  # Pass through all model-specific parameters
                     }
                 })
                 
@@ -134,24 +159,66 @@ class QueryLLM:
                 return response
 
             except ProviderError as e:
-                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                # Special handling for content policy violations
+                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model and not _is_fallback:
                     logger.warning(f"Content policy violation, falling back to {fallback_model}")
                     return await self.query(
                         model_name=fallback_model,
                         messages=messages,
                         stream=stream,
-                        moderation=moderation
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
                     )
+                # Special handling for BFL content moderation errors (no retry)
+                elif isinstance(e, ContentModerationError) or e.status_code == "BFL_CONTENT_MODERATED":
+                    logger.warning("BFL content moderation error detected, not retrying")
+                    if fallback_provider and fallback_model and not _is_fallback:
+                        logger.info(f"Using fallback provider {fallback_provider} with model {fallback_model}")
+                        return await self.query(
+                            model_name=fallback_model,
+                            messages=messages,
+                            stream=stream,
+                            moderation=moderation,
+                            _is_fallback=True,
+                            # Do NOT pass any kwargs to fallback provider for BFL fallbacks
+                        )
+                    else:
+                        raise
+                # Regular retry logic
                 elif retry_count < self.MAX_RETRIES:
                     retry_count += 1
                     continue
+                # Use fallback after retries are exhausted
+                elif fallback_provider and fallback_model and not _is_fallback:
+                    logger.warning(f"All retries failed, falling back to {fallback_model}")
+                    return await self.query(
+                        model_name=fallback_model,
+                        messages=messages,
+                        stream=stream,
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
+                    )
                 else:
                     raise
 
             except Exception as e:
+                # Regular retry logic
                 if retry_count < self.MAX_RETRIES:
                     retry_count += 1
                     continue
+                # Use fallback after retries are exhausted
+                elif fallback_provider and fallback_model and not _is_fallback:
+                    logger.warning(f"All retries failed, falling back to {fallback_model}")
+                    return await self.query(
+                        model_name=fallback_model,
+                        messages=messages,
+                        stream=stream,
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
+                    )
                 else:
                     raise
 
@@ -160,15 +227,17 @@ class QueryLLM:
                          messages: List[Dict[str, Any]],
                          fallback_provider: Optional[str] = None,
                          fallback_model: Optional[str] = None,
-                         moderation: bool = False
-    ) -> Generator[str, None, None]:
+                         moderation: bool = False,
+                         _is_fallback: bool = False,
+                         **kwargs
+    ) -> AsyncGenerator[str, None]:
         """
-        Internal method to handle streaming. Returns a generator of chunks.
+        Internal method to handle streaming. Returns an async generator of chunks.
         """
         start_time = time.time()
         retry_count = 0
         provider = self._get_provider(model_name)
-        rate_limiter = self._rate_limiters[model_name]
+        rate_limiter = self._get_rate_limiter(model_name)
 
         if moderation:
             self._moderate_content(messages)
@@ -190,41 +259,92 @@ class QueryLLM:
 
                 # Use the provider in streaming mode
                 full_response = ""
-                async for chunk in provider.generate(
+                # First await the coroutine to get the generator
+                stream_generator = await provider.generate(
                     messages=formatted_messages,
                     model=model_name,
-                    stream=True
-                ):
+                    stream=True,
+                    **kwargs
+                )
+                # Now iterate through the regular generator
+                for chunk in stream_generator:
                     full_response += chunk
                     yield chunk  # <--- The actual streaming output to the caller
 
                 # Post-stream, handle usage if available
                 if hasattr(provider, 'last_usage') and provider.last_usage is not None:
-                    self._rate_limiters[model_name].add_token_usage(
+                    await self._get_rate_limiter(model_name).add_token_usage(
                         provider.last_usage.input_tokens + provider.last_usage.output_tokens
                     )
                 return
 
             except ProviderError as e:
-                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model:
+                # Special handling for content policy violations  
+                if e.status_code == "CONTENT_POLICY" and fallback_provider and fallback_model and not _is_fallback:
                     logger.warning(f"Content policy violation, falling back to {fallback_model}")
-                    async for chunk in self._streaming_query(
+                    
+                    # Just use the main query method for fallback
+                    fallback_generator = await self.query(
                         model_name=fallback_model,
                         messages=messages,
-                        moderation=moderation
-                    ):
+                        stream=True,
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
+                    )
+                    
+                    # Relay all chunks from the fallback
+                    async for chunk in fallback_generator:
                         yield chunk
                     return
+                # Regular retry logic
                 elif retry_count < self.MAX_RETRIES:
                     retry_count += 1
                     continue
+                # Use fallback after retries are exhausted  
+                elif fallback_provider and fallback_model and not _is_fallback:
+                    logger.warning(f"All retries failed, falling back to {fallback_model}")
+                    
+                    # Just use the main query method for fallback
+                    fallback_generator = await self.query(
+                        model_name=fallback_model,
+                        messages=messages,
+                        stream=True,
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
+                    )
+                    
+                    # Relay all chunks from the fallback
+                    async for chunk in fallback_generator:
+                        yield chunk
+                    return
                 else:
                     raise
-
+                    
             except Exception as e:
+                # Regular retry logic
                 if retry_count < self.MAX_RETRIES:
                     retry_count += 1
                     continue
+                # Use fallback after retries are exhausted
+                elif fallback_provider and fallback_model and not _is_fallback:
+                    logger.warning(f"All retries failed, falling back to {fallback_model}")
+                    
+                    # Just use the main query method for fallback
+                    fallback_generator = await self.query(
+                        model_name=fallback_model,
+                        messages=messages,
+                        stream=True,
+                        moderation=moderation,
+                        _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
+                        **kwargs
+                    )
+                    
+                    # Relay all chunks from the fallback
+                    async for chunk in fallback_generator:
+                        yield chunk
+                    return
                 else:
                     raise
 
@@ -391,7 +511,7 @@ class QueryLLM:
 
         return {"role": message["role"], "content": content}
 
-    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider]:
+    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider, BFLProvider]:
         """
         Get or create appropriate provider for the model
 
@@ -406,9 +526,15 @@ class QueryLLM:
         """
         provider_map = {
             "gpt": ("openai", UnifiedProvider),
+            "o3": ("openai", UnifiedProvider),  # Added mapping for o3 models
             "claude": ("anthropic", AnthropicProvider),
             "gemini": ("gemini", UnifiedProvider),
-            "mistral": ("mistral", UnifiedProvider)
+            "mistral": ("mistral", UnifiedProvider),
+            "recraft": ("recraft", UnifiedProvider),
+            "fireworks": ("fireworks", UnifiedProvider),
+            "imagen": ("gemini", UnifiedProvider),  # Use gemini provider for imagen models
+            "flux": (None, BFLProvider),  # Use "flux" instead of "bfl" to match BFL model names
+            "perplexity": ("sonar", UnifiedProvider)
         }
 
         try:

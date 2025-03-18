@@ -6,8 +6,16 @@ from enum import Enum
 import logging
 import modal
 import asyncio
+import re
 
 logger = logging.getLogger(__name__)
+
+# Initialize the lock queue for rate limiting
+lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
+
+# Ensure exactly one lock token exists
+if lock_queue.len() == 0:
+    lock_queue.put("LOCK_TOKEN", block=False)  # Non-blocking put for initialization
 
 class LLMError(Exception):
     """Base exception for LLM-related errors"""
@@ -45,17 +53,34 @@ class ModelRegistry:
         # OpenAI Models
         "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 5000),
         "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
+        "gpt-4o-mini-audio-preview": ModelConfig(0.15, 0.60, 0.075, 5000),
+        "gpt-4o-audio-preview": ModelConfig(2.50, 10.00, 1.25, 5000),
+        "o3-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
         "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
         # Anthropic Models
         "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-3-5-haiku-latest": ModelConfig(1.00, 5.00, 0.10, 4000),
         # Gemini Models
         "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
-        "gemini-2.0-flash-exp": ModelConfig(0.075, 0.30, None, 10),
-        "gemini-2.0-flash-thinking-exp": ModelConfig(0.075, 0.30, None, 10),
+        "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
+        "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
+        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
         # Mistral Models
-        "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300)
+        "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),
+        # Recraft Models
+        "recraftv3": ModelConfig(0.00, 0.04, None, 100),
+        # Fireworks Models
+        "accounts/fireworks/models/deepseek-r1": ModelConfig(3, 8, None, 600),
+        # BFL Models
+        "flux-dev": ModelConfig(0.00, 0.025, None, 24),
+        "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        # Perplexity Models
+        "sonar": ModelConfig(1, 1, None, 50),
+        "sonar-pro": ModelConfig(3, 15, None, 50),
+        "sonar-reasoning": ModelConfig(1, 5, None, 50),
+        "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
     }
 
     @classmethod
@@ -130,16 +155,19 @@ class LLMResponse:
         usage: Token usage information
         latency: Response time in seconds
         cost: Calculated cost of the request
+        audio_data: Optional base64-encoded audio data (for audio-capable models)
     """
     def __init__(self, 
                  content: str,
                  model_name: str,
                  usage: Usage,
-                 latency: float):
+                 latency: float,
+                 audio_data: Optional[str] = None):
         self.content = content
         self.model_name = model_name
         self.usage = usage
         self.latency = latency
+        self.audio_data = audio_data
         
         try:
             model_config = ModelRegistry.get_config(model_name)
@@ -179,134 +207,115 @@ class BaseLLMProvider(ABC):
         """Stop the current generation if any"""
         pass
 
-class ResponseSynthesizer:
-    """Main class for handling LLM interactions"""
-    def __init__(self):
-        self._providers = {}
-
-    def generate_response(self,
-                         model_name: str,
-                         messages: List[Dict[str, Any]],
-                         stream: bool = False) -> Union[LLMResponse, Generator[str, None, None]]:
-        start_time = time.time()
-        
-        try:
-            provider = self._get_provider(model_name)
-            response = provider.generate(messages, stream=stream)
-            
-            if not stream:
-                response.latency = time.time() - start_time
-            
-            return response
-            
-        except Exception as e:
-            # Handle errors and potentially implement fallback logic
-            raise
-
-    def stop_generation(self):
-        """Stop the current generation if any"""
-        if self._providers:
-            # Stop the actual provider's generation
-            for provider in self._providers.values():
-                provider.stop_generation()
-
-    def _get_provider(self, model_name: str) -> BaseLLMProvider:
-        """Get or create appropriate provider for the model"""
-        provider_map = {
-            "gpt": "OpenAIProvider",
-            "claude": "AnthropicProvider",
-            "gemini": "GeminiProvider",
-            "mistral": "MistralProvider"
-        }
-        
-        # Determine provider from model name
-        provider_key = next(
-            (key for key in provider_map if key in model_name.lower()),
-            None
-        )
-        
-        if not provider_key:
-            raise ValueError(f"Unsupported model: {model_name}")
-            
-        if provider_key not in self._providers:
-            # Initialize provider (we'll implement these classes next)
-            provider_class = globals()[provider_map[provider_key]]
-            self._providers[provider_key] = provider_class()
-            
-        return self._providers[provider_key]
-
 class RateLimiter:
-    """Distributed rate limiter using Modal Queue and Dict for request-response handling"""
+    """Distributed rate limiter using a lock queue plus timestamp-based checking."""
     def __init__(self, model_config: ModelConfig, model_name: str):
         self.model_config = model_config
         self.model_name = model_name
         
+        # Sanitize model name for queue names (replace slashes and other invalid chars with underscores)
+        sanitized_name = self._sanitize_name(model_name)
+        
         # Queue only stores request IDs for coordination
-        self.request_queue = modal.Queue.from_name(f"llm_queue_{model_name}", create_if_missing=True)
+        self.request_queue = modal.Queue.from_name(f"llm_queue_{sanitized_name}", create_if_missing=True)
         
         # Dict stores actual request/response data
-        self.request_dict = modal.Dict.from_name(f"llm_requests_{model_name}", create_if_missing=True)
-        self.response_dict = modal.Dict.from_name(f"llm_responses_{model_name}", create_if_missing=True)
+        self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
+        self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
         
         # Dict for rate limiting
-        self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{model_name}", create_if_missing=True)
+        self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
         
-        # Initialize rate tracking with atomic counter
-        if "request_count" not in self.rate_dict:
-            self.rate_dict["request_count"] = 0
+        # Initialize rate tracking
         if "request_timestamps" not in self.rate_dict:
             self.rate_dict["request_timestamps"] = []
-                
-    def _cleanup_old_requests(self):
-        """Remove requests older than 1 minute and update counter atomically"""
-        import time
-        current_time = time.time()
-        
-        # Get current state
-        timestamps = self.rate_dict["request_timestamps"]
-        old_count = len(timestamps)
-        
-        # Filter old timestamps
-        new_timestamps = [ts for ts in timestamps if current_time - ts < 60]
-        new_count = len(new_timestamps)
-        
-        # Only update and log if there's a change
-        if old_count != new_count:
-            self.rate_dict["request_timestamps"] = new_timestamps
-            self.rate_dict["request_count"] = new_count
-            logger.debug(f"Cleaned up {old_count - new_count} old requests for {self.model_name}")
-            
-    async def can_make_request(self) -> bool:
-        """Check if we can make a request based on rate limits"""
-        self._cleanup_old_requests()
-        
-        # Get current count atomically
-        current_count = self.rate_dict["request_count"]
-        return current_count < self.model_config.rate_limit_rpm
+    
+    def _sanitize_name(self, name: str) -> str:
+        """
+        Sanitize model name for use in Modal Queue and Dict names.
+        Replace invalid characters with underscores.
+        """
+        # Replace slashes, spaces and other potentially problematic characters
+        return re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name)
         
     async def wait_for_capacity(self):
-        """Wait until there is capacity to make a request"""
+        """
+        Acquire our distributed 'lock_queue' to ensure 
+        read/check/write is atomic. We'll loop until capacity is found.
+        """
+        import time
+        
         first_wait = True
         while True:
-            self._cleanup_old_requests()
+            # 1) Acquire the lock
+            await lock_queue.get.aio()
+            try:
+                # 2) Read timestamps
+                timestamps = self.rate_dict["request_timestamps"]
+                
+                # 3) Prune old
+                now = time.time()
+                timestamps = [ts for ts in timestamps if now - ts < 60]
+                
+                # 4) Check capacity
+                if len(timestamps) < self.model_config.rate_limit_rpm:
+                    # We have capacity => append
+                    timestamps.append(now)
+                    self.rate_dict["request_timestamps"] = timestamps
+
+                    # Log if we had to wait
+                    if not first_wait:
+                        logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                    
+                    return  # Done
+                else:
+                    # No capacity => must wait
+                    if first_wait:
+                        logger.info(
+                            f"Rate limit reached for {self.model_name} "
+                            f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                        )
+                        first_wait = False
+            finally:
+                # 5) Release the lock so other tasks can check
+                await lock_queue.put.aio("LOCK_TOKEN")
             
-            # Get current state atomically
-            current_count = self.rate_dict["request_count"]
+            # Wait a second before re-checking
+            await asyncio.sleep(1)
+
+    async def can_make_request(self) -> bool:
+        """
+        Do the same logic, but return True/False immediately 
+        instead of blocking until capacity.
+        """
+        import time
+        
+        # Acquire the lock
+        await lock_queue.get.aio()
+        try:
             timestamps = self.rate_dict["request_timestamps"]
+            now = time.time()
+            timestamps = [ts for ts in timestamps if now - ts < 60]
             
-            # Check if we have capacity
-            if current_count < self.model_config.rate_limit_rpm:
-                # Update state atomically
-                timestamps.append(time.time())
+            if len(timestamps) < self.model_config.rate_limit_rpm:
+                # Append now
+                timestamps.append(now)
                 self.rate_dict["request_timestamps"] = timestamps
-                self.rate_dict["request_count"] = current_count + 1
-                return
-            
-            # No capacity, wait
-            if first_wait:
-                logger.info(f"Rate limit reached for {self.model_name} ({current_count}/{self.model_config.rate_limit_rpm})")
-                first_wait = False
-            await asyncio.sleep(1)  # Wait a second before checking again
+                return True
+            else:
+                # Update pruned timestamps even when at capacity
+                self.rate_dict["request_timestamps"] = timestamps
+                return False
+        finally:
+            await lock_queue.put.aio("LOCK_TOKEN")
+
+    async def add_token_usage(self, tokens: int):
+        """Track token usage"""
+        if "token_usage" not in self.rate_dict:
+            self.rate_dict["token_usage"] = 0
+        current_usage = self.rate_dict["token_usage"]
+        self.rate_dict["token_usage"] = current_usage + tokens
+        logger.info(f"Added {tokens} tokens to {self.model_name}. Total usage: {current_usage + tokens}")
         
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
@@ -317,7 +326,7 @@ class RateLimiter:
         self.request_dict[request_id] = request
         
         # Only queue the request ID
-        await self.request_queue.put(request_id)
+        await self.request_queue.put.aio(request_id)
         
         logger.debug(f"Submitted request {request_id[:8]} to {self.model_name}")
         return request_id
@@ -358,12 +367,4 @@ class RateLimiter:
     def store_response(self, request_id: str, response: Any):
         """Store response for a request"""
         self.response_dict[request_id] = response
-        logger.debug(f"Stored response for {request_id[:8]}")
-        
-    async def add_token_usage(self, tokens: int):
-        """Track token usage"""
-        if "token_usage" not in self.rate_dict:
-            self.rate_dict["token_usage"] = 0
-        current_usage = self.rate_dict["token_usage"]
-        self.rate_dict["token_usage"] = current_usage + tokens
-        logger.debug(f"Added {tokens} tokens to {self.model_name}. Total: {current_usage + tokens}")
+        logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")
