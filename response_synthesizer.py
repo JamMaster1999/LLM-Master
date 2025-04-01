@@ -276,6 +276,11 @@ class QueryLLM:
                     await self._get_rate_limiter(model_name).add_token_usage(
                         provider.last_usage.input_tokens + provider.last_usage.output_tokens
                     )
+                    
+                # Include citations for Perplexity API if available
+                if hasattr(provider, 'last_citations') and provider.last_citations is not None:
+                    pass
+                    
                 return
 
             except ProviderError as e:
@@ -534,7 +539,7 @@ class QueryLLM:
             "fireworks": ("fireworks", UnifiedProvider),
             "imagen": ("gemini", UnifiedProvider),  # Use gemini provider for imagen models
             "flux": (None, BFLProvider),  # Use "flux" instead of "bfl" to match BFL model names
-            "perplexity": ("sonar", UnifiedProvider)
+            "sonar": ("perplexity", UnifiedProvider)
         }
 
         try:

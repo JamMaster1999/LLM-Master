@@ -66,6 +66,7 @@ class ModelRegistry:
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
         "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
         "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
+        "gemini-2.0-pro-exp-02-05": ModelConfig(1.25, 5.00, None, 5),
         "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
         # Mistral Models
         "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),
@@ -156,18 +157,21 @@ class LLMResponse:
         latency: Response time in seconds
         cost: Calculated cost of the request
         audio_data: Optional base64-encoded audio data (for audio-capable models)
+        citations: Optional list of citations (for Perplexity models)
     """
     def __init__(self, 
                  content: str,
                  model_name: str,
                  usage: Usage,
                  latency: float,
-                 audio_data: Optional[str] = None):
+                 audio_data: Optional[str] = None,
+                 citations: Optional[List[str]] = None):
         self.content = content
         self.model_name = model_name
         self.usage = usage
         self.latency = latency
         self.audio_data = audio_data
+        self.citations = citations
         
         try:
             model_config = ModelRegistry.get_config(model_name)

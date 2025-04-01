@@ -69,6 +69,10 @@ class AnthropicProvider(BaseLLMProvider):
             if not model:
                 raise ValueError("Model parameter is required")
             
+            # Ensure max_tokens has a default value if not provided
+            if 'max_tokens' not in kwargs:
+                kwargs['max_tokens'] = 1024
+            
             logger.debug(f"Generating response with model: {model}")
             
             loop = asyncio.get_event_loop()
@@ -76,7 +80,6 @@ class AnthropicProvider(BaseLLMProvider):
                 None,
                 lambda: self.client.messages.create(
                     model=model,
-                    max_tokens=kwargs.get('max_tokens', 1024),
                     messages=messages,
                     **kwargs
                 )
@@ -125,6 +128,10 @@ class AnthropicProvider(BaseLLMProvider):
             if not model:
                 raise ValueError("Model parameter is required")
                 
+            # Ensure max_tokens has a default value if not provided
+            if 'max_tokens' not in kwargs:
+                kwargs['max_tokens'] = 1024
+                
             logger.debug(f"Starting streaming response with model: {model}")
             
             full_response = ""
@@ -133,7 +140,6 @@ class AnthropicProvider(BaseLLMProvider):
             
             with self.client.messages.stream(
                 model=model,
-                max_tokens=kwargs.get('max_tokens', 1024),
                 messages=messages,
                 **kwargs
             ) as stream:
