@@ -284,26 +284,18 @@ class UnifiedProvider(BaseLLMProvider):
             if self.provider == "perplexity":
                 # Access the citations directly from the response object
                 try:
-                    # Debug: print the response structure
-                    if hasattr(response, 'model_dump'):
-                        logger.info(f"Perplexity response structure: {response.model_dump().keys()}")
-                    
-                    # Try different ways to access citations
                     if hasattr(response, 'citations'):
                         citations = response.citations
-                        logger.info(f"Found citations using direct attribute access: {citations}")
-                    elif hasattr(response, 'model_dump') and 'citations' in response.model_dump():
-                        citations = response.model_dump()['citations']
-                        logger.info(f"Found citations in model_dump: {citations}")
-                    else:
-                        logger.warning(f"No citations found in Perplexity response")
-                        
-                    if citations:
-                        # Format citations as JSON array string within the XML-like tags
-                        citations_str = str(citations).replace("'", '"')  # Replace single quotes with double quotes for JSON
-                        content += f"\n<citations_list>{citations_str}</citations_list>"
-                        # Store citations for later access
                         self.last_citations = citations
+                        
+                        # Format citations in the requested format
+                        citation_text = "<citation_list>"
+                        for citation in citations:
+                            citation_text += f"<citation_source>{citation}</citation_source>"
+                        citation_text += "</citation_list>"
+                        
+                        # Append the citations to the content
+                        content += f"\n{citation_text}"
                 except Exception as e:
                     logger.error(f"Error extracting citations: {str(e)}")
                     # Continue despite the error
@@ -371,6 +363,17 @@ class UnifiedProvider(BaseLLMProvider):
                                 output_tokens=chunk.usage.completion_tokens,
                                 cached_tokens=0
                             )
+                        # For Perplexity check both citations and content
+                        elif self.provider == "perplexity":
+                            # First check if this is a content chunk
+                            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
+                                content = chunk.choices[0].delta.content
+                                full_response += content
+                                yield content
+                            
+                            # Then check if it has citations (can be stored for later)
+                            if hasattr(chunk, 'citations') and chunk.citations:
+                                self.last_citations = chunk.citations
                         elif chunk.choices and chunk.choices[0].delta.content is not None:
                             content = chunk.choices[0].delta.content
                             full_response += content
@@ -393,35 +396,18 @@ class UnifiedProvider(BaseLLMProvider):
                 # Store the full response for potential later use
                 self.last_response = full_response
                 
-                # Store citations for Perplexity API if available
-                if self.provider == "perplexity":
-                    # Access the citations directly from the stream object
-                    try:
-                        # Debug: log the stream object structure
-                        logger.info(f"Perplexity stream object type: {type(stream)}")
-                        if hasattr(stream, 'model_dump'):
-                            logger.info(f"Perplexity stream structure: {stream.model_dump().keys()}")
-                        
-                        # Try different ways to access citations
-                        if hasattr(stream, 'citations'):
-                            self.last_citations = stream.citations
-                            logger.info(f"Found stream citations using direct attribute access: {self.last_citations}")
-                        else:
-                            # Try to inspect the stream object directly
-                            logger.info(f"Stream dir: {dir(stream)}")
-                            self.last_citations = None
-                            logger.warning(f"No citations found in Perplexity stream")
-                            
-                        if self.last_citations:
-                            # Format citations as JSON array string within the XML-like tags
-                            citations_str = str(self.last_citations).replace("'", '"')  # Replace single quotes with double quotes for JSON
-                            citation_text = f"\n<citations_list>{citations_str}</citations_list>"
-                            # Don't modify full_response here since it's already been yielded
-                            # Just yield the citation text as the final chunk
-                            yield citation_text
-                    except Exception as e:
-                        logger.error(f"Error extracting stream citations: {str(e)}")
-                        self.last_citations = None
+                # Add citations at the end of streaming for Perplexity API
+                if self.provider == "perplexity" and self.last_citations:
+                    # Format citations in the requested format
+                    citation_text = "<citation_list>"
+                    for citation in self.last_citations:
+                        citation_text += f"<citation_source>{citation}</citation_source>"
+                    citation_text += "</citation_list>"
+                    
+                    # Yield the formatted citations at the end
+                    yield f"\n{citation_text}"
+                elif self.provider == "perplexity" and not self.last_citations:
+                    logger.info("No citations found in stream chunks for Perplexity API")
                 else:
                     self.last_citations = None
                     
@@ -455,33 +441,14 @@ class UnifiedProvider(BaseLLMProvider):
                 
                 # Store citations for Perplexity API if available
                 if self.provider == "perplexity":
-                    # Access the citations directly from the stream object
-                    try:
-                        # Debug: log the stream object structure
-                        logger.info(f"Perplexity stream object type (mistral section): {type(stream)}")
-                        if hasattr(stream, 'model_dump'):
-                            logger.info(f"Perplexity stream structure (mistral section): {stream.model_dump().keys()}")
-                        
-                        # Try different ways to access citations
-                        if hasattr(stream, 'citations'):
-                            self.last_citations = stream.citations
-                            logger.info(f"Found stream citations using direct attribute access (mistral section): {self.last_citations}")
-                        else:
-                            # Try to inspect the stream object directly
-                            logger.info(f"Stream dir (mistral section): {dir(stream)}")
-                            self.last_citations = None
-                            logger.warning(f"No citations found in Perplexity stream (mistral section)")
-                            
-                        if self.last_citations:
-                            # Format citations as JSON array string within the XML-like tags
-                            citations_str = str(self.last_citations).replace("'", '"')  # Replace single quotes with double quotes for JSON
-                            citation_text = f"\n<citations_list>{citations_str}</citations_list>"
-                            # Don't modify full_response here since it's already been yielded
-                            # Just yield the citation text as the final chunk
-                            yield citation_text
-                    except Exception as e:
-                        logger.error(f"Error extracting stream citations (mistral section): {str(e)}")
-                        self.last_citations = None
+                    citation_yielded = False
+                    self.last_citations = None
+                    for chunk in stream:
+                        if hasattr(chunk, 'citations') and chunk.citations and not citation_yielded:
+                            self.last_citations = chunk.citations
+                            citation_yielded = True
+                            yield f"\n<citations_list>{str(self.last_citations)}</citations_list>"
+                            break
                 else:
                     self.last_citations = None
                     

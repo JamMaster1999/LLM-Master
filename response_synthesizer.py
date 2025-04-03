@@ -108,7 +108,7 @@ class QueryLLM:
             fallback_provider: Provider to fallback to if the primary fails
             fallback_model: Model to fallback to if the primary fails
             moderation: Whether to run content moderation
-            _is_fallback: Internal parameter to prevent infinite recursion on fallbacks
+            _is_fallback: Internal parameter to prevent infinite recursion
             **kwargs: Additional model-specific parameters (e.g., temperature, reasoning_effort)
             
         Returns:
@@ -134,6 +134,9 @@ class QueryLLM:
         if moderation:
             self._moderate_content(messages)
 
+        # For non-streaming, we should use the provider directly instead of queueing
+        provider = self._get_provider(model_name)
+        
         while retry_count <= self.MAX_RETRIES:
             try:
                 if retry_count > 0:
@@ -141,18 +144,27 @@ class QueryLLM:
                     logger.info(f"Retrying in {delay} seconds...")
                     await asyncio.sleep(delay)
 
-                # Submit request to queue and get request ID
-                request_id = await rate_limiter.submit_request({
-                    "messages": messages,
-                    "kwargs": {
-                        "stream": stream,
-                        "moderation": moderation,
-                        **kwargs  # Pass through all model-specific parameters
-                    }
-                })
+                # Wait for rate limit capacity
+                await rate_limiter.wait_for_capacity()
                 
-                # Wait for response
-                response = await rate_limiter.wait_for_response(request_id)
+                # Format messages for the provider
+                formatted_messages = [
+                    self._format_message(msg, provider) for msg in messages
+                ]
+                
+                # Call the provider directly for non-streaming
+                response = await provider.generate(
+                    messages=formatted_messages,
+                    model=model_name,
+                    stream=False,
+                    **kwargs
+                )
+                
+                # Track usage if available
+                if hasattr(provider, 'last_usage') and provider.last_usage is not None:
+                    await rate_limiter.add_token_usage(
+                        provider.last_usage.input_tokens + provider.last_usage.output_tokens
+                    )
                 
                 # Calculate and set latency
                 response.latency = time.time() - start_time
