@@ -9,6 +9,7 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import time
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -346,16 +347,26 @@ class UnifiedProvider(BaseLLMProvider):
                     model=model,
                     messages=messages,
                     stream=True,
-                    #! error for gemini might be here stream_options={"include_usage": True} if self.provider in ["openai", "fireworks"] else None,
                     stream_options={"include_usage": True} if self.provider in self.openai_compatible_providers else None,
                     **kwargs
                 )
                 
                 self._current_generation = stream
                 
+                def replace_citation_link(match):
+                    try:
+                        number = int(match.group(1))
+                        index = number - 1  
+                        if self.last_citations and 0 <= index < len(self.last_citations):
+                            citation = self.last_citations[index]
+                            url_link = getattr(citation, 'url', citation if isinstance(citation, str) else "#")
+                            return f"[{number}]({url_link})"
+                    except (ValueError, IndexError, AttributeError, TypeError) as e:
+                        logger.warning(f"Failed to replace citation link for {match.group(0)}: {e}")
+                    return match.group(0)
+                
                 for chunk in stream:
                     if self.provider in self.openai_compatible_providers:
-                    #! error for gemini might be here if self.provider in ["openai", "fireworks"]:
                         # OpenAI usage handling
                         if not chunk.choices and hasattr(chunk, 'usage') and chunk.usage:
                             self.last_usage = Usage(
@@ -368,8 +379,9 @@ class UnifiedProvider(BaseLLMProvider):
                             # First check if this is a content chunk
                             if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
                                 content = chunk.choices[0].delta.content
-                                full_response += content
-                                yield content
+                                processed_content = re.sub(r'\[(\d+)\]', replace_citation_link, content)
+                                full_response += processed_content
+                                yield processed_content
                             
                             # Then check if it has citations (can be stored for later)
                             if hasattr(chunk, 'citations') and chunk.citations:
