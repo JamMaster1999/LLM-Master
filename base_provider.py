@@ -34,7 +34,9 @@ class UnifiedProvider(BaseLLMProvider):
             "base_url": None,
             "api_key_attr": "openai_api_key",
             "supports_caching": True,
-            "generate_map": {}  # Default generation functions
+            "generate_map": {
+                "gpt-image-1": "_generate_recraft_image"
+            }
         },
         "gemini": {
             "client_class": OpenAI,
@@ -353,48 +355,59 @@ class UnifiedProvider(BaseLLMProvider):
                 
                 self._current_generation = stream
                 
+
+                self.last_citations = None # Ensure reset for the stream
+                self.last_images = None    # Ensure reset for the stream
+
                 def replace_citation_link(match):
                     try:
                         number = int(match.group(1))
-                        index = number - 1  
+                        index = number - 1  # Citations are 1-indexed in the text
                         if self.last_citations and 0 <= index < len(self.last_citations):
                             citation = self.last_citations[index]
                             url_link = getattr(citation, 'url', citation if isinstance(citation, str) else "#")
-                            return f"[{number}]({url_link})"
+                            obfuscated_url = url_link.replace("https://", "h_ttps://").replace("http://", "h_ttp://")
+                            return f"<inline_citation>{number}:{obfuscated_url}</inline_citation>"
                     except (ValueError, IndexError, AttributeError, TypeError) as e:
                         logger.warning(f"Failed to replace citation link for {match.group(0)}: {e}")
                     return match.group(0)
                 
                 for chunk in stream:
+                    # Common handling for OpenAI compatible providers (usage)
                     if self.provider in self.openai_compatible_providers:
-                        # OpenAI usage handling
                         if not chunk.choices and hasattr(chunk, 'usage') and chunk.usage:
                             self.last_usage = Usage(
                                 input_tokens=chunk.usage.prompt_tokens,
                                 output_tokens=chunk.usage.completion_tokens,
                                 cached_tokens=0
                             )
-                        # For Perplexity check both citations and content
-                        elif self.provider == "perplexity":
-                            # First check if this is a content chunk
-                            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
-                                content = chunk.choices[0].delta.content
-                                processed_content = re.sub(r'\[(\d+)\]', replace_citation_link, content)
-                                full_response += processed_content
-                                yield processed_content
+
+                    # --- Perplexity Specific Handling --- 
+                    if self.provider == "perplexity":
+                        # 1. Store Citations when found
+                        if hasattr(chunk, 'citations') and chunk.citations:
+                            if self.last_citations is None: # Store only the first time they appear
+                                 logger.info("Storing citations found in stream chunk.")
+                                 self.last_citations = list(chunk.citations)
                             
-                            # Then check if it has citations (can be stored for later)
-                            if hasattr(chunk, 'citations') and chunk.citations:
-                                self.last_citations = chunk.citations
-                        elif chunk.choices and chunk.choices[0].delta.content is not None:
+                        # 2. Store Images when found 
+                        if hasattr(chunk, 'images') and chunk.images:
+                            if self.last_images is None: # Store only the first time they appear
+                                logger.info("Storing images found in stream chunk.") 
+                                self.last_images = list(chunk.images)
+
+                        # 3. Process and yield Content
+                        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
                             content = chunk.choices[0].delta.content
-                            full_response += content
-                            yield content
-                    else:  # gemini
-                        if chunk.choices and chunk.choices[0].delta.content is not None:
-                            content = chunk.choices[0].delta.content
-                            full_response += content
-                            yield content
+                            processed_content = re.sub(r'\[(\d+)\]', replace_citation_link, content)
+                            full_response += processed_content
+                            yield processed_content
+
+                    # --- Handling for other OpenAI compatible providers (non-perplexity content) ---
+                    elif chunk.choices and chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        full_response += content
+                        yield content
                 
                 # For Gemini, calculate output tokens after streaming is complete
                 if self.provider == "gemini":
@@ -408,21 +421,35 @@ class UnifiedProvider(BaseLLMProvider):
                 # Store the full response for potential later use
                 self.last_response = full_response
                 
-                # Add citations at the end of streaming for Perplexity API
+                # Yield final Citation List for Perplexity
                 if self.provider == "perplexity" and self.last_citations:
-                    # Format citations in the requested format
-                    citation_text = "<citation_list>"
+                    logger.info("Yielding final citation list.")
+                    citation_text = "<citation_list>\n"
                     for citation in self.last_citations:
-                        citation_text += f"<citation_source>{citation}</citation_source>"
+                        citation_source = getattr(citation, 'url', citation if isinstance(citation, str) else str(citation))
+                        # Obfuscate citation URLs   
+                        citation_text += f"<citation_source><citation_url>{citation_source}</citation_url></citation_source>\n"
                     citation_text += "</citation_list>"
-                    
-                    # Yield the formatted citations at the end
-                    yield f"\n{citation_text}"
-                elif self.provider == "perplexity" and not self.last_citations:
-                    logger.info("No citations found in stream chunks for Perplexity API")
-                else:
-                    self.last_citations = None
-                    
+                    yield f"\n{citation_text}\n" # Add surrounding newlines
+
+                # Yield final Image List for Perplexity
+                if self.provider == "perplexity" and self.last_images:
+                    logger.info("Yielding final image list.")
+                    image_list_text = "<image_citation_list>\n"
+                    for img_data in self.last_images:
+                        if isinstance(img_data, dict):
+                            img_url = img_data.get('image_url', '#')
+                            origin_url = img_data.get('origin_url', '#')
+                            # Obfuscate image URLs  
+                            image_list_text += "<image_citation>\n"
+                            image_list_text += f"<image_url>{img_url}</image_url>\n"
+                            image_list_text += f"<origin_url>{origin_url}</origin_url>\n"
+                            image_list_text += "</image_citation>\n"
+                        else:
+                            logger.warning(f"Unexpected image data format in final list: {img_data}")
+                    image_list_text += "</image_citation_list>"
+                    yield f"\n{image_list_text}\n" # Add surrounding newlines
+
             else:  # mistral
                 model = kwargs.pop('model', None)
                 stream = self.client.chat.stream(
@@ -433,39 +460,45 @@ class UnifiedProvider(BaseLLMProvider):
                 
                 self._current_generation = stream
                 full_response = ""  # Initialize before the loop
+                # Add mistral specific citation/image handling here if needed, similar to perplexity
+                # Example (needs adjustment based on actual Mistral stream structure):
+                # mistral_citations_yielded = False 
                 
                 for chunk in stream:
-                    # Check if this is the final chunk with usage data
-                    if hasattr(chunk.data, 'usage') and chunk.data.usage:
-                        self.last_usage = Usage(
-                            input_tokens=chunk.data.usage.prompt_tokens,
-                            output_tokens=chunk.data.usage.completion_tokens,
-                            cached_tokens=0
-                        )
-                    # Regular content chunk
-                    elif chunk.data.choices[0].delta.content:
-                        content = chunk.data.choices[0].delta.content
-                        full_response += content
-                        yield content
+                    # Check if this is the final chunk with usage data (Mistral format might differ)
+                    if hasattr(chunk, 'usage') and chunk.usage: # Adjust based on actual structure
+                         self.last_usage = Usage(
+                             input_tokens=chunk.usage.prompt_tokens, 
+                             output_tokens=chunk.usage.completion_tokens,
+                             cached_tokens=0
+                         )
+                    # Regular content chunk (Mistral format might differ)
+                    elif chunk.choices and chunk.choices[0].delta.content: # Adjust based on actual structure
+                        content = chunk.choices[0].delta.content
+                        # Add Mistral specific citation replacement if needed
+                        # processed_content = replace_mistral_citations(content) 
+                        # full_response += processed_content
+                        # yield processed_content
+                        full_response += content # Assuming no inline replacement for now
+                        yield content 
+
+                    # Add Mistral specific citation/image list yielding here
+                    # Example:
+                    # if hasattr(chunk, 'citations') and chunk.citations and not mistral_citations_yielded:
+                    #    format_and_yield_mistral_citations(chunk.citations)
+                    #    mistral_citations_yielded = True
                 
                 # Store the full response for potential later use
                 self.last_response = full_response
-                
-                # Store citations for Perplexity API if available
-                if self.provider == "perplexity":
-                    citation_yielded = False
-                    self.last_citations = None
-                    for chunk in stream:
-                        if hasattr(chunk, 'citations') and chunk.citations and not citation_yielded:
-                            self.last_citations = chunk.citations
-                            citation_yielded = True
-                            yield f"\n<citations_list>{str(self.last_citations)}</citations_list>"
-                            break
-                else:
-                    self.last_citations = None
-                    
+                # Reset last citations/images if needed for Mistral
+                # self.last_citations = None 
+                # self.last_images = None
+
         finally:
             self._current_generation = None
+            # Reset shared instance variables only if they haven't been potentially 
+            # used by a subsequent call immediately after streaming finishes
+            # Consider if self.last_usage/response/citations/images need resetting here or elsewhere
 
     def moderate(self, input: Union[str, List[Dict[str, Any]]], model: str) -> Dict[str, Any]:
         """Moderate content using OpenAI's moderation endpoint"""
@@ -556,12 +589,17 @@ class UnifiedProvider(BaseLLMProvider):
         
         # Determine which model we're using
         is_imagen = "imagen" in model.lower()
+        is_gpt_image = "gpt-image" in model.lower()
         
         # Set model-specific parameters
         if is_imagen:
-            # For Imagen models - MUST use b64_json format
+            # Only Imagen requires response_format
             style_params = {"response_format": "b64_json"}
             logger.info(f"Generating image with Imagen provider. Base URL: {self.client.base_url}")
+        elif is_gpt_image:
+            # GPT Image model returns b64_json by default
+            style_params = {}
+            logger.info(f"Generating image with GPT Image provider. Base URL: {self.client.base_url}")
         else:
             # For Recraft models
             style_params = {"style": kwargs.get("style", "digital_illustration")}
@@ -585,15 +623,36 @@ class UnifiedProvider(BaseLLMProvider):
             
             latency = time.time() - start_time
             
+            # Extract usage information if available (for GPT Image model)
+            usage = None
+            if hasattr(response, 'usage'):
+                usage_dict = response.usage
+                usage = Usage(
+                    input_tokens=usage_dict.get('input_tokens', 0),
+                    output_tokens=usage_dict.get('output_tokens', 0),
+                    cached_tokens=0
+                )
+            else:
+                # Default usage for models that don't provide it
+                usage = Usage(input_tokens=0, output_tokens=1)
+            
             # Return response with the appropriate content format
+            content = None
+            if is_imagen:
+                content = response.data[0].b64_json
+            elif is_gpt_image:
+                content = response.data[0].b64_json
+            else:
+                content = response.data[0].url
+            
             return LLMResponse(
-                content=response.data[0].b64_json if is_imagen else response.data[0].url,
+                content=content,
                 model_name=model,
-                usage=Usage(input_tokens=0, output_tokens=1),
+                usage=usage,
                 latency=latency
             )
             
         except Exception as e:
-            provider_name = "Imagen" if is_imagen else "Recraft"
+            provider_name = "Imagen" if is_imagen else "GPT Image" if is_gpt_image else "Recraft"
             logger.error(f"Error generating image with {provider_name}: {str(e)}")
             raise ProviderError(f"Failed to generate image: {str(e)}")

@@ -9,6 +9,7 @@ import asyncio
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
+from .openai_provider import OpenAIProvider
 from .bfl_provider import BFLProvider, ContentModerationError
 from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
@@ -278,10 +279,17 @@ class QueryLLM:
                     stream=True,
                     **kwargs
                 )
-                # Now iterate through the regular generator
-                for chunk in stream_generator:
-                    full_response += chunk
-                    yield chunk  # <--- The actual streaming output to the caller
+                # Now iterate based on whether it's an async or sync generator
+                if hasattr(stream_generator, '__aiter__'):
+                    # Use async for async generators (like OpenAIProvider)
+                    async for chunk in stream_generator:
+                        full_response += chunk
+                        yield chunk
+                else:
+                    # Use standard for sync generators (like AnthropicProvider, potentially UnifiedProvider)
+                    for chunk in stream_generator:
+                        full_response += chunk
+                        yield chunk
 
                 # Post-stream, handle usage if available
                 if hasattr(provider, 'last_usage') and provider.last_usage is not None:
@@ -528,7 +536,7 @@ class QueryLLM:
 
         return {"role": message["role"], "content": content}
 
-    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider, BFLProvider]:
+    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider, BFLProvider, OpenAIProvider]:
         """
         Get or create appropriate provider for the model
 
@@ -541,35 +549,43 @@ class QueryLLM:
         Raises:
             LLMError: If the provider is not supported
         """
-        provider_map = {
-            "gpt": ("openai", UnifiedProvider),
-            "o3": ("openai", UnifiedProvider),  # Added mapping for o3 models
-            "claude": ("anthropic", AnthropicProvider),
-            "gemini": ("gemini", UnifiedProvider),
-            "mistral": ("mistral", UnifiedProvider),
-            "recraft": ("recraft", UnifiedProvider),
-            "fireworks": ("fireworks", UnifiedProvider),
-            "imagen": ("gemini", UnifiedProvider),  # Use gemini provider for imagen models
-            "flux": (None, BFLProvider),  # Use "flux" instead of "bfl" to match BFL model names
-            "sonar": ("perplexity", UnifiedProvider)
+        # Simplified provider lookup logic
+        PROVIDER_SETUP = {
+            # Provider Name: (Provider Class, [list_of_match_prefixes_or_exact_names])
+            # Specific providers first
+            "openai_provider": (OpenAIProvider, ["responses-"]),
+            "bfl_provider": (BFLProvider, ["flux-"]),
+            "anthropic": (AnthropicProvider, ["claude-"]),
+            # Unified providers
+            "openai": (UnifiedProvider, ["gpt-", "o", "chatgpt-"]), # "o" prefix catches o3-, o4-
+            "gemini": (UnifiedProvider, ["gemini-", "imagen-"]),
+            "mistral": (UnifiedProvider, ["mistral-"]),
+            "recraft": (UnifiedProvider, ["recraftv3"]), # Exact match treated as prefix
+            "fireworks": (UnifiedProvider, ["accounts/fireworks/models/"]),
+            "perplexity": (UnifiedProvider, ["sonar"])
         }
 
+        model_lower = model_name.lower()
+
         try:
-            provider_key = next(
-                (key for key in provider_map if key in model_name.lower()),
-                None
-            )
-            if not provider_key:
-                raise LLMError(f"Unsupported model: {model_name}")
+            # Iterate through the setup to find the first match
+            for provider_key, (provider_class, match_criteria) in PROVIDER_SETUP.items():
+                for criterion in match_criteria:
+                    if model_lower.startswith(criterion):
+                        # Found a match, check cache or instantiate
+                        if provider_key not in self._providers:
+                            print(f"Instantiating provider: {provider_key} with class {provider_class.__name__}")
+                            if provider_class == UnifiedProvider:
+                                # UnifiedProvider needs the provider name (key)
+                                self._providers[provider_key] = provider_class(provider_key, self.config)
+                            else:
+                                # Other providers (Anthropic, OpenAIProvider, BFLProvider) only need config
+                                self._providers[provider_key] = provider_class(self.config)
+                        
+                        return self._providers[provider_key] # Return the cached or new provider instance
 
-            if provider_key not in self._providers:
-                provider_name, provider_class = provider_map[provider_key]
-                if provider_class == UnifiedProvider:
-                    self._providers[provider_key] = provider_class(provider_name, self.config)
-                else:
-                    self._providers[provider_key] = provider_class(self.config)
-
-            return self._providers[provider_key]
+            # If the loop completes without finding a match
+            raise LLMError(f"Unsupported model: {model_name}")
 
         except Exception as e:
             logger.error(f"Error getting provider: {str(e)}")

@@ -23,9 +23,9 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "openai>=1.59.6",
-        "anthropic>=0.42.0",
-        "google-generativeai>=0.4.0",
+        "openai>=1.75.0",
+        "anthropic>=0.49.0",
+        "google-generativeai>=0.8.5",
         # "mistralai>=1.2.6",
         "requests>=2.31.0",
     ],

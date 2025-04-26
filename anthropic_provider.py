@@ -61,6 +61,23 @@ class AnthropicProvider(BaseLLMProvider):
             Either a LLMResponse object or a Generator for streaming
         """
         try:
+            # Extract system message and remove it from the list
+            system_message = None
+            indices_to_remove = []
+            for i, msg in enumerate(messages):
+                if msg.get("role") == "system":
+                    # Use the first system message found
+                    if system_message is None:
+                        system_message = msg.get("content")
+                    indices_to_remove.append(i)
+            
+            # Remove system messages in reverse order to avoid index issues
+            for i in sorted(indices_to_remove, reverse=True):
+                del messages[i]
+                
+            if system_message:
+                kwargs["system"] = system_message
+
             if stream:
                 return self._stream_response(messages, **kwargs)
 
@@ -80,7 +97,7 @@ class AnthropicProvider(BaseLLMProvider):
                 None,
                 lambda: self.client.messages.create(
                     model=model,
-                    messages=messages,
+                    messages=messages, # Use modified messages list
                     **kwargs
                 )
             )
@@ -140,7 +157,7 @@ class AnthropicProvider(BaseLLMProvider):
             
             with self.client.messages.stream(
                 model=model,
-                messages=messages,
+                messages=messages, # Use the messages passed (already filtered)
                 **kwargs
             ) as stream:
                 self._current_generation = stream
