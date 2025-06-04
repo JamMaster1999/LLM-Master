@@ -480,11 +480,15 @@ class QueryLLM:
             
             return f"image/{mime_type}"
 
-        # If already has 'content', assume it's well-structured
-        if 'content' in message:
-            return message
+        # Check if 'content' is already a list of parts (provider-specific format)
+        current_message_content = message.get('content')
+        if isinstance(current_message_content, list):
+            return message # Return directly if pre-formatted
 
         text = message.get('text')
+        if text is None and isinstance(current_message_content, str):
+            text = current_message_content
+        
         # Support image_paths, direct base64 images, and URLs
         images = message.get('image_paths', message.get('images', []))
         image_details = message.get('image_details', ['auto'] * len(images))

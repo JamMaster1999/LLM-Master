@@ -174,8 +174,9 @@ class OpenAIProvider(BaseLLMProvider):
         input_tokens = 0
         output_tokens = 0
         cached_tokens = 0
-        stream = None # Define stream variable outside try
-        in_reasoning_block = False # State variable
+        stream = None
+        in_reasoning_block = False
+        in_code_block = False
         
         # Strip prefix for API call
         api_model_name = model
@@ -191,20 +192,8 @@ class OpenAIProvider(BaseLLMProvider):
         }
 
         try:
-            # Assuming client returns an iterable stream, possibly sync iteration
-            # Needs adaptation if client provides an async iterator directly
-            # For now, wrap sync iteration in async generator structure
-            
             stream = self.client.responses.create(**request_params)
             self._current_generation = stream 
-
-            # How to make this async? If stream is sync iterable:
-            # We might need run_in_executor or async thread handling if iteration blocks.
-            # Or if the SDK has an async version, use that.
-            # Let's assume for now the user will adapt this part if needed,
-            # or that iterating the stream object might work okay within asyncio.
-            # A truly async implementation would use `async for event in stream:`
-            # if the client library supports it.
 
             for event in stream:
                 # Process events based on type
@@ -212,26 +201,125 @@ class OpenAIProvider(BaseLLMProvider):
                     reasoning_delta = event.delta
                     # Open the block if it's the first reasoning delta
                     if not in_reasoning_block:
-                        yield "<think>"
+                        yield "\n\n<think>"
                         in_reasoning_block = True
                     yield reasoning_delta
 
                 elif event.type == 'response.output_text.delta':
                     # Close the reasoning block *before* the first output text delta
                     if in_reasoning_block:
-                        yield "</think>\n\n"
+                        yield "\n\n</think>\n\n"
                         in_reasoning_block = False # Reasoning is definitely over
+                    
+                    # Close the code block *before* the first output text delta
+                    if in_code_block:
+                        yield "\n```\n\n"
+                        in_code_block = False
                     
                     # Yield the actual output text delta
                     delta = event.delta
                     full_response += delta
                     yield delta
                 
+                elif event.type == 'response.code_interpreter_call.in_progress':
+                    # Close reasoning block if open when code starts
+                    if in_reasoning_block:
+                        yield "\n\n</think>\n\n"
+                        in_reasoning_block = False
+                    
+                    # Start code block
+                    if not in_code_block:
+                        yield "```py\n"
+                        in_code_block = True
+                
+                elif event.type == 'response.code_interpreter_call_code.delta':
+                    # Ensure we're in a code block (should already be from in_progress event)
+                    if not in_code_block:
+                        yield "```py\n"
+                        in_code_block = True
+                    
+                    # Yield the code delta
+                    code_delta = event.delta
+                    yield code_delta
+                
+                elif event.type == 'response.code_interpreter_call.completed':
+                    # Close code block when interpretation is complete
+                    if in_code_block:
+                        yield "\n```\n\n"
+                        in_code_block = False
+                
+                elif event.type == 'response.output_item.done':
+                    # Check if this is a code interpreter call with outputs
+                    if (hasattr(event, 'item') and 
+                        hasattr(event.item, 'type') and 
+                        event.item.type == 'code_interpreter_call' and
+                        hasattr(event.item, 'outputs') and 
+                        event.item.outputs):
+                        
+                        # Collect all logs first to check if we have any content
+                        logs_content = []
+                        images = []
+                        
+                        for output in event.item.outputs:
+                            # Handle both dict and object formats
+                            output_type = getattr(output, 'type', None) or output.get('type') if isinstance(output, dict) else None
+                            
+                            if output_type == 'logs':
+                                logs = getattr(output, 'logs', None) or output.get('logs') if isinstance(output, dict) else None
+                                if logs and logs.strip():  # Only add non-empty logs
+                                    logs_content.append(logs)
+                            elif output_type == 'image':
+                                url = getattr(output, 'url', None) or output.get('url') if isinstance(output, dict) else None
+                                if url:
+                                    images.append(url)
+                        
+                        # Only display logs block if we have actual content
+                        if logs_content:
+                            yield "```plaintext\n"
+                            for logs in logs_content:
+                                yield logs
+                            yield "\n```\n\n"
+                        
+                        # Display images
+                        for url in images:
+                            yield f"<code_execution_image>{url}</code_execution_image>\n\n"
+                    
+                    # Check for file annotations in any output item
+                    if (hasattr(event, 'item') and 
+                        hasattr(event.item, 'content') and
+                        event.item.content):
+                        
+                        for content_item in event.item.content:
+                            if (hasattr(content_item, 'annotations') and 
+                                content_item.annotations):
+                                
+                                for annotation in content_item.annotations:
+                                    if (hasattr(annotation, 'type') and 
+                                        annotation.type == 'container_file_citation' and
+                                        hasattr(annotation, 'file_id') and
+                                        hasattr(annotation, 'filename')):
+                                        
+                                        file_id = annotation.file_id
+                                        filename = annotation.filename
+                                        container_id = annotation.container_id
+                                        
+                                        # Output the file as a download marker
+                                        yield f"\n\n<code_execution_file><code_execution_file_id>{file_id}</code_execution_file_id><code_execution_file_name>{filename}</code_execution_file_name><code_execution_container_id>{container_id}</code_execution_container_id></code_execution_file>\n\n"
+                
+                elif event.type == 'response.code_interpreter_call.interpreting':
+                    # Code is being interpreted - execution results not streamed
+                    pass
+                
                 elif event.type == 'response.completed':
                     # Close reasoning block if it was still open when completion event arrives
                     if in_reasoning_block:
-                         yield "</think>\n\n"
+                         yield "\n\n</think>\n\n"
                          in_reasoning_block = False
+                    
+                    # Close code block if it was still open when completion event arrives
+                    if in_code_block:
+                         yield "\n```\n\n"
+                         in_code_block = False
                     
                     # Process usage etc.
                     if hasattr(event, 'usage'):
@@ -248,13 +336,18 @@ class OpenAIProvider(BaseLLMProvider):
                         )
                         logger.debug(f"Completed streaming with {input_tokens} input, {output_tokens} output, {cached_tokens} cached tokens")
                     break # Exit loop on completion
-
+                
                 elif event.type == 'error':
                     # Close reasoning block if open on error
                     if in_reasoning_block:
-                         yield "</think>\n\n"
+                         yield "\n\n</think>\n\n"
                          in_reasoning_block = False
-                         
+                    
+                    # Close code block if open on error
+                    if in_code_block:
+                         yield "\n```\n\n"
+                         in_code_block = False
+                    
                     logger.error(f"OpenAI streaming error: {event.code} - {event.message}")
                     raise ProviderError(f"OpenAI streaming error: {event.code} - {event.message}")
 
@@ -269,10 +362,17 @@ class OpenAIProvider(BaseLLMProvider):
             # Close reasoning block if an exception occurs during the loop
             if in_reasoning_block:
                  # Attempt to yield closing tag, might fail if connection broken
-                 try: yield "</think>\n\n" 
+                 try: yield "\n\n</think>\n\n" 
                  except: pass 
                  in_reasoning_block = False
-                 
+            
+            # Close code block if an exception occurs during the loop
+            if in_code_block:
+                 # Attempt to yield closing tag, might fail if connection broken
+                 try: yield "\n```\n\n" 
+                 except: pass 
+                 in_code_block = False
+            
             logger.error(f"Error during streaming: {str(e)}")
             if isinstance(e, ProviderError):
                  raise
@@ -282,8 +382,15 @@ class OpenAIProvider(BaseLLMProvider):
             # Final check: Ensure reasoning block is closed if stream ends for any reason
             if in_reasoning_block:
                  # Attempt to yield closing tag
-                 try: yield "</think>\n\n" 
+                 try: yield "\n\n</think>\n\n" 
                  except: pass 
+            
+            # Final check: Ensure code block is closed if stream ends for any reason
+            if in_code_block:
+                 # Attempt to yield closing tag
+                 try: yield "\n```\n\n" 
+                 except: pass 
+            
             self._current_generation = None
 
     def stop_generation(self):

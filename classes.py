@@ -58,6 +58,7 @@ class ModelRegistry:
         "gpt-4o-audio-preview": ModelConfig(2.50, 10.00, 1.25, 5000),
         "o3-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
         "o4-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
+        "o3": ModelConfig(10, 40, 2.5, 5000),
         "gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
         "gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
         "gpt-image-1": ModelConfig(5.00, 40.00, None, 50),
@@ -65,12 +66,15 @@ class ModelRegistry:
         # OpenAI Response Models
         "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
         "responses-o4-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
+        "responses-o3": ModelConfig(10, 40, 2.5, 5000),
         "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
         "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
         # Anthropic Models
         "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-3-5-haiku-latest": ModelConfig(1.00, 5.00, 0.10, 4000),
+        "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
+
         # Gemini Models
         "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),

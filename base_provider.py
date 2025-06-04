@@ -234,7 +234,12 @@ class UnifiedProvider(BaseLLMProvider):
             
             # Check for Gemini content policy violation
             if self.provider == "gemini":
-                if not response or not response.choices or not response.choices[0].message:
+                if (not response or 
+                    not response.choices or 
+                    not response.choices[0].message or
+                    not hasattr(response.choices[0].message, 'content') or
+                    response.choices[0].message.content is None or
+                    response.choices[0].message.content == ""):
                     raise ProviderError(
                         "Gemini content policy violation detected",
                         status_code="CONTENT_POLICY"
