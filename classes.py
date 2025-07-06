@@ -80,7 +80,9 @@ class ModelRegistry:
         "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
         "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
         "gemini-2.5-flash-preview-04-17": ModelConfig(0.15, 0.6, None, 1000),
+        "gemini-2.5-flash-preview-05-20": ModelConfig(0.15, 0.6, None, 1000),
         "gemini-2.5-pro-preview-03-25": ModelConfig(1.25, 10.00, None, 150),
+        "gemini-2.5-pro-preview-06-05": ModelConfig(1.25, 10.00, None, 150),
         "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
         # Mistral Models
         "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),

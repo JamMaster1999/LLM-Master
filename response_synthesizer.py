@@ -95,6 +95,7 @@ class QueryLLM:
               stream: bool = False,
               fallback_provider: Optional[str] = None,
               fallback_model: Optional[str] = None,
+              fallback_config: Optional[Dict[str, Any]] = None,
               moderation: bool = False,
               _is_fallback: bool = False,  # Internal parameter to prevent infinite recursion
               **kwargs
@@ -122,6 +123,7 @@ class QueryLLM:
                 messages=messages,
                 fallback_provider=fallback_provider if not _is_fallback else None,
                 fallback_model=fallback_model if not _is_fallback else None,
+                fallback_config=fallback_config if not _is_fallback else None,
                 moderation=moderation,
                 _is_fallback=_is_fallback,
                 **kwargs
@@ -181,7 +183,7 @@ class QueryLLM:
                         stream=stream,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                        **(fallback_config or {})
                     )
                 # Special handling for BFL content moderation errors (no retry)
                 elif isinstance(e, ContentModerationError) or e.status_code == "BFL_CONTENT_MODERATED":
@@ -194,7 +196,7 @@ class QueryLLM:
                             stream=stream,
                             moderation=moderation,
                             _is_fallback=True,
-                            # Do NOT pass any kwargs to fallback provider for BFL fallbacks
+                            **(fallback_config or {})
                         )
                     else:
                         raise
@@ -211,7 +213,7 @@ class QueryLLM:
                         stream=stream,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                        **(fallback_config or {})
                     )
                 else:
                     raise
@@ -230,7 +232,7 @@ class QueryLLM:
                         stream=stream,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                        **(fallback_config or {})
                     )
                 else:
                     raise
@@ -240,6 +242,7 @@ class QueryLLM:
                          messages: List[Dict[str, Any]],
                          fallback_provider: Optional[str] = None,
                          fallback_model: Optional[str] = None,
+                         fallback_config: Optional[Dict[str, Any]] = None,
                          moderation: bool = False,
                          _is_fallback: bool = False,
                          **kwargs
@@ -315,7 +318,7 @@ class QueryLLM:
                         stream=True,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                        **(fallback_config or {})
                     )
                     
                     # Relay all chunks from the fallback
@@ -337,7 +340,7 @@ class QueryLLM:
                         stream=True,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                         **(fallback_config or {})
                     )
                     
                     # Relay all chunks from the fallback
@@ -363,7 +366,7 @@ class QueryLLM:
                         stream=True,
                         moderation=moderation,
                         _is_fallback=True,  # Mark as a fallback to prevent further fallbacks
-                        **kwargs
+                         **(fallback_config or {})
                     )
                     
                     # Relay all chunks from the fallback
