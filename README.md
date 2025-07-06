@@ -1,3 +1,30 @@
+# LLM Master
+
+## Fallback Configuration
+
+Use `fallback_config` to specify which parameters should be passed to fallback models:
+
+```python
+# Primary model with advanced params, fallback gets only compatible ones
+response = await llm.query(
+    model_name="o3",
+    reasoning_effort="high",  # o3-specific parameter
+    temperature=0.7,
+    fallback_model="claude-3-5-sonnet-latest",
+    fallback_config={"temperature": 0.7}  # Only pass temperature to Claude
+)
+
+# Safe fallback: no parameters passed to fallback model
+response = await llm.query(
+    model_name="gemini-2.5-flash", 
+    reasoning_effort="low",  # Gemini-specific
+    fallback_model="gpt-4.1"
+    # No fallback_config = no params passed to fallback (safe default)
+)
+```
+
+---
+
 # Adding a New Provider Using OpenAI Base Client
 
 This guide walks through the process of adding a new API provider (like Recraft.AI) that uses the OpenAI client base class but with a different endpoint and potentially different features.
