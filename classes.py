@@ -149,10 +149,15 @@ class Usage:
             PricingError: If there's an error calculating the cost
         """
         try:
-            input_cost = (self.input_tokens / 1_000_000) * model_config.input_price_per_million
-            output_cost = (self.output_tokens / 1_000_000) * model_config.output_price_per_million
-            cached_cost = 0
+            # Calculate cost for non-cached input tokens
+            non_cached_input_tokens = self.input_tokens - self.cached_tokens
+            input_cost = (non_cached_input_tokens / 1_000_000) * model_config.input_price_per_million
             
+            # Calculate cost for output tokens
+            output_cost = (self.output_tokens / 1_000_000) * model_config.output_price_per_million
+
+            # Calculate cost for cached input tokens
+            cached_cost = 0
             if model_config.cached_input_price_per_million and self.cached_tokens > 0:
                 cached_cost = (self.cached_tokens / 1_000_000) * model_config.cached_input_price_per_million
             
