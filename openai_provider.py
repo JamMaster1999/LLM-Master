@@ -103,10 +103,15 @@ class OpenAIProvider(BaseLLMProvider):
                 logger.error(f"OpenAI API error: {response.error.code} - {response.error.message}")
                 raise ProviderError(f"OpenAI API error: {response.error.code} - {response.error.message}")
 
+            # Access cached_tokens from prompt_tokens_details as per OpenAI docs
+            cached_tokens = 0
+            if hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details:
+                cached_tokens = getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0)
+            
             usage = Usage(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
-                cached_tokens=getattr(response.usage.input_tokens_details, 'cached_tokens', 0) # Get cached tokens if available
+                cached_tokens=cached_tokens
             )
 
             # Extract text content - need to search the output list
@@ -326,8 +331,11 @@ class OpenAIProvider(BaseLLMProvider):
                         usage = event.usage
                         input_tokens = usage.input_tokens
                         output_tokens = usage.output_tokens
-                        if hasattr(usage, 'input_tokens_details'):
-                           cached_tokens = getattr(usage.input_tokens_details, 'cached_tokens', 0)
+                        
+                        # Access cached_tokens from prompt_tokens_details as per OpenAI docs
+                        cached_tokens = 0
+                        if hasattr(usage, 'prompt_tokens_details') and usage.prompt_tokens_details:
+                            cached_tokens = getattr(usage.prompt_tokens_details, 'cached_tokens', 0)
                         
                         self.last_usage = Usage(
                             input_tokens=input_tokens,

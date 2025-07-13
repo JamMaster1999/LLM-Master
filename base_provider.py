@@ -1,6 +1,5 @@
 from typing import List, Dict, Any, Union, Generator, Optional
 from openai import OpenAI
-# from mistralai import Mistral
 import google.generativeai as genai
 from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, ModelRegistry
 from .config import LLMConfig
@@ -26,7 +25,7 @@ class ConfigurationError(ProviderError):
     pass
 
 class UnifiedProvider(BaseLLMProvider):
-    """Provider for OpenAI, Gemini, and Mistral models using synchronous clients"""
+    """Provider for OpenAI, Gemini, and Recraft models using synchronous clients"""
     
     PROVIDER_CONFIGS = {
         "openai": {
@@ -42,18 +41,11 @@ class UnifiedProvider(BaseLLMProvider):
             "client_class": OpenAI,
             "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
             "api_key_attr": "gemini_api_key",
-            "supports_caching": False,
+            "supports_caching": True,
             "generate_map": {
                 "imagen-3.0-generate-002": "_generate_recraft_image"
             }
         },
-        # "mistral": {
-        #     "client_class": Mistral,
-        #     "base_url": None,
-        #     "api_key_attr": "mistral_api_key",
-        #     "supports_caching": False,
-        #     "generate_map": {}
-        # },
         "recraft": {
             "client_class": OpenAI,
             "base_url": "https://external.api.recraft.ai/v1",
@@ -145,48 +137,7 @@ class UnifiedProvider(BaseLLMProvider):
             )
         return response
 
-    def _count_gemini_tokens(self, messages: List[Dict[str, Any]], model: str, gemini_model=None) -> int:
-        """Count tokens for Gemini models
-        
-        Args:
-            messages: List of message dictionaries
-            model: Model name
-            gemini_model: Optional pre-initialized model
-            
-        Returns:
-            Total token count
-        """
-        if gemini_model is None:
-            gemini_model = genai.GenerativeModel(f"models/{model}")
-        
-        total_tokens = 0
-        for msg in messages:
-            if isinstance(msg['content'], str):
-                # Text only
-                count = gemini_model.count_tokens(msg['content'])
-                total_tokens += count.total_tokens
-            elif isinstance(msg['content'], list):
-                # Multimodal content
-                text_parts = []
-                image_count = 0
-                
-                for part in msg['content']:
-                    if part.get('type') == 'text':
-                        text_parts.append(part['text'])
-                    elif part.get('type') == 'image_url':  # Handle OpenAI/Gemini format
-                        image_count += 1
-                    elif part.get('type') == 'image':  # Handle Anthropic format
-                        image_count += 1
-                
-                # Add fixed token count for each image
-                total_tokens += image_count * 258
-                
-                # Count tokens for text parts if any
-                if text_parts:
-                    count = gemini_model.count_tokens(" ".join(text_parts))
-                    total_tokens += count.total_tokens
-        
-        return total_tokens
+
 
     async def generate(self, 
             messages: List[Dict[str, Any]], 
@@ -208,125 +159,85 @@ class UnifiedProvider(BaseLLMProvider):
             return self._stream_response(messages, model=model, **kwargs)
         
         loop = asyncio.get_event_loop()
-        if self.provider in self.openai_compatible_providers:
-            # Extract modalities and audio parameters if provided
-            modalities = kwargs.pop('modality', None)
-            audio_params = kwargs.pop('audio', None)
-            
-            # Create completion parameters
-            completion_params = {
-                'model': model,
-                'messages': messages,
-                'stream': False,
-                **kwargs
-            }
-            
-            # Add modalities and audio parameters if they exist
-            if modalities:
-                completion_params['modalities'] = modalities
-            if audio_params:
-                completion_params['audio'] = audio_params
-            
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.chat.completions.create(**completion_params)
-            )
-            
-            # Check for Gemini content policy violation
-            if self.provider == "gemini":
-                if (not response or 
-                    not response.choices or 
-                    not response.choices[0].message or
-                    not hasattr(response.choices[0].message, 'content') or
-                    response.choices[0].message.content is None or
-                    response.choices[0].message.content == ""):
-                    raise ProviderError(
-                        "Gemini content policy violation detected",
-                        status_code="CONTENT_POLICY"
-                    )
-                
-                # Initialize Gemini model for token counting
-                gemini_model = genai.GenerativeModel(f"models/{model}")
-                
-                # Count input tokens including images
-                input_tokens = await loop.run_in_executor(
-                    None,
-                    lambda: self._count_gemini_tokens(messages, model, gemini_model)
-                )
-                
-                # Count output tokens
-                output_count = await loop.run_in_executor(
-                    None,
-                    lambda: gemini_model.count_tokens(response.choices[0].message.content)
-                )
-                
-                usage = Usage(
-                    input_tokens=input_tokens,
-                    output_tokens=output_count.total_tokens,
-                    cached_tokens=0
-                )
-            else:
-                # OpenAI usage handling
-                cached_tokens = 0
-                if self.supports_caching:
-                    try:
-                        cached_tokens = getattr(response.usage, 'cached_tokens', 0)
-                    except AttributeError:
-                        pass
-                
-                usage = Usage(
-                    input_tokens=response.usage.prompt_tokens,
-                    output_tokens=response.usage.completion_tokens,
-                    cached_tokens=cached_tokens
-                )
-            
-            content = response.choices[0].message.content
-            
-            # Extract audio data if it exists in the response
-            audio_data = None
-            if hasattr(response.choices[0].message, 'audio') and response.choices[0].message.audio:
-                audio_data = response.choices[0].message.audio.data
-                
-            # Extract citations if they exist in the response (specifically for Perplexity API)
-            citations = None
-            if self.provider == "perplexity":
-                # Access the citations directly from the response object
-                try:
-                    if hasattr(response, 'citations'):
-                        citations = response.citations
-                        self.last_citations = citations
-                        
-                        # Format citations in the requested format
-                        citation_text = "<citation_list>"
-                        for citation in citations:
-                            citation_text += f"<citation_source>{citation}</citation_source>"
-                        citation_text += "</citation_list>"
-                        
-                        # Append the citations to the content
-                        content += f"\n{citation_text}"
-                except Exception as e:
-                    logger.error(f"Error extracting citations: {str(e)}")
-                    # Continue despite the error
+        # Extract modalities and audio parameters if provided
+        modalities = kwargs.pop('modality', None)
+        audio_params = kwargs.pop('audio', None)
         
-        else:  # mistral
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.chat.complete(
-                    model=model,
-                    messages=messages,
-                    **kwargs
-                )
+        # Create completion parameters
+        completion_params = {
+            'model': model,
+            'messages': messages,
+            'stream': False,
+            **kwargs
+        }
+        
+        # Add modalities and audio parameters if they exist
+        if modalities:
+            completion_params['modalities'] = modalities
+        if audio_params:
+            completion_params['audio'] = audio_params
+        
+        response = await loop.run_in_executor(
+            None,
+            lambda: self.client.chat.completions.create(**completion_params)
+        )
+        
+        # Check for Gemini content policy violation
+        if (self.provider == "gemini" and 
+            (not response or 
+             not response.choices or 
+             not response.choices[0].message or
+             not hasattr(response.choices[0].message, 'content') or
+             response.choices[0].message.content is None or
+             response.choices[0].message.content == "")):
+            raise ProviderError(
+                "Gemini content policy violation detected",
+                status_code="CONTENT_POLICY"
             )
+        
+        # Unified usage handling for all OpenAI-compatible providers (including Gemini)
+        cached_tokens = 0
+        if self.supports_caching:
+            try:
+                # Access cached_tokens from prompt_tokens_details as per OpenAI docs
+                if hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details:
+                    cached_tokens = getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0)
+            except AttributeError:
+                pass
+        
+        usage = Usage(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            cached_tokens=cached_tokens
+        )
+        
+        content = response.choices[0].message.content
+        
+        # Extract audio data if it exists in the response
+        audio_data = None
+        if hasattr(response.choices[0].message, 'audio') and response.choices[0].message.audio:
+            audio_data = response.choices[0].message.audio.data
             
-            usage = Usage(
-                input_tokens=response.usage.prompt_tokens,
-                output_tokens=response.usage.completion_tokens,
-                cached_tokens=0
-            )
-            
-            content = response.choices[0].message.content
-            audio_data = None
-            citations = None
+        # Extract citations if they exist in the response (specifically for Perplexity API)
+        citations = None
+        if self.provider == "perplexity":
+            # Access the citations directly from the response object
+            try:
+                if hasattr(response, 'citations'):
+                    citations = response.citations
+                    self.last_citations = citations
+                    
+                    # Format citations in the requested format
+                    citation_text = "<citation_list>"
+                    for citation in citations:
+                        citation_text += f"<citation_source>{citation}</citation_source>"
+                    citation_text += "</citation_list>"
+                    
+                    # Append the citations to the content
+                    content += f"\n{citation_text}"
+            except Exception as e:
+                logger.error(f"Error extracting citations: {str(e)}")
+                # Continue despite the error
         
         return LLMResponse(
             content=content,
@@ -339,171 +250,116 @@ class UnifiedProvider(BaseLLMProvider):
 
     def _stream_response(self, messages: List[Dict[str, Any]], **kwargs) -> Generator[str, None, None]:
         try:
-            if self.provider in self.openai_compatible_providers:
-                model = kwargs.pop('model', None)
-                full_response = ""  # Initialize before the loop
-                
-                if self.provider == "gemini":
-                    # Initialize Gemini model for token counting
-                    gemini_model = genai.GenerativeModel(f"models/{model}")
+            model = kwargs.pop('model', None)
+            full_response = ""  # Initialize before the loop
+            
+            stream = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=True,
+                stream_options={"include_usage": True},
+                **kwargs
+            )
+            
+            self._current_generation = stream
+            
+            self.last_citations = None # Ensure reset for the stream
+            self.last_images = None    # Ensure reset for the stream
+
+            def replace_citation_link(match):
+                try:
+                    number = int(match.group(1))
+                    index = number - 1  # Citations are 1-indexed in the text
+                    if self.last_citations and 0 <= index < len(self.last_citations):
+                        citation = self.last_citations[index]
+                        url_link = getattr(citation, 'url', citation if isinstance(citation, str) else "#")
+                        obfuscated_url = url_link.replace("https://", "h_ttps://").replace("http://", "h_ttp://")
+                        return f"<inline_citation>{number}:{obfuscated_url}</inline_citation>"
+                except (ValueError, IndexError, AttributeError, TypeError) as e:
+                    logger.warning(f"Failed to replace citation link for {match.group(0)}: {e}")
+                return match.group(0)
+            
+            for chunk in stream:
+                # Check for usage information in the chunk (final chunk or usage-only chunk)
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    # This is a chunk with usage information
                     
-                    # Count input tokens including images
-                    input_tokens = self._count_gemini_tokens(messages, model, gemini_model)
-                
-                stream = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    stream=True,
-                    stream_options={"include_usage": True} if self.provider in self.openai_compatible_providers else None,
-                    **kwargs
-                )
-                
-                self._current_generation = stream
-                
-
-                self.last_citations = None # Ensure reset for the stream
-                self.last_images = None    # Ensure reset for the stream
-
-                def replace_citation_link(match):
-                    try:
-                        number = int(match.group(1))
-                        index = number - 1  # Citations are 1-indexed in the text
-                        if self.last_citations and 0 <= index < len(self.last_citations):
-                            citation = self.last_citations[index]
-                            url_link = getattr(citation, 'url', citation if isinstance(citation, str) else "#")
-                            obfuscated_url = url_link.replace("https://", "h_ttps://").replace("http://", "h_ttp://")
-                            return f"<inline_citation>{number}:{obfuscated_url}</inline_citation>"
-                    except (ValueError, IndexError, AttributeError, TypeError) as e:
-                        logger.warning(f"Failed to replace citation link for {match.group(0)}: {e}")
-                    return match.group(0)
-                
-                for chunk in stream:
-                    # Common handling for OpenAI compatible providers (usage)
-                    if self.provider in self.openai_compatible_providers:
-                        if not chunk.choices and hasattr(chunk, 'usage') and chunk.usage:
-                            self.last_usage = Usage(
-                                input_tokens=chunk.usage.prompt_tokens,
-                                output_tokens=chunk.usage.completion_tokens,
-                                cached_tokens=0
-                            )
-
-                    # --- Perplexity Specific Handling --- 
-                    if self.provider == "perplexity":
-                        # 1. Store Citations when found
-                        if hasattr(chunk, 'citations') and chunk.citations:
-                            if self.last_citations is None: # Store only the first time they appear
-                                 logger.info("Storing citations found in stream chunk.")
-                                 self.last_citations = list(chunk.citations)
-                            
-                        # 2. Store Images when found 
-                        if hasattr(chunk, 'images') and chunk.images:
-                            if self.last_images is None: # Store only the first time they appear
-                                logger.info("Storing images found in stream chunk.") 
-                                self.last_images = list(chunk.images)
-
-                        # 3. Process and yield Content
-                        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
-                            content = chunk.choices[0].delta.content
-                            processed_content = re.sub(r'\[(\d+)\]', replace_citation_link, content)
-                            full_response += processed_content
-                            yield processed_content
-
-                    # --- Handling for other OpenAI compatible providers (non-perplexity content) ---
-                    elif chunk.choices and chunk.choices[0].delta.content is not None:
-                        content = chunk.choices[0].delta.content
-                        full_response += content
-                        yield content
-                
-                # For Gemini, calculate output tokens after streaming is complete
-                if self.provider == "gemini":
-                    output_count = gemini_model.count_tokens(full_response)
+                    cached_tokens = 0
+                    if self.supports_caching:
+                        try:
+                            # Access cached_tokens from prompt_tokens_details as per OpenAI docs
+                            if hasattr(chunk.usage, 'prompt_tokens_details') and chunk.usage.prompt_tokens_details:
+                                cached_tokens = getattr(chunk.usage.prompt_tokens_details, 'cached_tokens', 0)
+                        except AttributeError:
+                            pass
+                    
                     self.last_usage = Usage(
-                        input_tokens=input_tokens,
-                        output_tokens=output_count.total_tokens,
-                        cached_tokens=0
+                        input_tokens=chunk.usage.prompt_tokens,
+                        output_tokens=chunk.usage.completion_tokens,
+                        cached_tokens=cached_tokens
                     )
-                
-                # Store the full response for potential later use
-                self.last_response = full_response
-                
-                # Yield final Citation List for Perplexity
-                if self.provider == "perplexity" and self.last_citations:
-                    logger.info("Yielding final citation list.")
-                    citation_text = "<citation_list>\n"
-                    for citation in self.last_citations:
-                        citation_source = getattr(citation, 'url', citation if isinstance(citation, str) else str(citation))
-                        # Obfuscate citation URLs   
-                        citation_text += f"<citation_source><citation_url>{citation_source}</citation_url></citation_source>\n"
-                    citation_text += "</citation_list>"
-                    yield f"\n{citation_text}\n" # Add surrounding newlines
 
-                # Yield final Image List for Perplexity
-                if self.provider == "perplexity" and self.last_images:
-                    logger.info("Yielding final image list.")
-                    image_list_text = "<image_citation_list>\n"
-                    for img_data in self.last_images:
-                        if isinstance(img_data, dict):
-                            img_url = img_data.get('image_url', '#')
-                            origin_url = img_data.get('origin_url', '#')
-                            # Obfuscate image URLs  
-                            image_list_text += "<image_citation>\n"
-                            image_list_text += f"<image_url>{img_url}</image_url>\n"
-                            image_list_text += f"<origin_url>{origin_url}</origin_url>\n"
-                            image_list_text += "</image_citation>\n"
-                        else:
-                            logger.warning(f"Unexpected image data format in final list: {img_data}")
-                    image_list_text += "</image_citation_list>"
-                    yield f"\n{image_list_text}\n" # Add surrounding newlines
+                # --- Perplexity Specific Handling --- 
+                if self.provider == "perplexity":
+                    # 1. Store Citations when found
+                    if hasattr(chunk, 'citations') and chunk.citations:
+                        if self.last_citations is None: # Store only the first time they appear
+                             logger.info("Storing citations found in stream chunk.")
+                             self.last_citations = list(chunk.citations)
+                        
+                    # 2. Store Images when found 
+                    if hasattr(chunk, 'images') and chunk.images:
+                        if self.last_images is None: # Store only the first time they appear
+                            logger.info("Storing images found in stream chunk.") 
+                            self.last_images = list(chunk.images)
 
-            else:  # mistral
-                model = kwargs.pop('model', None)
-                stream = self.client.chat.stream(
-                    model=model,
-                    messages=messages,
-                    **kwargs
-                )
-                
-                self._current_generation = stream
-                full_response = ""  # Initialize before the loop
-                # Add mistral specific citation/image handling here if needed, similar to perplexity
-                # Example (needs adjustment based on actual Mistral stream structure):
-                # mistral_citations_yielded = False 
-                
-                for chunk in stream:
-                    # Check if this is the final chunk with usage data (Mistral format might differ)
-                    if hasattr(chunk, 'usage') and chunk.usage: # Adjust based on actual structure
-                         self.last_usage = Usage(
-                             input_tokens=chunk.usage.prompt_tokens, 
-                             output_tokens=chunk.usage.completion_tokens,
-                             cached_tokens=0
-                         )
-                    # Regular content chunk (Mistral format might differ)
-                    elif chunk.choices and chunk.choices[0].delta.content: # Adjust based on actual structure
+                    # 3. Process and yield Content
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content is not None:
                         content = chunk.choices[0].delta.content
-                        # Add Mistral specific citation replacement if needed
-                        # processed_content = replace_mistral_citations(content) 
-                        # full_response += processed_content
-                        # yield processed_content
-                        full_response += content # Assuming no inline replacement for now
-                        yield content 
+                        processed_content = re.sub(r'\[(\d+)\]', replace_citation_link, content)
+                        full_response += processed_content
+                        yield processed_content
 
-                    # Add Mistral specific citation/image list yielding here
-                    # Example:
-                    # if hasattr(chunk, 'citations') and chunk.citations and not mistral_citations_yielded:
-                    #    format_and_yield_mistral_citations(chunk.citations)
-                    #    mistral_citations_yielded = True
-                
-                # Store the full response for potential later use
-                self.last_response = full_response
-                # Reset last citations/images if needed for Mistral
-                # self.last_citations = None 
-                # self.last_images = None
+                # --- Handling for other OpenAI compatible providers (non-perplexity content) ---
+                elif chunk.choices and chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+                    yield content
+            
+            # Store the full response for potential later use
+            self.last_response = full_response
+            
+            # Yield final Citation List for Perplexity
+            if self.provider == "perplexity" and self.last_citations:
+                logger.info("Yielding final citation list.")
+                citation_text = "<citation_list>\n"
+                for citation in self.last_citations:
+                    citation_source = getattr(citation, 'url', citation if isinstance(citation, str) else str(citation))
+                    # Obfuscate citation URLs   
+                    citation_text += f"<citation_source><citation_url>{citation_source}</citation_url></citation_source>\n"
+                citation_text += "</citation_list>"
+                yield f"\n{citation_text}\n" # Add surrounding newlines
+
+            # Yield final Image List for Perplexity
+            if self.provider == "perplexity" and self.last_images:
+                logger.info("Yielding final image list.")
+                image_list_text = "<image_citation_list>\n"
+                for img_data in self.last_images:
+                    if isinstance(img_data, dict):
+                        img_url = img_data.get('image_url', '#')
+                        origin_url = img_data.get('origin_url', '#')
+                        # Obfuscate image URLs  
+                        image_list_text += "<image_citation>\n"
+                        image_list_text += f"<image_url>{img_url}</image_url>\n"
+                        image_list_text += f"<origin_url>{origin_url}</origin_url>\n"
+                        image_list_text += "</image_citation>\n"
+                    else:
+                        logger.warning(f"Unexpected image data format in final list: {img_data}")
+                image_list_text += "</image_citation_list>"
+                yield f"\n{image_list_text}\n" # Add surrounding newlines
 
         finally:
             self._current_generation = None
-            # Reset shared instance variables only if they haven't been potentially 
-            # used by a subsequent call immediately after streaming finishes
-            # Consider if self.last_usage/response/citations/images need resetting here or elsewhere
 
     def moderate(self, input: Union[str, List[Dict[str, Any]]], model: str) -> Dict[str, Any]:
         """Moderate content using OpenAI's moderation endpoint"""
@@ -529,8 +385,7 @@ class UnifiedProvider(BaseLLMProvider):
     def stop_generation(self):
         """Stop the current generation if any"""
         if self._current_generation:
-            if self.provider in self.openai_compatible_providers:
-                self._current_generation.close()
+            self._current_generation.close()
             self._current_generation = None
 
     def _setup_client(self, provider_config: Dict):
@@ -544,17 +399,12 @@ class UnifiedProvider(BaseLLMProvider):
             if self.provider == "gemini":
                 genai.configure(api_key=api_key)
                 
-            if provider_config["client_class"] == OpenAI:
-                # Use the OpenAI client for all providers that use it
-                self.client = provider_config["client_class"](
-                    base_url=provider_config["base_url"],
-                    api_key=api_key
-                )
-                logger.info(f"Initialized {self.provider} provider with base URL: {provider_config['base_url']}")
-            else:  # For clients that don't use base_url
-                self.client = provider_config["client_class"](
-                    api_key=api_key
-                )
+            # Use the OpenAI client for all providers
+            self.client = provider_config["client_class"](
+                base_url=provider_config["base_url"],
+                api_key=api_key
+            )
+            logger.info(f"Initialized {self.provider} provider with base URL: {provider_config['base_url']}")
                 
             self.supports_caching = provider_config["supports_caching"]
             self._current_generation = None

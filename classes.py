@@ -63,38 +63,34 @@ class ModelRegistry:
         "gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
         "gpt-image-1": ModelConfig(5.00, 40.00, None, 50),
         "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
+        
         # OpenAI Response Models
         "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
         "responses-o4-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
         "responses-o3": ModelConfig(10, 40, 2.5, 5000),
         "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
         "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
+
         # Anthropic Models
         "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
-        "claude-3-5-haiku-latest": ModelConfig(1.00, 5.00, 0.10, 4000),
         "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
-        "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
-        "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
-        "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
-        "gemini-2.5-flash-preview-04-17": ModelConfig(0.15, 0.6, None, 1000),
-        "gemini-2.5-flash-preview-05-20": ModelConfig(0.15, 0.6, None, 1000),
         "gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 1000),
-        "gemini-2.5-pro-preview-03-25": ModelConfig(1.25, 10.00, None, 150),
-        "gemini-2.5-pro-preview-06-05": ModelConfig(1.25, 10.00, None, 150),
         "gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 1000),
-        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
-        # Mistral Models
-        "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),
+        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),
+
         # Recraft Models
         "recraftv3": ModelConfig(0.00, 0.04, None, 100),
+
         # Fireworks Models
-        "accounts/fireworks/models/deepseek-r1": ModelConfig(3, 8, None, 600),
+        "accounts/fireworks/models/deepseek-r1-0528": ModelConfig(3, 8, None, 600),
+        
         # BFL Models
         "flux-dev": ModelConfig(0.00, 0.025, None, 24),
         "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        
         # Perplexity Models
         "sonar": ModelConfig(1, 1, None, 50),
         "sonar-pro": ModelConfig(3, 15, None, 50),

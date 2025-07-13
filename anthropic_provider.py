@@ -63,20 +63,32 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             # Extract system message and remove it from the list
             system_message = None
+            system_blocks = []
             indices_to_remove = []
+            
             for i, msg in enumerate(messages):
                 if msg.get("role") == "system":
-                    # Use the first system message found
-                    if system_message is None:
-                        system_message = msg.get("content")
+                    # Handle system messages with potential cache_control
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        # Content is already formatted as blocks
+                        system_blocks.extend(content)
+                    else:
+                        # Simple string content
+                        system_block = {"type": "text", "text": content}
+                        # Check if cache_control is specified at message level
+                        if "cache_control" in msg:
+                            system_block["cache_control"] = msg["cache_control"]
+                        system_blocks.append(system_block)
                     indices_to_remove.append(i)
             
             # Remove system messages in reverse order to avoid index issues
             for i in sorted(indices_to_remove, reverse=True):
                 del messages[i]
                 
-            if system_message:
-                kwargs["system"] = system_message
+            # Set system parameter if we have system blocks
+            if system_blocks:
+                kwargs["system"] = system_blocks
 
             if stream:
                 return self._stream_response(messages, **kwargs)
@@ -105,7 +117,7 @@ class AnthropicProvider(BaseLLMProvider):
             usage = Usage(
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
-                cached_tokens=0  # Not implementing caching yet
+                cached_tokens=getattr(response.usage, 'cache_read_input_tokens', 0)
             )
 
             # Anthropic returns content as array of ContentBlock objects
@@ -154,6 +166,7 @@ class AnthropicProvider(BaseLLMProvider):
             full_response = ""
             input_tokens = 0
             output_tokens = 0
+            cached_tokens = 0
             
             with self.client.messages.stream(
                 model=model,
@@ -166,6 +179,7 @@ class AnthropicProvider(BaseLLMProvider):
                     # Get input tokens from MessageStartEvent
                     if event.type == 'message_start' and hasattr(event.message, 'usage'):
                         input_tokens = event.message.usage.input_tokens
+                        cached_tokens = getattr(event.message.usage, 'cache_read_input_tokens', 0)
                     
                     # Get output tokens from MessageDeltaEvent
                     elif event.type == 'message_delta' and hasattr(event, 'usage'):
@@ -181,7 +195,7 @@ class AnthropicProvider(BaseLLMProvider):
                 self.last_usage = Usage(
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    cached_tokens=0
+                    cached_tokens=cached_tokens
                 )
                 
                 # Store the full response
