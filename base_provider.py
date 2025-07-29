@@ -480,11 +480,11 @@ class UnifiedProvider(BaseLLMProvider):
             
             # Extract usage information if available (for GPT Image model)
             usage = None
-            if hasattr(response, 'usage'):
-                usage_dict = response.usage
+            if hasattr(response, 'usage') and response.usage:
+                usage_obj = response.usage
                 usage = Usage(
-                    input_tokens=usage_dict.get('input_tokens', 0),
-                    output_tokens=usage_dict.get('output_tokens', 0),
+                    input_tokens=getattr(usage_obj, 'prompt_tokens', 0),
+                    output_tokens=getattr(usage_obj, 'completion_tokens', 0),
                     cached_tokens=0
                 )
             else:

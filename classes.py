@@ -56,9 +56,9 @@ class ModelRegistry:
         "chatgpt-4o-latest": ModelConfig(5.00, 15.00, None, 5000),
         "gpt-4o-mini-audio-preview": ModelConfig(0.15, 0.60, 0.075, 5000),
         "gpt-4o-audio-preview": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "o3-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
-        "o4-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
-        "o3": ModelConfig(10, 40, 2.5, 5000),
+        "o3-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
+        "o4-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
+        "o3": ModelConfig(2.00, 8.00, 0.5, 5000),
         "gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
         "gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
         "gpt-image-1": ModelConfig(5.00, 40.00, None, 50),
@@ -66,8 +66,8 @@ class ModelRegistry:
         
         # OpenAI Response Models
         "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "responses-o4-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
-        "responses-o3": ModelConfig(10, 40, 2.5, 5000),
+        "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
+        "responses-o3": ModelConfig(2.00, 8.00, 0.5, 5000),
         "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
         "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
 
@@ -77,8 +77,9 @@ class ModelRegistry:
         "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
-        "gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 1000),
-        "gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 1000),
+        "gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.025, 30000),
+        "gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 2000),
         "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),
 
         # Recraft Models

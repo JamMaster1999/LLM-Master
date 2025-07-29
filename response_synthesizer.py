@@ -496,6 +496,25 @@ class QueryLLM:
         images = message.get('image_paths', message.get('images', []))
         image_details = message.get('image_details', ['auto'] * len(images))
 
+        # Filter out unsupported image formats before processing
+        if images:
+            valid_images = []
+            valid_details = []
+            
+            for img, detail in zip(images, image_details):
+                try:
+                    mime_type = get_mime_type(img)
+                    if mime_type in self.SUPPORTED_MIME_TYPES:
+                        valid_images.append(img)
+                        valid_details.append(detail)
+                    else:
+                        logger.warning(f"Skipping unsupported image type: {mime_type} for image: {img}")
+                except Exception as e:
+                    logger.warning(f"Skipping image due to error determining format: {img} - {str(e)}")
+            
+            images = valid_images
+            image_details = valid_details
+
         if not images:
             return {"role": message["role"], "content": text}
 
@@ -507,12 +526,6 @@ class QueryLLM:
             try:
                 base64_image = encode_image(img)
                 mime_type = get_mime_type(img)
-                
-                if mime_type not in self.SUPPORTED_MIME_TYPES:
-                    raise ImageFormatError(
-                        f"Unsupported image type: {mime_type}. "
-                        f"Must be one of: {', '.join(self.SUPPORTED_MIME_TYPES)}"
-                    )
 
                 # Format differently for Anthropic vs. OpenAI/Gemini
                 if isinstance(provider, AnthropicProvider):

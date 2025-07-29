@@ -182,6 +182,9 @@ class OpenAIProvider(BaseLLMProvider):
         stream = None
         in_reasoning_block = False
         in_code_block = False
+        web_search_queries = {}  # Store queries by search ID
+        web_search_results = {}  # Store results by search ID
+        final_citations = []  # Store all citations for final list
         
         # Strip prefix for API call
         api_model_name = model
@@ -206,7 +209,7 @@ class OpenAIProvider(BaseLLMProvider):
                     reasoning_delta = event.delta
                     # Open the block if it's the first reasoning delta
                     if not in_reasoning_block:
-                        yield "\n\n<think>"
+                        yield "\n\n<think>\n\n"
                         in_reasoning_block = True
                     yield reasoning_delta
 
@@ -228,19 +231,19 @@ class OpenAIProvider(BaseLLMProvider):
                 
                 elif event.type == 'response.code_interpreter_call.in_progress':
                     # Close reasoning block if open when code starts
-                    if in_reasoning_block:
-                        yield "\n\n</think>\n\n"
-                        in_reasoning_block = False
+                    # if in_reasoning_block:
+                    #     yield "\n\n</think>\n\n"
+                    #     in_reasoning_block = False
                     
                     # Start code block
                     if not in_code_block:
-                        yield "```py\n"
+                        yield "\n```py\n"
                         in_code_block = True
                 
                 elif event.type == 'response.code_interpreter_call_code.delta':
                     # Ensure we're in a code block (should already be from in_progress event)
                     if not in_code_block:
-                        yield "```py\n"
+                        yield "\n```py\n"
                         in_code_block = True
                     
                     # Yield the code delta
@@ -254,66 +257,66 @@ class OpenAIProvider(BaseLLMProvider):
                         in_code_block = False
                 
                 elif event.type == 'response.output_item.done':
-                    # Check if this is a code interpreter call with outputs
-                    if (hasattr(event, 'item') and 
-                        hasattr(event.item, 'type') and 
-                        event.item.type == 'code_interpreter_call' and
-                        hasattr(event.item, 'outputs') and 
-                        event.item.outputs):
+                    # Only process if event.item exists
+                    if hasattr(event, 'item') and event.item is not None:
+                        # Handle web search completion
+                        if getattr(event.item, 'type', None) == 'web_search_call':
+                            try:
+                                query = event.item.to_dict().get('action', {}).get('query', 'Unknown')
+                                if query != 'Unknown':
+                                    yield f"\n**Search Query**: {query}\n"
+                                yield "✅ Search completed\n"
+                            except:
+                                yield "✅ Search completed\n"
                         
-                        # Collect all logs first to check if we have any content
-                        logs_content = []
-                        images = []
-                        
-                        for output in event.item.outputs:
-                            # Handle both dict and object formats
-                            output_type = getattr(output, 'type', None) or output.get('type') if isinstance(output, dict) else None
+                        # Check if this is a code interpreter call with outputs
+                        elif (hasattr(event.item, 'type') and 
+                            event.item.type == 'code_interpreter_call' and
+                            hasattr(event.item, 'outputs') and 
+                            event.item.outputs):
                             
-                            if output_type == 'logs':
-                                logs = getattr(output, 'logs', None) or output.get('logs') if isinstance(output, dict) else None
-                                if logs and logs.strip():  # Only add non-empty logs
-                                    logs_content.append(logs)
-                            elif output_type == 'image':
-                                url = getattr(output, 'url', None) or output.get('url') if isinstance(output, dict) else None
-                                if url:
-                                    images.append(url)
-                        
-                        # Only display logs block if we have actual content
-                        if logs_content:
-                            yield "```plaintext\n"
-                            for logs in logs_content:
-                                yield logs
-                            yield "\n```\n\n"
-                        
-                        # Display images
-                        for url in images:
-                            yield f"<code_execution_image>{url}</code_execution_image>\n\n"
-                    
-                    # Check for file annotations in any output item
-                    if (hasattr(event, 'item') and 
-                        hasattr(event.item, 'content') and
-                        event.item.content):
-                        
-                        for content_item in event.item.content:
-                            if (hasattr(content_item, 'annotations') and 
-                                content_item.annotations):
+                            # Collect all logs first to check if we have any content
+                            logs_content = []
+                            images = []
+                            
+                            for output in event.item.outputs:
+                                # Handle both dict and object formats
+                                output_type = getattr(output, 'type', None) or output.get('type') if isinstance(output, dict) else None
                                 
-                                for annotation in content_item.annotations:
-                                    if (hasattr(annotation, 'type') and 
-                                        annotation.type == 'container_file_citation' and
-                                        hasattr(annotation, 'file_id') and
-                                        hasattr(annotation, 'filename')):
-                                        
-                                        file_id = annotation.file_id
-                                        filename = annotation.filename
-                                        container_id = annotation.container_id
-                                        
-                                        # Output the file as a download marker
-                                        yield f"\n\n<code_execution_file><code_execution_file_id>{file_id}</code_execution_file_id><code_execution_file_name>{filename}</code_execution_file_name><code_execution_container_id>{container_id}</code_execution_container_id></code_execution_file>\n\n"
+                                if output_type == 'logs':
+                                    logs = getattr(output, 'logs', None) or output.get('logs') if isinstance(output, dict) else None
+                                    if logs and logs.strip():  # Only add non-empty logs
+                                        logs_content.append(logs)
+                                elif output_type == 'image':
+                                    url = getattr(output, 'url', None) or output.get('url') if isinstance(output, dict) else None
+                                    if url:
+                                        images.append(url)
+                            
+                            # Only display logs block if we have actual content
+                            if logs_content:
+                                yield "\n```plaintext\n"
+                                for logs in logs_content:
+                                    yield logs
+                                yield "\n```\n\n"
+                            
+                            # Display images
+                            for url in images:
+                                yield f"<code_execution_image>{url}</code_execution_image>\n\n"
+                        
+                        # Handle annotations (file citations and URL citations)
+                        if hasattr(event.item, 'content') and event.item.content:
+                            for content_item in event.item.content:
+                                if hasattr(content_item, 'annotations') and content_item.annotations:
+                                    for annotation in content_item.annotations:
+                                        if annotation.type == 'container_file_citation':
+                                            yield f"\n\n<code_execution_file><code_execution_file_id>{annotation.file_id}</code_execution_file_id><code_execution_file_name>{annotation.filename}</code_execution_file_name><code_execution_container_id>{annotation.container_id}</code_execution_container_id></code_execution_file>\n\n"
+                                        elif annotation.type == 'url_citation' and annotation.url and annotation.title:
+                                            citation_entry = {'url': annotation.url, 'title': annotation.title}
+                                            if citation_entry not in final_citations:
+                                                final_citations.append(citation_entry)
                 
-                elif event.type == 'response.code_interpreter_call.interpreting':
-                    # Code is being interpreted - execution results not streamed
-                    pass
+                elif event.type == 'response.web_search_call.in_progress':
+                    yield "\n🔍 **Starting Web Search**\n"
                 
                 elif event.type == 'response.completed':
                     # Close reasoning block if it was still open when completion event arrives
@@ -398,6 +401,15 @@ class OpenAIProvider(BaseLLMProvider):
                  # Attempt to yield closing tag
                  try: yield "\n```\n\n" 
                  except: pass 
+            
+            # Output final citation list if not already done
+            if final_citations:
+                try:
+                    yield "\n<citation_list>\n"
+                    for citation in final_citations:
+                        yield f"<citation_source><citation_url>{citation['url']}</citation_url></citation_source>\n"
+                    yield "</citation_list>\n"
+                except: pass
             
             self._current_generation = None
 
