@@ -51,36 +51,41 @@ class ModelRegistry:
     
     CONFIGS = {
         # OpenAI Models
-        "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 5000),
-        "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "chatgpt-4o-latest": ModelConfig(5.00, 15.00, None, 5000),
+        # "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 10000),
+        # "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        # "o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
+        # "o3": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
         "gpt-4o-mini-audio-preview": ModelConfig(0.15, 0.60, 0.075, 5000),
         "gpt-4o-audio-preview": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "o3-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
-        "o4-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
-        "o3": ModelConfig(2.00, 8.00, 0.5, 5000),
-        "gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
-        "gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
+        "chatgpt-4o-latest": ModelConfig(5.00, 15.00, None, 5000),
+        "gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "gpt-5-chat-latest": ModelConfig(1.25, 10.00, 0.125, 10000),
         "gpt-image-1": ModelConfig(5.00, 40.00, None, 50),
-        "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
+        
         
         # OpenAI Response Models
-        "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 5000),
-        "responses-o3": ModelConfig(2.00, 8.00, 0.5, 5000),
-        "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 5000),
-        "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 5000),
+        # "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        # "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
+        # "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
+        # "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 10000),
+        "responses-o3": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "responses-gpt-5": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5-mini": ModelConfig(0.25, 2.00, 0.025, 10000),
 
         # Anthropic Models
-        "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
-        "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
-        "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
+        # "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
+        # "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
+        # "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-sonnet-4-5-20250929": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
         "gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.025, 30000),
+        "gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.025, 30000),
         "gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 2000),
-        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),
+        # "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),
 
         # Recraft Models
         "recraftv3": ModelConfig(0.00, 0.04, None, 100),
@@ -89,15 +94,15 @@ class ModelRegistry:
         "accounts/fireworks/models/deepseek-r1-0528": ModelConfig(3, 8, None, 600),
         
         # BFL Models
-        "flux-dev": ModelConfig(0.00, 0.025, None, 24),
-        "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        # "flux-dev": ModelConfig(0.00, 0.025, None, 24),
+        # "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
         
         # Perplexity Models
         "sonar": ModelConfig(1, 1, None, 50),
         "sonar-pro": ModelConfig(3, 15, None, 50),
-        "sonar-reasoning": ModelConfig(1, 5, None, 50),
-        "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
-        "sonar-deep-research": ModelConfig(2, 8, None, 5),
+        # "sonar-reasoning": ModelConfig(1, 5, None, 50),
+        # "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
+        # "sonar-deep-research": ModelConfig(2, 8, None, 5),
     }
 
     @classmethod

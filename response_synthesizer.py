@@ -483,10 +483,79 @@ class QueryLLM:
             
             return f"image/{mime_type}"
 
+        def build_image_part(image_input: str, detail: str = "auto") -> Dict[str, Any]:
+            base64_image = encode_image(image_input)
+            mime_type = get_mime_type(image_input)
+
+            if isinstance(provider, AnthropicProvider):
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": base64_image
+                    }
+                }
+
+            image_payload = {"url": f"data:{mime_type};base64,{base64_image}"}
+            if isinstance(provider, UnifiedProvider) and provider.provider == "openai":
+                image_payload["detail"] = detail
+
+            return {
+                "type": "image_url",
+                "image_url": image_payload
+            }
+
         # Check if 'content' is already a list of parts (provider-specific format)
         current_message_content = message.get('content')
         if isinstance(current_message_content, list):
-            return message # Return directly if pre-formatted
+            return message  # Return directly if pre-formatted
+
+        # Support explicitly interleaved parts via 'parts'
+        parts = message.get('parts')
+        if isinstance(parts, list):
+            formatted_parts: List[Dict[str, Any]] = []
+
+            for part in parts:
+                if isinstance(part, str):
+                    if part:
+                        formatted_parts.append({"type": "text", "text": part})
+                    continue
+
+                if not isinstance(part, dict):
+                    logger.warning(f"Skipping unrecognized part format: {part}")
+                    continue
+
+                part_type = part.get("type")
+
+                if part_type in ("text", "input_text"):
+                    text_value = part.get("text") or part.get("value")
+                    if text_value:
+                        formatted_parts.append({"type": "text", "text": text_value})
+                    continue
+
+                if part_type == "image_url" and isinstance(part.get("image_url"), dict):
+                    formatted_parts.append(part)
+                    continue
+
+                if part_type == "image":
+                    image_input = part.get("image") or part.get("url") or part.get("path")
+                    if not image_input:
+                        logger.warning("Skipping image part without image input")
+                        continue
+                    detail = part.get("detail", "auto")
+                    formatted_parts.append(build_image_part(image_input, detail))
+                    continue
+
+                # Allow raw OpenAI style dicts to pass through if they already match expected schema
+                if part_type and part_type not in {"text", "image", "image_url"}:
+                    formatted_parts.append(part)
+                    continue
+
+                logger.warning(f"Skipping unsupported part type: {part_type}")
+
+            if formatted_parts:
+                return {"role": message["role"], "content": formatted_parts}
 
         text = message.get('text')
         if text is None and isinstance(current_message_content, str):
@@ -524,32 +593,7 @@ class QueryLLM:
 
         for img, detail in zip(images, image_details):
             try:
-                base64_image = encode_image(img)
-                mime_type = get_mime_type(img)
-
-                # Format differently for Anthropic vs. OpenAI/Gemini
-                if isinstance(provider, AnthropicProvider):
-                    content.append({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": mime_type,
-                            "data": base64_image
-                        }
-                    })
-                else:
-                    # OpenAI/Gemini format
-                    image_data = {
-                        "url": f"data:{mime_type};base64,{base64_image}"
-                    }
-                    # Only add detail for OpenAI provider
-                    if isinstance(provider, UnifiedProvider) and provider.provider == "openai":
-                        image_data["detail"] = detail
-                    
-                    content.append({
-                        "type": "image_url",
-                        "image_url": image_data
-                    })
+                content.append(build_image_part(img, detail))
             except Exception as e:
                 logger.error(f"Error formatting image {img}: {str(e)}")
                 raise ImageFormatError(f"Failed to format image {img}: {str(e)}")
