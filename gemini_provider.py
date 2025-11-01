@@ -247,7 +247,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
             raw = base64.b64decode(data_b64)
         except Exception as exc:
             raise ProviderError(f"Invalid base64 payload: {exc}") from exc
-        return types.Part.from_bytes(raw, mime_type=mime_type)
+        return types.Part.from_bytes(data=raw, mime_type=mime_type)
 
     def _render_text_parts(self, content: Any) -> str:
         if content is None:
