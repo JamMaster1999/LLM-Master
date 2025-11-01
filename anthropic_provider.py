@@ -1,6 +1,9 @@
 from typing import List, Dict, Any, Union, Generator, Optional, AsyncGenerator
 import asyncio
+import os
 from anthropic import Anthropic
+from posthog import Posthog
+from posthog.ai.anthropic import Anthropic as PostHogAnthropic
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
 import logging
@@ -33,7 +36,12 @@ class AnthropicProvider(BaseLLMProvider):
             raise ConfigurationError("Missing Anthropic API key")
             
         try:
-            self.client = self.PROVIDER_CONFIG["client_class"](api_key=api_key)
+            self.posthog = Posthog(
+                project_api_key=os.getenv("POSTHOG_API_KEY", "phc_1uBDKATKfxK7ougGiL9F9hnCgeXJvc4k6TMP2oekfnK"),
+                host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+            )
+            
+            self.client = PostHogAnthropic(api_key=api_key, posthog_client=self.posthog)
             self.supports_caching = self.PROVIDER_CONFIG["supports_caching"]
             self._current_generation = None
             self.last_usage = None
@@ -102,6 +110,13 @@ class AnthropicProvider(BaseLLMProvider):
             if 'max_tokens' not in kwargs:
                 kwargs['max_tokens'] = 1024
             
+            # Extract PostHog parameters if provided as a dict
+            posthog_params = kwargs.pop('posthog', None)
+            if posthog_params and isinstance(posthog_params, dict):
+                # Unpack PostHog parameters with posthog_ prefix
+                for key, value in posthog_params.items():
+                    kwargs[f'posthog_{key}'] = value
+            
             logger.debug(f"Generating response with model: {model}")
             
             loop = asyncio.get_event_loop()
@@ -109,7 +124,7 @@ class AnthropicProvider(BaseLLMProvider):
                 None,
                 lambda: self.client.messages.create(
                     model=model,
-                    messages=messages, # Use modified messages list
+                    messages=messages,
                     **kwargs
                 )
             )
@@ -160,6 +175,13 @@ class AnthropicProvider(BaseLLMProvider):
             # Ensure max_tokens has a default value if not provided
             if 'max_tokens' not in kwargs:
                 kwargs['max_tokens'] = 1024
+            
+            # Extract PostHog parameters if provided as a dict
+            posthog_params = kwargs.pop('posthog', None)
+            if posthog_params and isinstance(posthog_params, dict):
+                # Unpack PostHog parameters with posthog_ prefix
+                for key, value in posthog_params.items():
+                    kwargs[f'posthog_{key}'] = value
                 
             logger.debug(f"Starting streaming response with model: {model}")
             
@@ -170,7 +192,7 @@ class AnthropicProvider(BaseLLMProvider):
             
             with self.client.messages.stream(
                 model=model,
-                messages=messages, # Use the messages passed (already filtered)
+                messages=messages,
                 **kwargs
             ) as stream:
                 self._current_generation = stream

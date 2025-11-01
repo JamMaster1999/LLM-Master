@@ -19,12 +19,14 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.11",
     install_requires=[
-        "openai>=1.95.0",
-        "anthropic>=0.57.0",
+        "openai>=2.6.1",
+        "anthropic>=0.72.0",
+        "google-genai>=1.47.0",
         "requests>=2.31.0",
+        "posthog>=6.7.11",
     ],
 )

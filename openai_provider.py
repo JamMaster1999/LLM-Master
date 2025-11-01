@@ -1,6 +1,9 @@
 from typing import List, Dict, Any, Union, Generator, Optional, AsyncGenerator
 import asyncio
-from openai import OpenAI  # Changed import
+import os
+from openai import OpenAI as StandardOpenAI
+from posthog import Posthog
+from posthog.ai.openai import OpenAI
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
 import logging
@@ -32,8 +35,12 @@ class OpenAIProvider(BaseLLMProvider):
         api_key = getattr(self.config, self.PROVIDER_CONFIG["api_key_attr"], None)
             
         try:
-            # OpenAI client defaults to reading OPENAI_API_KEY from env if api_key is not passed
-            self.client = self.PROVIDER_CONFIG["client_class"](api_key=api_key)
+            self.posthog = Posthog(
+                project_api_key=os.getenv("POSTHOG_API_KEY", "phc_1uBDKATKfxK7ougGiL9F9hnCgeXJvc4k6TMP2oekfnK"),
+                host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+            )
+            
+            self.client = OpenAI(api_key=api_key, posthog_client=self.posthog)
             self.supports_caching = self.PROVIDER_CONFIG["supports_caching"]
             self._current_generation = None
             self.last_usage = None
@@ -76,6 +83,13 @@ class OpenAIProvider(BaseLLMProvider):
             # Ensure max_output_tokens has a default value if not provided
             if 'max_output_tokens' not in kwargs:
                 kwargs['max_output_tokens'] = 1024 # Default like Anthropic's max_tokens
+            
+            # Extract PostHog parameters if provided as a dict
+            posthog_params = kwargs.pop('posthog', None)
+            if posthog_params and isinstance(posthog_params, dict):
+                # Unpack PostHog parameters with posthog_ prefix
+                for key, value in posthog_params.items():
+                    kwargs[f'posthog_{key}'] = value
             
             logger.debug(f"Generating response with model: {model}")
 
@@ -172,6 +186,13 @@ class OpenAIProvider(BaseLLMProvider):
         # Ensure max_output_tokens has a default value
         if 'max_output_tokens' not in kwargs:
             kwargs['max_output_tokens'] = 1024
+        
+        # Extract PostHog parameters if provided as a dict
+        posthog_params = kwargs.pop('posthog', None)
+        if posthog_params and isinstance(posthog_params, dict):
+            # Unpack PostHog parameters with posthog_ prefix
+            for key, value in posthog_params.items():
+                kwargs[f'posthog_{key}'] = value
 
         logger.debug(f"Starting streaming response with model: {model}")
         
@@ -425,4 +446,5 @@ class OpenAIProvider(BaseLLMProvider):
             # except Exception as e:
             #     logger.warning(f"Could not explicitly close stream: {e}")
             self._current_generation = None
-            logger.info("OpenAI generation reference cleared.") 
+            logger.info("OpenAI generation reference cleared.")
+    

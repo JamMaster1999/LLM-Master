@@ -66,26 +66,28 @@ class ModelRegistry:
         
         # OpenAI Response Models
         # "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
-        # "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
+        "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
         # "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
         # "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 10000),
         "responses-o3": ModelConfig(2.00, 8.00, 0.5, 10000),
         "responses-gpt-5": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5-codex": ModelConfig(1.25, 10.00, 0.125, 10000),
         "responses-gpt-5-mini": ModelConfig(0.25, 2.00, 0.025, 10000),
 
         # Anthropic Models
         # "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         # "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
         # "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-haiku-4-5-20251001": ModelConfig(1.00, 5.00, 0.10, 4000),
         "claude-sonnet-4-5-20250929": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
-        "gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.025, 30000),
-        "gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.025, 30000),
-        "gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 10000),
-        "gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
-        "gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 2000),
-        # "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),
+        "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.025, 30000),
+        "googleai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.025, 30000),
+        "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 2000),
+        "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
 
         # Recraft Models
         "recraftv3": ModelConfig(0.00, 0.04, None, 100),

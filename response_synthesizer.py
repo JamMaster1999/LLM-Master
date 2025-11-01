@@ -11,6 +11,7 @@ from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
 from .openai_provider import OpenAIProvider
 from .bfl_provider import BFLProvider, ContentModerationError
+from .gemini_provider import GoogleGenAIProvider
 from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
 
@@ -600,7 +601,7 @@ class QueryLLM:
 
         return {"role": message["role"], "content": content}
 
-    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider, BFLProvider, OpenAIProvider]:
+    def _get_provider(self, model_name: str) -> Union[UnifiedProvider, AnthropicProvider, BFLProvider, OpenAIProvider, GoogleGenAIProvider]:
         """
         Get or create appropriate provider for the model
 
@@ -615,6 +616,7 @@ class QueryLLM:
         """
         # Simplified provider lookup logic
         PROVIDER_SETUP = {
+            "google_genai": (GoogleGenAIProvider, ["googleai:", "vertexai:"]),
             # Provider Name: (Provider Class, [list_of_match_prefixes_or_exact_names])
             # Specific providers first
             "openai_provider": (OpenAIProvider, ["responses-"]),
@@ -622,7 +624,6 @@ class QueryLLM:
             "anthropic": (AnthropicProvider, ["claude-"]),
             # Unified providers
             "openai": (UnifiedProvider, ["gpt-", "o", "chatgpt-"]), # "o" prefix catches o3-, o4-
-            "gemini": (UnifiedProvider, ["gemini-", "imagen-"]),
             "mistral": (UnifiedProvider, ["mistral-"]),
             "recraft": (UnifiedProvider, ["recraftv3"]), # Exact match treated as prefix
             "fireworks": (UnifiedProvider, ["accounts/fireworks/models/"]),

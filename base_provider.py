@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Union, Generator, Optional
-from openai import OpenAI
-import google.generativeai as genai
+from openai import OpenAI as StandardOpenAI
+from posthog import Posthog
+from posthog.ai.openai import OpenAI
 from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, ModelRegistry
 from .config import LLMConfig
 import logging
@@ -25,7 +26,7 @@ class ConfigurationError(ProviderError):
     pass
 
 class UnifiedProvider(BaseLLMProvider):
-    """Provider for OpenAI, Gemini, and Recraft models using synchronous clients"""
+    """Provider for OpenAI-compatible APIs"""
     
     PROVIDER_CONFIGS = {
         "openai": {
@@ -35,15 +36,6 @@ class UnifiedProvider(BaseLLMProvider):
             "supports_caching": True,
             "generate_map": {
                 "gpt-image-1": "_generate_recraft_image"
-            }
-        },
-        "gemini": {
-            "client_class": OpenAI,
-            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "api_key_attr": "gemini_api_key",
-            "supports_caching": True,
-            "generate_map": {
-                "imagen-3.0-generate-002": "_generate_recraft_image"
             }
         },
         "recraft": {
@@ -163,6 +155,13 @@ class UnifiedProvider(BaseLLMProvider):
         modalities = kwargs.pop('modality', None)
         audio_params = kwargs.pop('audio', None)
         
+        # Extract PostHog parameters if provided as a dict
+        posthog_params = kwargs.pop('posthog', None)
+        if posthog_params and isinstance(posthog_params, dict):
+            # Unpack PostHog parameters with posthog_ prefix
+            for key, value in posthog_params.items():
+                kwargs[f'posthog_{key}'] = value
+        
         # Create completion parameters
         completion_params = {
             'model': model,
@@ -182,20 +181,7 @@ class UnifiedProvider(BaseLLMProvider):
             lambda: self.client.chat.completions.create(**completion_params)
         )
         
-        # Check for Gemini content policy violation
-        if (self.provider == "gemini" and 
-            (not response or 
-             not response.choices or 
-             not response.choices[0].message or
-             not hasattr(response.choices[0].message, 'content') or
-             response.choices[0].message.content is None or
-             response.choices[0].message.content == "")):
-            raise ProviderError(
-                "Gemini content policy violation detected",
-                status_code="CONTENT_POLICY"
-            )
-        
-        # Unified usage handling for all OpenAI-compatible providers (including Gemini)
+        # Unified usage handling for all OpenAI-compatible providers
         cached_tokens = 0
         if self.supports_caching:
             try:
@@ -252,6 +238,13 @@ class UnifiedProvider(BaseLLMProvider):
         try:
             model = kwargs.pop('model', None)
             full_response = ""  # Initialize before the loop
+            
+            # Extract PostHog parameters if provided as a dict
+            posthog_params = kwargs.pop('posthog', None)
+            if posthog_params and isinstance(posthog_params, dict):
+                # Unpack PostHog parameters with posthog_ prefix
+                for key, value in posthog_params.items():
+                    kwargs[f'posthog_{key}'] = value
             
             stream = self.client.chat.completions.create(
                 model=model,
@@ -387,7 +380,7 @@ class UnifiedProvider(BaseLLMProvider):
         if self._current_generation:
             self._current_generation.close()
             self._current_generation = None
-
+    
     def _setup_client(self, provider_config: Dict):
         """Set up the provider client with configuration"""
         # Get API key from config
@@ -396,13 +389,15 @@ class UnifiedProvider(BaseLLMProvider):
             raise ConfigurationError(f"Missing API key for provider: {self.provider}")
             
         try:
-            if self.provider == "gemini":
-                genai.configure(api_key=api_key)
-                
-            # Use the OpenAI client for all providers
-            self.client = provider_config["client_class"](
+            self.posthog = Posthog(
+                project_api_key=os.getenv("POSTHOG_API_KEY", "phc_1uBDKATKfxK7ougGiL9F9hnCgeXJvc4k6TMP2oekfnK"),
+                host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+            )
+            
+            self.client = OpenAI(
                 base_url=provider_config["base_url"],
-                api_key=api_key
+                api_key=api_key,
+                posthog_client=self.posthog
             )
             logger.info(f"Initialized {self.provider} provider with base URL: {provider_config['base_url']}")
                 
@@ -419,7 +414,7 @@ class UnifiedProvider(BaseLLMProvider):
             raise ConfigurationError(f"Failed to initialize {self.provider} provider: {str(e)}")
 
     async def _generate_recraft_image(self, messages: List[Dict[str, Any]], model: str, **kwargs) -> LLMResponse:
-        """Generate an image using either Recraft or Imagen image generation APIs
+        """Generate an image using either Recraft or GPT Image generation APIs
         
         Args:
             messages: List of message dictionaries (will extract prompt from the last user message)
@@ -443,15 +438,10 @@ class UnifiedProvider(BaseLLMProvider):
             raise ProviderError("No prompt provided for image generation")
         
         # Determine which model we're using
-        is_imagen = "imagen" in model.lower()
         is_gpt_image = "gpt-image" in model.lower()
         
         # Set model-specific parameters
-        if is_imagen:
-            # Only Imagen requires response_format
-            style_params = {"response_format": "b64_json"}
-            logger.info(f"Generating image with Imagen provider. Base URL: {self.client.base_url}")
-        elif is_gpt_image:
+        if is_gpt_image:
             # GPT Image model returns b64_json by default
             style_params = {}
             logger.info(f"Generating image with GPT Image provider. Base URL: {self.client.base_url}")
@@ -493,9 +483,7 @@ class UnifiedProvider(BaseLLMProvider):
             
             # Return response with the appropriate content format
             content = None
-            if is_imagen:
-                content = response.data[0].b64_json
-            elif is_gpt_image:
+            if is_gpt_image:
                 content = response.data[0].b64_json
             else:
                 content = response.data[0].url
@@ -508,6 +496,6 @@ class UnifiedProvider(BaseLLMProvider):
             )
             
         except Exception as e:
-            provider_name = "Imagen" if is_imagen else "GPT Image" if is_gpt_image else "Recraft"
+            provider_name = "GPT Image" if is_gpt_image else "Recraft"
             logger.error(f"Error generating image with {provider_name}: {str(e)}")
             raise ProviderError(f"Failed to generate image: {str(e)}")
