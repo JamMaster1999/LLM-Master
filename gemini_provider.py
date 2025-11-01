@@ -283,11 +283,15 @@ class GoogleGenAIProvider(BaseLLMProvider):
             if key in kwargs:
                 config_kwargs[key] = kwargs.pop(key)
 
-        # Handle thinking configuration from reasoning.thinking_budget
-        if reasoning := kwargs.pop("reasoning", None):
-            if isinstance(reasoning, dict) and "thinking_budget" in reasoning:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=reasoning["thinking_budget"])
-        # Also support direct thinking_config for flexibility
+        # Handle thinking configuration
+        effort_map = {"none": 0, "low": 512, "medium": 2048, "high": 8192}
+        reasoning = kwargs.pop("reasoning", None)
+        reasoning_effort = kwargs.pop("reasoning_effort", None)
+        
+        if isinstance(reasoning, dict) and "thinking_budget" in reasoning:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=reasoning["thinking_budget"])
+        elif reasoning_effort:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=effort_map.get(reasoning_effort.lower()))
         elif thinking_config := kwargs.pop("thinking_config", None):
             config_kwargs["thinking_config"] = thinking_config
 
