@@ -7,6 +7,7 @@ import logging
 import modal
 import asyncio
 import re
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,9 @@ class ModelRegistry:
         
         
         # OpenAI Response Models
-        # "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
         "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
-        # "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
-        # "responses-gpt-4.1-mini": ModelConfig(0.4, 1.6, 0.1, 10000),
         "responses-o3": ModelConfig(2.00, 8.00, 0.5, 10000),
         "responses-gpt-5": ModelConfig(1.25, 10.00, 0.125, 10000),
         "responses-gpt-5-codex": ModelConfig(1.25, 10.00, 0.125, 10000),
@@ -82,12 +82,21 @@ class ModelRegistry:
         "claude-sonnet-4-5-20250929": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
-        "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.025, 30000),
-        "googleai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.025, 30000),
-        "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "googleai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
         "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
-        "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.31, 2000),
+        "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
         "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+
+        # Vertex Models
+        "vertexai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "vertexai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "vertexai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
+        "vertexai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "vertexai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
+        "vertexai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+
 
         # Recraft Models
         "recraftv3": ModelConfig(0.00, 0.04, None, 100),
@@ -214,6 +223,7 @@ class BaseLLMProvider(ABC):
     All LLM providers must implement these methods to ensure
     consistent behavior across different providers.
     """
+    supports_native_async: bool = False
     
     @abstractmethod
     async def generate(self, 
@@ -269,37 +279,45 @@ class RateLimiter:
         """
         # Replace slashes, spaces and other potentially problematic characters
         return re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name)
+    
+    def _prune_old_timestamps(self, timestamps: List[float]) -> List[float]:
+        """Remove timestamps older than 60 seconds."""
+        now = time.time()
+        return [ts for ts in timestamps if now - ts < 60]
+    
+    def _reserve_capacity(self, timestamps: List[float], batch_size: int) -> List[float]:
+        """Add placeholder timestamps for batch requests with microsecond staggering."""
+        if batch_size <= 0:
+            batch_size = 1
+        now = time.time()
+        increment = 1e-6
+        timestamps.extend(now + (i * increment) for i in range(batch_size))
+        return timestamps
+    
+    def _has_capacity(self, timestamps: List[float], batch_size: int) -> bool:
+        """Check if there's capacity for the batch size."""
+        if batch_size <= 0:
+            batch_size = 1
+        return len(timestamps) + batch_size <= self.model_config.rate_limit_rpm
         
-    async def wait_for_capacity(self):
+    async def wait_for_capacity(self, batch_size: int = 1):
         """
         Acquire our distributed 'lock_queue' to ensure 
         read/check/write is atomic. We'll loop until capacity is found.
         """
-        import time
-        
         first_wait = True
         while True:
-            # 1) Acquire the lock
             await lock_queue.get.aio()
             try:
-                # 2) Read timestamps
-                timestamps = self.rate_dict["request_timestamps"]
+                timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
                 
-                # 3) Prune old
-                now = time.time()
-                timestamps = [ts for ts in timestamps if now - ts < 60]
-                
-                # 4) Check capacity
-                if len(timestamps) < self.model_config.rate_limit_rpm:
-                    # We have capacity => append
-                    timestamps.append(now)
+                if self._has_capacity(timestamps, batch_size):
+                    timestamps = self._reserve_capacity(timestamps, batch_size)
                     self.rate_dict["request_timestamps"] = timestamps
-
-                    # Log if we had to wait
+                    
                     if not first_wait:
                         logger.info(f"Capacity available for {self.model_name}, resuming processing")
-                    
-                    return  # Done
+                    return
                 else:
                     # No capacity => must wait
                     if first_wait:
@@ -315,23 +333,18 @@ class RateLimiter:
             # Wait a second before re-checking
             await asyncio.sleep(1)
 
-    async def can_make_request(self) -> bool:
+    async def can_make_request(self, batch_size: int = 1) -> bool:
         """
         Do the same logic, but return True/False immediately 
         instead of blocking until capacity.
-        """
-        import time
-        
+        """ 
         # Acquire the lock
         await lock_queue.get.aio()
         try:
-            timestamps = self.rate_dict["request_timestamps"]
-            now = time.time()
-            timestamps = [ts for ts in timestamps if now - ts < 60]
+            timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
             
-            if len(timestamps) < self.model_config.rate_limit_rpm:
-                # Append now
-                timestamps.append(now)
+            if self._has_capacity(timestamps, batch_size):
+                timestamps = self._reserve_capacity(timestamps, batch_size)
                 self.rate_dict["request_timestamps"] = timestamps
                 return True
             else:
@@ -351,7 +364,6 @@ class RateLimiter:
         
     async def submit_request(self, request: dict) -> str:
         """Submit request and store in Dict"""
-        import uuid
         request_id = str(uuid.uuid4())
         
         # Store actual request data in Dict
@@ -365,7 +377,6 @@ class RateLimiter:
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
         """Wait for specific request ID's response"""
-        import time
         start_time = time.time()
         while time.time() - start_time < timeout:
             if request_id in self.response_dict:

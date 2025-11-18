@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Union, Generator, Optional
 from openai import OpenAI as StandardOpenAI
 from posthog import Posthog
 from posthog.ai.openai import OpenAI
-from .classes import BaseLLMProvider, LLMResponse, Usage, RateLimiter, ModelConfig, ModelRegistry
+from .classes import BaseLLMProvider, LLMResponse, Usage, ModelConfig, ModelRegistry
 from .config import LLMConfig
 import logging
 import os
@@ -69,9 +69,6 @@ class UnifiedProvider(BaseLLMProvider):
         self.provider = provider
         self.config = config or LLMConfig()
         
-        # Initialize rate limiters dictionary but don't create them yet
-        self.rate_limiters = {}
-        
         self.openai_compatible_providers = [
             p for p, cfg in self.PROVIDER_CONFIGS.items() 
             if cfg["client_class"] == OpenAI
@@ -83,41 +80,6 @@ class UnifiedProvider(BaseLLMProvider):
             raise ConfigurationError(f"Unsupported provider: {provider}")
             
         self._setup_client(provider_config)
-        
-    def _get_rate_limiter(self, model_name: str) -> RateLimiter:
-        """
-        Get or create a rate limiter for the model
-        
-        Args:
-            model_name: Name of the model to get/create rate limiter for
-            
-        Returns:
-            RateLimiter instance
-        """
-        if model_name not in self.rate_limiters:
-            # Create rate limiter on demand
-            model_config = ModelRegistry.get_config(model_name)
-            self.rate_limiters[model_name] = RateLimiter(
-                model_config=model_config,
-                model_name=model_name
-            )
-        
-        return self.rate_limiters[model_name]
-        
-    async def generate_parallel(self, requests: List[Dict], model: str, **kwargs) -> List[LLMResponse]:
-        """Generate responses in parallel while respecting rate limits"""
-        rate_limiter = self._get_rate_limiter(model)
-        responses = []
-        
-        async def process_request(request):
-            await rate_limiter.wait_for_capacity()
-            return await self.generate_async(request, **kwargs)
-            
-        # Process requests in parallel
-        tasks = [process_request(req) for req in requests]
-        responses = await asyncio.gather(*tasks)
-        
-        return responses
         
     async def generate_async(self, messages: List[Dict[str, Any]], **kwargs) -> LLMResponse:
         """Async version of generate"""

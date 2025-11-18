@@ -1,5 +1,5 @@
-openai>=2.6.1
-anthropic>=0.72.0
-google-genai>=1.47.0
+openai[aiohttp]>=2.6.1
+anthropic[aiohttp]>=0.72.0
+google-genai[aiohttp]>=1.47.0
 requests>=2.31.0
 posthog>=6.7.11

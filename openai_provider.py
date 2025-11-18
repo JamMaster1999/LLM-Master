@@ -1,167 +1,164 @@
 from typing import List, Dict, Any, Union, Generator, Optional, AsyncGenerator
 import asyncio
 import os
-from openai import OpenAI as StandardOpenAI
 from posthog import Posthog
 from posthog.ai.openai import OpenAI
+try:
+    from openai import AsyncOpenAI, DefaultAioHttpClient
+except ImportError:  # pragma: no cover - fallback for older SDK versions
+    AsyncOpenAI = None
+    DefaultAioHttpClient = None
 from .classes import BaseLLMProvider, LLMResponse, Usage
 from .config import LLMConfig
 import logging
 from .base_provider import ProviderError, ConfigurationError
 
-# Set up logging
 logger = logging.getLogger(__name__)
+
+def _init_posthog() -> Posthog:
+    return Posthog(
+        project_api_key=os.getenv("POSTHOG_API_KEY", "phc_1uBDKATKfxK7ougGiL9F9hnCgeXJvc4k6TMP2oekfnK"),
+        host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+    )
 
 class OpenAIProvider(BaseLLMProvider):
     """Provider for OpenAI models"""
-    
-    PROVIDER_CONFIG = {
-        "client_class": OpenAI,
-        "api_key_attr": "openai_api_key",  # Assuming this exists in LLMConfig
-        "supports_caching": True # Based on usage details provided
-    }
+    supports_native_async = True
+    API_KEY_ATTR = "openai_api_key"
+    SUPPORTS_CACHING = True
 
     def __init__(self, config: Optional[LLMConfig] = None):
-        """
-        Initialize the OpenAI provider
-        
-        Args:
-            config: LLMConfig instance. If None, will attempt to load from environment
-        """
         self.config = config or LLMConfig.from_env()
-        
-        # Get API key from config
-        # The OpenAI client can also load from OPENAI_API_KEY env var if key is None
-        api_key = getattr(self.config, self.PROVIDER_CONFIG["api_key_attr"], None)
+        api_key = getattr(self.config, self.API_KEY_ATTR, None)
+        self._native_client = None
+        self._native_http_client = None
             
         try:
-            self.posthog = Posthog(
-                project_api_key=os.getenv("POSTHOG_API_KEY", "phc_1uBDKATKfxK7ougGiL9F9hnCgeXJvc4k6TMP2oekfnK"),
-                host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
-            )
-            
+            self.posthog = _init_posthog()
             self.client = OpenAI(api_key=api_key, posthog_client=self.posthog)
-            self.supports_caching = self.PROVIDER_CONFIG["supports_caching"]
+            self.supports_caching = self.SUPPORTS_CACHING
             self._current_generation = None
             self.last_usage = None
             self.last_response = None
-            
             logger.info("Successfully initialized OpenAI provider")
-            
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI provider: {str(e)}")
             raise ConfigurationError(f"Failed to initialize OpenAI provider: {str(e)}")
 
-    async def generate(self, 
-                messages: List[Dict[str, Any]], 
-                stream: bool = False,
-                **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
-        """
-        Generate a response using the OpenAI API
-        
-        Args:
-            messages: List of message dictionaries (passed as 'input' to API)
-            stream: Whether to stream the response
-            **kwargs: Additional arguments to pass to the API
-        
-        Returns:
-            Either a LLMResponse object or a Generator for streaming
-        """
-        try:
-            if stream:
-                # Streaming needs to be an async generator
-                return self._stream_response(messages, **kwargs) 
+    def _get_or_create_native_client(self):
+        if AsyncOpenAI is None:
+            raise ConfigurationError("AsyncOpenAI is unavailable. Please upgrade the openai package to use native async clients.")
+        if self._native_client is None:
+            api_key = getattr(self.config, self.API_KEY_ATTR, None) or os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ConfigurationError("Missing OpenAI API key for async client")
+            client_kwargs: Dict[str, Any] = {"api_key": api_key}
+            if DefaultAioHttpClient is not None:
+                self._native_http_client = DefaultAioHttpClient()
+                client_kwargs["http_client"] = self._native_http_client
+            self._native_client = AsyncOpenAI(**client_kwargs)
+        return self._native_client
 
-            # Extract model from kwargs
-            model = kwargs.pop('model', None)
-            if not model:
-                raise ValueError("Model parameter is required")
-            
-            # Map max_tokens to max_output_tokens if provided
-            if 'max_tokens' in kwargs and 'max_output_tokens' not in kwargs:
-                 kwargs['max_output_tokens'] = kwargs.pop('max_tokens')
-            # Ensure max_output_tokens has a default value if not provided
-            if 'max_output_tokens' not in kwargs:
-                kwargs['max_output_tokens'] = 1024 # Default like Anthropic's max_tokens
-            
-            # Extract PostHog parameters if provided as a dict
-            posthog_params = kwargs.pop('posthog', None)
-            if posthog_params and isinstance(posthog_params, dict):
-                # Unpack PostHog parameters with posthog_ prefix
-                for key, value in posthog_params.items():
-                    kwargs[f'posthog_{key}'] = value
-            
-            logger.debug(f"Generating response with model: {model}")
+    async def _create_sync_response(self, request_params: Dict[str, Any]) -> Any:
+        return await asyncio.get_event_loop().run_in_executor(None, lambda: self.client.responses.create(**request_params))
 
-            # Strip prefix for API call
-            api_model_name = model
-            if api_model_name.startswith("responses-"):
-                api_model_name = api_model_name[len("responses-"):]
-                logger.debug(f"Stripped prefix, using API model name: {api_model_name}")
+    async def _create_native_response(self, request_params: Dict[str, Any]) -> Any:
+        return await self._get_or_create_native_client().responses.create(**request_params)
 
-            request_params = {
-                "model": api_model_name, # API uses 'input' and expects stripped model name
-                "input": messages, 
-                **kwargs
-            }
-            
-            # Assuming the client might be synchronous based on examples
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.responses.create(**request_params)
-            )
+    @staticmethod
+    def _strip_model_prefix(model: str) -> str:
+        return model[len("responses-"):] if model.startswith("responses-") else model
 
-            # Check for errors in the response object
-            if response.error:
-                logger.error(f"OpenAI API error: {response.error.code} - {response.error.message}")
-                raise ProviderError(f"OpenAI API error: {response.error.code} - {response.error.message}")
+    @staticmethod
+    def _prepare_request(messages: List[Dict[str, Any]], kwargs: Dict[str, Any]) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+        local_kwargs = dict(kwargs)
+        model = local_kwargs.pop("model", None)
+        if not model:
+            raise ValueError("Model parameter is required")
+        if "max_tokens" in local_kwargs and "max_output_tokens" not in local_kwargs:
+            local_kwargs["max_output_tokens"] = local_kwargs.pop("max_tokens")
+        if "max_output_tokens" not in local_kwargs:
+            local_kwargs["max_output_tokens"] = 1024
+        posthog_params = local_kwargs.pop("posthog", None)
+        request_params = {"model": OpenAIProvider._strip_model_prefix(model), "input": messages, **local_kwargs}
+        return model, request_params, posthog_params if isinstance(posthog_params, dict) else None
 
-            # Access cached_tokens from prompt_tokens_details as per OpenAI docs
-            cached_tokens = 0
-            if hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details:
-                cached_tokens = getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0)
-            
-            usage = Usage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                cached_tokens=cached_tokens
-            )
+    async def aclose(self) -> None:
+        if self._native_client is not None:
+            await self._native_client.aclose()
+            self._native_client = None
 
-            # Extract text content - need to search the output list
-            content = ""
-            if response.output:
-                for output_item in response.output:
-                    if output_item.type == "message" and output_item.role == "assistant":
-                        if output_item.content:
-                            for content_item in output_item.content:
-                                if content_item.type == "output_text":
-                                    content += content_item.text
-                                    # Assuming we only care about the first text block if multiple exist
-                                    # or concatenate if needed? Sticking to concatenation for now.
-            
-            if not content:
-                 logger.warning("No output text found in response.")
-                 # Check if response.output_text convenience attribute exists and has text
-                 if hasattr(response, 'output_text') and isinstance(response.output_text, str):
-                     content = response.output_text # Use convenience attribute if primary search fails
+        if self._native_http_client is not None and hasattr(self._native_http_client, "aclose"):
+            await self._native_http_client.aclose()
+            self._native_http_client = None
 
-            logger.debug(f"Generated response with {usage.input_tokens} input, {usage.output_tokens} output, {usage.cached_tokens} cached tokens")
+    @staticmethod
+    def _apply_posthog_params(request_params: Dict[str, Any], posthog_params: Optional[Dict[str, Any]]) -> None:
+        if not posthog_params:
+            return
+        for key, value in posthog_params.items():
+            request_params[f"posthog_{key}"] = value
 
-            return LLMResponse(
-                content=content,
-                model_name=model, # Return the original model name with prefix
-                usage=usage,
-                latency=0  # Will be set by ResponseSynthesizer
-            )
-            
-        except Exception as e:
-            # Catch specific OpenAI errors if known, otherwise general exception
-            logger.error(f"Error during generation: {str(e)}")
-            # Check if it's already a ProviderError or ConfigurationError
-            if isinstance(e, (ProviderError, ConfigurationError)):
-                raise
-            raise ProviderError(f"OpenAI generation failed: {str(e)}")
+    @staticmethod
+    def _raise_on_error(response: Any) -> None:
+        if getattr(response, "error", None):
+            raise ProviderError(f"OpenAI API error: {response.error.code} - {response.error.message}")
+
+    @staticmethod
+    def _extract_text(response: Any) -> str:
+        segments: List[str] = []
+        if getattr(response, "output", None):
+            for item in response.output:
+                if item.type == "message" and item.role == "assistant" and item.content:
+                    for block in item.content:
+                        if block.type == "output_text":
+                            segments.append(block.text)
+        if not segments and isinstance(getattr(response, "output_text", None), str):
+            segments.append(response.output_text)
+        return "".join(segments)
+
+    @staticmethod
+    def _build_usage(response: Any) -> Usage:
+        usage_meta = getattr(response, "usage", None)
+        if not usage_meta:
+            return Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+        cached_tokens = 0
+        details = getattr(usage_meta, "prompt_tokens_details", None)
+        if details:
+            cached_tokens = getattr(details, "cached_tokens", 0)
+        return Usage(
+            input_tokens=getattr(usage_meta, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage_meta, "output_tokens", 0) or 0,
+            cached_tokens=cached_tokens,
+        )
+
+    async def generate(self, messages: List[Dict[str, Any]], stream: bool = False, **kwargs) -> Union[LLMResponse, Generator[str, None, None]]:
+        kwargs = dict(kwargs)
+        if stream:
+            return self._stream_response(messages, **kwargs)
+
+        use_native_async = kwargs.pop("_native_async", False)
+
+        model, request_params, posthog_params = self._prepare_request(messages, kwargs)
+        logger.debug("Generating response with model=%s native_async=%s", model, use_native_async)
+
+        if use_native_async:
+            response = await self._create_native_response(request_params)
+        else:
+            self._apply_posthog_params(request_params, posthog_params)
+            response = await self._create_sync_response(request_params)
+
+        self._raise_on_error(response)
+
+        content = self._extract_text(response)
+        if not content:
+            logger.warning("No output text found in response (%s)", model)
+
+        usage = self._build_usage(response)
+        self.last_usage = usage
+        self.last_response = content
+
+        return LLMResponse(content=content, model_name=model, usage=usage, latency=0.0)
 
     async def _stream_response(self, 
                         messages: List[Dict[str, Any]], 
@@ -207,18 +204,8 @@ class OpenAIProvider(BaseLLMProvider):
         web_search_results = {}  # Store results by search ID
         final_citations = []  # Store all citations for final list
         
-        # Strip prefix for API call
-        api_model_name = model
-        if api_model_name.startswith("responses-"):
-            api_model_name = api_model_name[len("responses-"):]
-            logger.debug(f"Stripped prefix, using API model name: {api_model_name}")
-
-        request_params = {
-            "model": api_model_name, # Use stripped name
-            "input": messages,
-            "stream": True,
-            **kwargs
-        }
+        api_model_name = self._strip_model_prefix(model)
+        request_params = {"model": api_model_name, "input": messages, "stream": True, **kwargs}
 
         try:
             stream = self.client.responses.create(**request_params)

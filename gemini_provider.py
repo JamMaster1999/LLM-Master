@@ -14,15 +14,15 @@ import logging
 import mimetypes
 import os
 import re
-import time
 from typing import Any, Dict, Generator, Iterable, List, Optional, Tuple, Union
 
 from google import genai
-from google.genai import types
+from google.genai import types, errors as genai_errors
 from posthog import Posthog
 from posthog.ai.gemini import Client as PosthogGeminiClient
 
-from .classes import BaseLLMProvider, LLMResponse, ModelRegistry, RateLimiter, Usage
+from .base_provider import ProviderError, ConfigurationError
+from .classes import BaseLLMProvider, LLMResponse, ModelRegistry, Usage
 from .config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -30,26 +30,19 @@ logger = logging.getLogger(__name__)
 Message = Dict[str, Any]
 
 
-class ProviderError(Exception):
-    """Raised when the Google Gen AI provider encounters an unrecoverable error."""
-
-
-class ConfigurationError(ProviderError):
-    """Raised when provider configuration is invalid."""
-
-
 class GoogleGenAIProvider(BaseLLMProvider):
+    supports_native_async = True
     """Google Gen AI provider (Gemini + Vertex) with PostHog instrumentation."""
 
     _BACKEND_PREFIXES = {"vertex": "vertex", "vertexai": "vertex", "googleai": "googleai", "google": "googleai"}
     _DEFAULT_BACKEND = "googleai"
-    _IMAGEN_PREFIXES = ("imagen-",)
+    _REASONING_EFFORT_MAP = {"none": 0, "low": 512, "medium": 2048, "high": 8192}
 
     def __init__(self, config: Optional[LLMConfig] = None) -> None:
         super().__init__()
         self.config = config or LLMConfig()
-        self.rate_limiters: Dict[str, RateLimiter] = {}
-        self.clients: Dict[str, PosthogGeminiClient] = {}
+        self.posthog_clients: Dict[str, PosthogGeminiClient] = {}
+        self.native_clients: Dict[str, genai.Client] = {}
         self.posthog = self._init_posthog()
         self.supports_caching = True
         self._current_generation: Optional[Iterable[Any]] = None
@@ -59,27 +52,18 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     # Public API
 
-    async def generate_parallel(self, requests: List[List[Message]], model: str, **kwargs: Any) -> List[LLMResponse]:
-        backend, model_id = self._resolve_backend(model)
-        rate_limiter = self._get_rate_limiter(model)
-        tasks = [
-            self._generate_with_rate_limit(rate_limiter, req, model=model_id, backend=backend, **kwargs)
-            for req in requests
-        ]
-        return await asyncio.gather(*tasks)
-
-    async def generate_async(self, messages: List[Message], model: str, stream: bool = False, **kwargs: Any) -> Union[LLMResponse, Generator[str, None, None]]:
-        return await self.generate(messages, model=model, stream=stream, **kwargs)
-
     async def generate(self, messages: List[Message], model: str, stream: bool = False, **kwargs: Any) -> Union[LLMResponse, Generator[str, None, None]]:
         backend, model_id = self._resolve_backend(model)
-        client = self._get_or_create_client(backend)
-        rate_limiter = self._get_rate_limiter(model)
-        kwargs['_original_model_name'] = model
+        kwargs = dict(kwargs)
+        kwargs["_original_model_name"] = model
+        use_native_async = kwargs.pop("_native_async", False)
 
         if stream:
-            return await self._stream_with_rate_limit(rate_limiter, messages, model=model_id, backend=backend, client=client, **kwargs)
-        return await self._generate_with_rate_limit(rate_limiter, messages, model=model_id, backend=backend, client=client, **kwargs)
+            client = self._get_or_create_client(backend, native=False)
+            return self._stream_text(messages, model_id, backend, client, **kwargs)
+
+        client = self._get_or_create_client(backend, native=use_native_async)
+        return await self._generate_internal(messages, model_id, backend, client, native=use_native_async, **kwargs)
 
     def stop_generation(self) -> None:
         if self._current_generation and (close := getattr(self._current_generation, "close", None)):
@@ -91,54 +75,66 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     # Core generation
 
-    async def _generate_with_rate_limit(self, rate_limiter: RateLimiter, messages: List[Message], model: str, backend: Optional[str] = None, client: Optional[PosthogGeminiClient] = None, **kwargs: Any) -> LLMResponse:
-        await rate_limiter.wait_for_capacity()
-        backend = backend or self._resolve_backend(model)[0]
-        client = client or self._get_or_create_client(backend)
-        
-        if self._is_imagen_model(model):
-            return await self._generate_image(messages, model, backend, client, **kwargs)
-        return await self._generate_text(messages, model, backend, client, **kwargs)
-
-    async def _stream_with_rate_limit(self, rate_limiter: RateLimiter, messages: List[Message], model: str, backend: Optional[str] = None, client: Optional[PosthogGeminiClient] = None, **kwargs: Any) -> Generator[str, None, None]:
-        await rate_limiter.wait_for_capacity()
-        backend = backend or self._resolve_backend(model)[0]
-        client = client or self._get_or_create_client(backend)
-        return self._stream_text(messages, model, backend, client, **kwargs)
-
-    async def _generate_text(self, messages: List[Message], model: str, backend: str, client: PosthogGeminiClient, **kwargs: Any) -> LLMResponse:
+    async def _generate_internal(self, messages: List[Message], model: str, backend: str, client: Any, native: bool, **kwargs: Any) -> LLMResponse:
         original_model_name = kwargs.pop("_original_model_name", None)
-        contents, system_instruction, tool_state = self._convert_messages(messages)
-        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction, tool_state)
+        is_imagen = model.startswith("imagen-")
+        
+        if is_imagen:
+            if not (prompt := self._extract_prompt_for_image(messages, kwargs)):
+                raise ProviderError("Unable to resolve prompt for image generation.")
+            config = self._build_image_config(kwargs)
+            response = await asyncio.to_thread(client.models.generate_images, model=model, prompt=prompt, config=config)
+            if not response.generated_images:
+                raise ProviderError("Image generation returned no results.")
+            image_bytes = response.generated_images[0].image.image_bytes
+            content_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            usage = self._extract_usage(response)
+            return LLMResponse(content=content_b64, model_name=original_model_name or model, usage=usage, latency=0.0)
 
-        start_time = time.perf_counter()
-        response = await asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
-        latency = time.perf_counter() - start_time
+        contents, system_instruction = self._convert_messages(messages)
+        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction)
+
+        try:
+            if native:
+                response = await client.aio.models.generate_content(model=model, contents=contents, config=config, **request_kwargs)
+            else:
+                response = await asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
+        except Exception as exc:
+            status_code = getattr(exc, 'status', None) if isinstance(exc, genai_errors.APIError) else None
+            raise ProviderError(str(exc), status_code=status_code) from exc
 
         self._raise_on_safety_block(response)
-        text, audio_data, citations = self._extract_content(response)
+        text, audio_data = self._extract_content(response)
         usage = self._extract_usage(response)
+        self.last_response, self.last_usage = text, usage
 
-        self.last_response, self.last_usage, self.last_citations = text, usage, citations
+        return LLMResponse(content=text, model_name=original_model_name or model, usage=usage, latency=0.0, audio_data=audio_data)
 
-        return LLMResponse(
-            content=text,
-            model_name=original_model_name or model,
-            usage=usage,
-            latency=latency,
-            audio_data=audio_data,
-            citations=citations,
-        )
+    async def generate_native_batch(self, batched_requests: List[Tuple[List[Message], Dict[str, Any]]], model: str, *, backend: Optional[str] = None, concurrency: int = 32) -> List[LLMResponse]:
+        resolved_backend, resolved_model = self._resolve_backend(model)
+        backend = backend or resolved_backend
+        model_id = resolved_model
+        client = self._get_or_create_client(backend, native=True)
+        semaphore = asyncio.Semaphore(concurrency)
+        results: List[Optional[LLMResponse]] = [None] * len(batched_requests)
+
+        async def worker(index: int, messages: List[Message], payload: Dict[str, Any]) -> None:
+            async with semaphore:
+                local_kwargs = dict(payload)
+                local_kwargs.setdefault("_original_model_name", model)
+                results[index] = await self._generate_internal(messages, model_id, backend, client, native=True, **local_kwargs)
+
+        tasks = [asyncio.create_task(worker(i, messages, kwargs)) for i, (messages, kwargs) in enumerate(batched_requests)]
+        await asyncio.gather(*tasks)
+        return [r for r in results if r is not None]
 
     def _stream_text(self, messages: List[Message], model: str, backend: str, client: PosthogGeminiClient, **kwargs: Any) -> Generator[str, None, None]:
         kwargs.pop("_original_model_name", None)
-        contents, system_instruction, tool_state = self._convert_messages(messages)
-        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction, tool_state)
-
+        contents, system_instruction = self._convert_messages(messages)
+        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction)
         stream = client.models.generate_content_stream(model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
         self._current_generation = stream
-
-        aggregated_text, last_usage, citations = [], None, None
+        aggregated_text, last_usage = [], None
 
         try:
             for chunk in stream:
@@ -147,36 +143,15 @@ class GoogleGenAIProvider(BaseLLMProvider):
                     yield chunk.text
                 if chunk_usage := self._extract_usage(chunk, default=None):
                     last_usage = chunk_usage
-                citations = citations or self._extract_citations(chunk)
         finally:
             self._current_generation = None
 
         self.last_response = "".join(aggregated_text) if aggregated_text else None
         self.last_usage = last_usage
-        self.last_citations = citations
-
-    async def _generate_image(self, messages: List[Message], model: str, backend: str, client: PosthogGeminiClient, **kwargs: Any) -> LLMResponse:
-        original_model_name = kwargs.pop("_original_model_name", None)
-        if not (prompt := self._extract_prompt_for_image(messages, kwargs)):
-            raise ProviderError("Unable to resolve prompt for image generation.")
-
-        config = self._build_image_config(kwargs)
-        start_time = time.perf_counter()
-        response = await asyncio.to_thread(client.models.generate_images, model=model, prompt=prompt, config=config)
-        latency = time.perf_counter() - start_time
-
-        if not response.generated_images:
-            raise ProviderError("Image generation returned no results.")
-
-        image_bytes = response.generated_images[0].image.image_bytes
-        content_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        usage = self._extract_usage(response)
-
-        return LLMResponse(content=content_b64, model_name=original_model_name or model, usage=usage, latency=latency)
 
     # Message conversion
 
-    def _convert_messages(self, messages: List[Message]) -> Tuple[List[types.Content], Optional[Union[str, types.Content]], Dict[str, Any]]:
+    def _convert_messages(self, messages: List[Message]) -> Tuple[List[types.Content], Optional[Union[str, types.Content]]]:
         contents, system_texts, tool_names_by_id = [], [], {}
 
         for message in messages:
@@ -205,7 +180,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
                 if fallback_parts := self._convert_content_parts(message.get("content")):
                     contents.append(types.Content(role=role, parts=fallback_parts))
 
-        return contents, "\n\n".join(system_texts) if system_texts else None, {"tool_names_by_id": tool_names_by_id}
+        return contents, "\n\n".join(system_texts) if system_texts else None
 
     def _convert_content_parts(self, content: Any) -> List[types.Part]:
         if content is None:
@@ -219,7 +194,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
                 if item_type in {"text", "input_text"}:
                     parts.append(types.Part.from_text(text=item.get("text", "")))
                 elif item_type in {"image_url", "input_image"}:
-                    if data_url := (item.get("image_url") or item.get("input_image") or {}).get("url") or (item.get("image_url") or item.get("input_image") or {}).get("data"):
+                    img_ref = item.get("image_url") or item.get("input_image") or {}
+                    if data_url := img_ref.get("url") or img_ref.get("data"):
                         parts.append(self._part_from_image_reference(data_url))
                 elif item_type in {"input_audio", "audio"}:
                     audio_info = item.get("input_audio") or item.get("audio") or {}
@@ -271,27 +247,23 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     # Request building
 
-    def _build_request_kwargs(self, kwargs: Dict[str, Any], system_instruction: Optional[Union[str, types.Content]], tool_state: Dict[str, Any]) -> Tuple[types.GenerateContentConfig, Dict[str, Any], Dict[str, Any]]:
+    def _build_request_kwargs(self, kwargs: Dict[str, Any], system_instruction: Optional[Union[str, types.Content]]) -> Tuple[types.GenerateContentConfig, Dict[str, Any], Dict[str, Any]]:
         kwargs = dict(kwargs)
         config_kwargs, posthog_kwargs, request_kwargs = {}, {}, {}
 
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        # Extract config parameters
         for key in ["temperature", "top_p", "top_k", "max_output_tokens", "presence_penalty", "frequency_penalty", "candidate_count", "seed"]:
             if key in kwargs:
                 config_kwargs[key] = kwargs.pop(key)
 
-        # Handle thinking configuration
-        effort_map = {"none": 0, "low": 512, "medium": 2048, "high": 8192}
         reasoning = kwargs.pop("reasoning", None)
         reasoning_effort = kwargs.pop("reasoning_effort", None)
-        
         if isinstance(reasoning, dict) and "thinking_budget" in reasoning:
             config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=reasoning["thinking_budget"])
         elif reasoning_effort:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=effort_map.get(reasoning_effort.lower()))
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=self._REASONING_EFFORT_MAP.get(reasoning_effort.lower()))
         elif thinking_config := kwargs.pop("thinking_config", None):
             config_kwargs["thinking_config"] = thinking_config
 
@@ -322,15 +294,12 @@ class GoogleGenAIProvider(BaseLLMProvider):
         if safety_settings := kwargs.pop("safety_settings", None):
             config_kwargs["safety_settings"] = safety_settings
 
-        # Extract PostHog parameters
         for key in list(kwargs.keys()):
             if key.startswith("posthog_"):
                 posthog_kwargs[key] = kwargs.pop(key)
 
         if posthog_dict := kwargs.pop("posthog", None):
-            if isinstance(posthog_dict, dict):
-                for key, value in posthog_dict.items():
-                    posthog_kwargs[f"posthog_{key}"] = value
+            posthog_kwargs.update({f"posthog_{k}": v for k, v in posthog_dict.items()})
 
         request_kwargs.update(kwargs)
         return types.GenerateContentConfig(**config_kwargs), posthog_kwargs, request_kwargs
@@ -338,19 +307,18 @@ class GoogleGenAIProvider(BaseLLMProvider):
     def _build_tool_config(self, tool_choice: Any) -> Optional[types.ToolConfig]:
         if isinstance(tool_choice, str):
             choice = tool_choice.lower()
-            if choice == "none":
-                return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
             if choice == "auto":
                 return None
+            if choice == "none":
+                return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
         if isinstance(tool_choice, dict):
             mode = tool_choice.get("type")
-            if mode == "function":
-                if name := tool_choice.get("function", {}).get("name"):
-                    return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[name]))
-            if mode == "none":
-                return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
             if mode == "auto":
                 return None
+            if mode == "none":
+                return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
+            if mode == "function" and (name := tool_choice.get("function", {}).get("name")):
+                return types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="ANY", allowed_function_names=[name]))
         return None
 
     def _convert_tools(self, tools: List[Dict[str, Any]]) -> List[types.Tool]:
@@ -382,9 +350,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     # Content extraction
 
-    def _extract_content(self, response: Any) -> Tuple[str, Optional[str], Optional[Any]]:
+    def _extract_content(self, response: Any) -> Tuple[str, Optional[str]]:
         text_segments, audio_b64 = [], None
-        citations = self._extract_citations(response)
 
         for candidate in getattr(response, "candidates", []):
             if not (content := getattr(candidate, "content", None)):
@@ -408,23 +375,20 @@ class GoogleGenAIProvider(BaseLLMProvider):
                 if (inline := getattr(part, "inline_data", None)) and inline.mime_type.startswith("audio/"):
                     audio_b64 = base64.b64encode(inline.data).decode("utf-8")
 
-        if hasattr(response, "text") and response.text:
-            text_segments.append(response.text)
-
-        return "\n".join(filter(None, text_segments)), audio_b64, citations
-
-    def _extract_citations(self, response: Any) -> Optional[Any]:
-        for candidate in getattr(response, "candidates", []):
-            if metadata := getattr(candidate, "citation_metadata", None):
-                return metadata
-        return None
+        return "\n".join(filter(None, text_segments)), audio_b64
 
     def _extract_usage(self, response: Any, default: Optional[Usage] = None) -> Usage:
         if not (usage_meta := getattr(response, "usage_metadata", None)):
             return default or Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
+        
+        # Get candidates tokens (main output tokens)
+        candidates_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+        # Get reasoning tokens (if model uses extended thinking)
+        reasoning_tokens = getattr(usage_meta, "thoughts_token_count", 0) or 0
+        
         return Usage(
             input_tokens=getattr(usage_meta, "prompt_token_count", 0) or 0,
-            output_tokens=getattr(usage_meta, "candidates_token_count", 0) or 0,
+            output_tokens=candidates_tokens + reasoning_tokens,
             cached_tokens=getattr(usage_meta, "cached_content_token_count", 0) or 0,
         )
 
@@ -451,29 +415,31 @@ class GoogleGenAIProvider(BaseLLMProvider):
             return normalized, match.group("model")
         return self._DEFAULT_BACKEND, model
 
-    def _get_or_create_client(self, backend: str) -> PosthogGeminiClient:
-        if backend in self.clients:
-            return self.clients[backend]
+    def _get_or_create_client(self, backend: str, native: bool) -> Union[PosthogGeminiClient, genai.Client]:
+        cache = self.native_clients if native else self.posthog_clients
+        if backend in cache:
+            return cache[backend]
 
         client_kwargs: Dict[str, Any] = {}
         if backend == "vertex":
-            if not (api_key := getattr(self.config, "vertex_api_key", None) or os.getenv("VERTEX_API_KEY")):
+            if not (api_key := os.getenv("VERTEX_API_KEY")):
                 raise ConfigurationError("Missing Vertex API key.")
             client_kwargs.update({"vertexai": True, "api_key": api_key})
-            if project := getattr(self.config, "vertex_project", None) or os.getenv("GOOGLE_CLOUD_PROJECT"):
-                client_kwargs["project"] = project
-            if location := getattr(self.config, "vertex_location", None) or os.getenv("GOOGLE_CLOUD_LOCATION"):
-                client_kwargs["location"] = location
         else:
-            if not (api_key := getattr(self.config, "gemini_api_key", None) or os.getenv("GOOGLE_API_KEY")):
+            api_key = getattr(self.config, "gemini_api_key", None) or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
                 raise ConfigurationError("Missing Gemini Developer API key.")
             client_kwargs["api_key"] = api_key
 
         if http_options := getattr(self.config, "gemini_http_options", None):
             client_kwargs["http_options"] = http_options
 
-        client = PosthogGeminiClient(posthog_client=self.posthog, **client_kwargs)
-        self.clients[backend] = client
+        if native:
+            client = genai.Client(**client_kwargs)
+        else:
+            client = PosthogGeminiClient(posthog_client=self.posthog, **client_kwargs)
+
+        cache[backend] = client
         return client
 
     def _init_posthog(self) -> Posthog:
@@ -482,16 +448,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
             host=os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
         )
 
-    def _get_rate_limiter(self, model_name: str) -> RateLimiter:
-        if model_name not in self.rate_limiters:
-            model_config = ModelRegistry.get_config(model_name)
-            self.rate_limiters[model_name] = RateLimiter(model_config=model_config, model_name=model_name)
-        return self.rate_limiters[model_name]
-
     # Helpers
-
-    def _is_imagen_model(self, model: str) -> bool:
-        return any(model.startswith(prefix) for prefix in self._IMAGEN_PREFIXES)
 
     def _raise_on_safety_block(self, response: Any) -> None:
         if (feedback := getattr(response, "prompt_feedback", None)) and getattr(feedback, "block_reason", None):
