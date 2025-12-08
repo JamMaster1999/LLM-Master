@@ -79,6 +79,9 @@ class GoogleGenAIProvider(BaseLLMProvider):
         original_model_name = kwargs.pop("_original_model_name", None)
         is_imagen = model.startswith("imagen-")
         
+        # Translate parameters early for all code paths
+        kwargs = self._translate_parameters(kwargs)
+        
         if is_imagen:
             if not (prompt := self._extract_prompt_for_image(messages, kwargs)):
                 raise ProviderError("Unable to resolve prompt for image generation.")
@@ -130,6 +133,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     def _stream_text(self, messages: List[Message], model: str, backend: str, client: PosthogGeminiClient, **kwargs: Any) -> Generator[str, None, None]:
         kwargs.pop("_original_model_name", None)
+        # Translate parameters to Gemini-specific names
+        kwargs = self._translate_parameters(kwargs)
         contents, system_instruction = self._convert_messages(messages)
         config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction)
         stream = client.models.generate_content_stream(model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
@@ -247,6 +252,24 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
     # Request building
 
+    def _translate_parameters(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Translate common LLM parameters to Gemini-specific parameter names.
+        """
+        kwargs = dict(kwargs)
+        
+        if "max_tokens" in kwargs:
+            kwargs["max_output_tokens"] = kwargs.pop("max_tokens")
+        if "stop" in kwargs:
+            stop_value = kwargs.pop("stop")
+            kwargs["stop_sequences"] = [stop_value] if isinstance(stop_value, str) else stop_value
+        
+        if "modality" in kwargs:
+            modality_value = kwargs.pop("modality")
+            kwargs["response_modalities"] = [modality_value] if isinstance(modality_value, str) else modality_value
+        
+        return kwargs
+
     def _build_request_kwargs(self, kwargs: Dict[str, Any], system_instruction: Optional[Union[str, types.Content]]) -> Tuple[types.GenerateContentConfig, Dict[str, Any], Dict[str, Any]]:
         kwargs = dict(kwargs)
         config_kwargs, posthog_kwargs, request_kwargs = {}, {}, {}
@@ -254,7 +277,9 @@ class GoogleGenAIProvider(BaseLLMProvider):
         if system_instruction:
             config_kwargs["system_instruction"] = system_instruction
 
-        for key in ["temperature", "top_p", "top_k", "max_output_tokens", "presence_penalty", "frequency_penalty", "candidate_count", "seed"]:
+        # Extract standard config parameters (including translated ones)
+        for key in ["temperature", "top_p", "top_k", "max_output_tokens", "presence_penalty", "frequency_penalty", 
+                    "candidate_count", "seed", "stop_sequences", "response_modalities"]:
             if key in kwargs:
                 config_kwargs[key] = kwargs.pop(key)
 
@@ -267,19 +292,12 @@ class GoogleGenAIProvider(BaseLLMProvider):
         elif thinking_config := kwargs.pop("thinking_config", None):
             config_kwargs["thinking_config"] = thinking_config
 
-        if "stop" in kwargs:
-            stop_sequences = kwargs.pop("stop")
-            config_kwargs["stop_sequences"] = [stop_sequences] if isinstance(stop_sequences, str) else stop_sequences
-
         if response_format := kwargs.pop("response_format", None):
             if response_format.get("type") == "json_object":
                 config_kwargs["response_mime_type"] = "application/json"
             elif response_format.get("type") == "json_schema":
                 if schema := response_format.get("json_schema", {}).get("schema"):
                     config_kwargs["response_schema"] = schema
-
-        if modalities := kwargs.pop("modality", None):
-            config_kwargs["response_modalities"] = [modalities] if isinstance(modalities, str) else modalities
 
         if audio_params := kwargs.pop("audio", None):
             if speech_config := self._build_speech_config(audio_params):

@@ -87,6 +87,7 @@ class ModelRegistry:
         "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
         "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
+        "googleai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
         "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
 
         # Vertex Models
@@ -95,6 +96,7 @@ class ModelRegistry:
         "vertexai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
         "vertexai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "vertexai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
+        "vertexai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
         "vertexai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
 
 
