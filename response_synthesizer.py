@@ -396,10 +396,31 @@ class QueryLLM:
             text_type = "input_text" if isinstance(provider, OpenAIProvider) else "text"
             return {"type": text_type, "text": text_value}
 
-        # Check if 'content' is already a list of parts (provider-specific format)
+        # Check if 'content' is already a list of parts
         current_message_content = message.get('content')
         if isinstance(current_message_content, list):
-            return message  # Return directly if pre-formatted
+            # Transform parts to provider-specific format
+            formatted_parts = []
+            for part in current_message_content:
+                if not isinstance(part, dict):
+                    continue
+                part_type = part.get("type", "")
+
+                # Handle text parts
+                if part_type in ("text", "input_text"):
+                    formatted_parts.append(build_text_part(part.get("text", "")))
+                # Handle image parts
+                elif part_type in ("image_url", "input_image"):
+                    image_data = part.get("image_url")
+                    if isinstance(image_data, dict):
+                        image_data = image_data.get("url", "")
+                    if image_data:
+                        formatted_parts.append(build_image_part(image_data))
+                # Pass through already provider-specific formats
+                else:
+                    formatted_parts.append(part)
+
+            return {"role": message["role"], "content": formatted_parts}
 
         # Support explicitly interleaved parts via 'parts'
         parts = message.get('parts')

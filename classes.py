@@ -71,6 +71,8 @@ class ModelRegistry:
         "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
         "responses-o3": ModelConfig(2.00, 8.00, 0.5, 10000),
         "responses-gpt-5": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5.1": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5.2": ModelConfig(1.75, 14.00, 0.175, 10000),
         "responses-gpt-5-codex": ModelConfig(1.25, 10.00, 0.125, 10000),
         "responses-gpt-5-mini": ModelConfig(0.25, 2.00, 0.025, 10000),
 
