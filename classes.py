@@ -82,6 +82,7 @@ class ModelRegistry:
         # "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-haiku-4-5-20251001": ModelConfig(1.00, 5.00, 0.10, 4000),
         "claude-sonnet-4-5-20250929": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-opus-4-5-20251101": ModelConfig(5.00, 25.00, 0.50, 4000),
 
         # Gemini Models
         "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
@@ -90,7 +91,9 @@ class ModelRegistry:
         "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
         "googleai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "googleai:gemini-3-flash-preview": ModelConfig(0.5, 3, 0.05, 20000),
         "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+        "googleai:gemini-3-pro-image": ModelConfig(2, 0.134, None, 2000),
 
         # Vertex Models
         "vertexai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
@@ -99,7 +102,9 @@ class ModelRegistry:
         "vertexai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "vertexai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
         "vertexai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "vertexai:gemini-3-flash-preview": ModelConfig(0.5, 3, 0.05, 20000),
         "vertexai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+        "vertexai:gemini-3-pro-image": ModelConfig(2, 0.134, None, 2000),
 
 
         # Recraft Models

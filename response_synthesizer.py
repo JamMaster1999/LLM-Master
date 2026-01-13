@@ -392,8 +392,12 @@ class QueryLLM:
 
             return {"type": "image_url", "image_url": image_payload}
 
-        def build_text_part(text_value: str) -> Dict[str, Any]:
-            text_type = "input_text" if isinstance(provider, OpenAIProvider) else "text"
+        def build_text_part(text_value: str, role: str = "user") -> Dict[str, Any]:
+            if isinstance(provider, OpenAIProvider):
+                # Responses API: user messages use input_text, assistant messages use output_text
+                text_type = "output_text" if role == "assistant" else "input_text"
+            else:
+                text_type = "text"
             return {"type": text_type, "text": text_value}
 
         # Check if 'content' is already a list of parts
@@ -407,8 +411,8 @@ class QueryLLM:
                 part_type = part.get("type", "")
 
                 # Handle text parts
-                if part_type in ("text", "input_text"):
-                    formatted_parts.append(build_text_part(part.get("text", "")))
+                if part_type in ("text", "input_text", "output_text"):
+                    formatted_parts.append(build_text_part(part.get("text", ""), message["role"]))
                 # Handle image parts
                 elif part_type in ("image_url", "input_image"):
                     image_data = part.get("image_url")
@@ -430,7 +434,7 @@ class QueryLLM:
             for part in parts:
                 if isinstance(part, str):
                     if part:
-                        formatted_parts.append(build_text_part(part))
+                        formatted_parts.append(build_text_part(part, message["role"]))
                     continue
 
                 if not isinstance(part, dict):
@@ -439,10 +443,10 @@ class QueryLLM:
 
                 part_type = part.get("type")
 
-                if part_type in ("text", "input_text"):
+                if part_type in ("text", "input_text", "output_text"):
                     text_value = part.get("text") or part.get("value")
                     if text_value:
-                        formatted_parts.append(build_text_part(text_value))
+                        formatted_parts.append(build_text_part(text_value, message["role"]))
                     continue
 
                 if part_type == "image_url" and isinstance(part.get("image_url"), dict):
@@ -499,7 +503,7 @@ class QueryLLM:
         is_responses_api = isinstance(provider, OpenAIProvider)
 
         if text is not None:
-            content.append(build_text_part(text))
+            content.append(build_text_part(text, message["role"]))
 
         for img, detail in zip(images, image_details):
             try:
@@ -510,7 +514,7 @@ class QueryLLM:
 
         # Responses API requires content to always be a list
         if is_responses_api:
-            return {"role": message["role"], "content": content or [build_text_part("")]}
+            return {"role": message["role"], "content": content or [build_text_part("", message["role"])]}
         # Other APIs can use string content when there are no images
         return {"role": message["role"], "content": content or text}
 
