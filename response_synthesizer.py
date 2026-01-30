@@ -135,6 +135,7 @@ class QueryLLM:
         results: List[Optional[LLMResponse]] = [None] * len(requests)
         pending = list(enumerate(requests))
         async def process_request(index: int, request: Dict[str, Any]) -> Tuple[int, LLMResponse]:
+            start_time = time.time()
             local_messages = request.get("messages", [])
             moderation = request.get("moderation", False)
 
@@ -151,7 +152,7 @@ class QueryLLM:
             fallback_provider = request.get("fallback_provider")
             fallback_model = request.get("fallback_model")
             fallback_config = request.get("fallback_config")
-            
+
             async def try_fallback() -> Tuple[int, LLMResponse]:
                 fb_response = await self.query(model_name=fallback_model, messages=local_messages, stream=False, fallback_provider=None, fallback_model=None, fallback_config=fallback_config, moderation=moderation)
                 return index, fb_response
@@ -160,6 +161,7 @@ class QueryLLM:
             for attempt in range(self.MAX_RETRIES + 1):
                 try:
                     response = await provider.generate(messages=formatted_messages, model=model_name, stream=False, _native_async=True, **kwargs)
+                    response.latency = time.time() - start_time
                     return index, response
                 except ProviderError as exc:
                     last_error = exc
@@ -420,6 +422,10 @@ class QueryLLM:
                         image_data = image_data.get("url", "")
                     if image_data:
                         formatted_parts.append(build_image_part(image_data))
+                elif part_type == "image":
+                    image_data = part.get("path") or part.get("source") or part.get("image") or part.get("url")
+                    if image_data:
+                        formatted_parts.append(build_image_part(image_data, part.get("detail", "auto")))
                 # Pass through already provider-specific formats
                 else:
                     formatted_parts.append(part)

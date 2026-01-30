@@ -4,19 +4,23 @@ from dataclasses import dataclass
 import time
 from enum import Enum
 import logging
-import modal
 import asyncio
 import re
 import uuid
 
 logger = logging.getLogger(__name__)
 
-# Initialize the lock queue for rate limiting
-lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
-
-# Ensure exactly one lock token exists
-if lock_queue.len() == 0:
-    lock_queue.put("LOCK_TOKEN", block=False)  # Non-blocking put for initialization
+# Try to import modal for distributed rate limiting; fall back to local mode if unavailable
+try:
+    import modal
+    MODAL_AVAILABLE = True
+    lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
+    if lock_queue.len() == 0:
+        lock_queue.put("LOCK_TOKEN", block=False)
+except Exception:
+    MODAL_AVAILABLE = False
+    lock_queue = None
+    logger.info("Modal not installed - using local rate limiting (no distributed coordination)")
 
 class LLMError(Exception):
     """Base exception for LLM-related errors"""
@@ -259,43 +263,42 @@ class BaseLLMProvider(ABC):
         pass
 
 class RateLimiter:
-    """Distributed rate limiter using a lock queue plus timestamp-based checking."""
+    """
+    Rate limiter with two modes:
+    - Modal mode: Distributed coordination via Modal Queue/Dict (when modal is installed)
+    - Local mode: In-memory rate limiting (fallback when modal is not available)
+    """
     def __init__(self, model_config: ModelConfig, model_name: str):
         self.model_config = model_config
         self.model_name = model_name
+        self.use_modal = MODAL_AVAILABLE
         
-        # Sanitize model name for queue names (replace slashes and other invalid chars with underscores)
         sanitized_name = self._sanitize_name(model_name)
         
-        # Queue only stores request IDs for coordination
-        self.request_queue = modal.Queue.from_name(f"llm_queue_{sanitized_name}", create_if_missing=True)
-        
-        # Dict stores actual request/response data
-        self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
-        self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
-        
-        # Dict for rate limiting
-        self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
-        
-        # Initialize rate tracking
-        if "request_timestamps" not in self.rate_dict:
-            self.rate_dict["request_timestamps"] = []
+        if self.use_modal:
+            self.request_queue = modal.Queue.from_name(f"llm_queue_{sanitized_name}", create_if_missing=True)
+            self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
+            self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
+            self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
+            if "request_timestamps" not in self.rate_dict:
+                self.rate_dict["request_timestamps"] = []
+        else:
+            # Local in-memory storage
+            self._local_timestamps: List[float] = []
+            self._local_token_usage: int = 0
+            self._local_requests: Dict[str, dict] = {}
+            self._local_responses: Dict[str, Any] = {}
+            self._local_queue: asyncio.Queue = asyncio.Queue()
+            self._local_lock = asyncio.Lock()
     
     def _sanitize_name(self, name: str) -> str:
-        """
-        Sanitize model name for use in Modal Queue and Dict names.
-        Replace invalid characters with underscores.
-        """
-        # Replace slashes, spaces and other potentially problematic characters
         return re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name)
     
     def _prune_old_timestamps(self, timestamps: List[float]) -> List[float]:
-        """Remove timestamps older than 60 seconds."""
         now = time.time()
         return [ts for ts in timestamps if now - ts < 60]
     
     def _reserve_capacity(self, timestamps: List[float], batch_size: int) -> List[float]:
-        """Add placeholder timestamps for batch requests with microsecond staggering."""
         if batch_size <= 0:
             batch_size = 1
         now = time.time()
@@ -304,119 +307,152 @@ class RateLimiter:
         return timestamps
     
     def _has_capacity(self, timestamps: List[float], batch_size: int) -> bool:
-        """Check if there's capacity for the batch size."""
         if batch_size <= 0:
             batch_size = 1
         return len(timestamps) + batch_size <= self.model_config.rate_limit_rpm
         
     async def wait_for_capacity(self, batch_size: int = 1):
-        """
-        Acquire our distributed 'lock_queue' to ensure 
-        read/check/write is atomic. We'll loop until capacity is found.
-        """
+        """Block until capacity is available for batch_size requests."""
         first_wait = True
-        while True:
+        
+        if self.use_modal:
+            while True:
+                await lock_queue.get.aio()
+                try:
+                    timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
+                    if self._has_capacity(timestamps, batch_size):
+                        timestamps = self._reserve_capacity(timestamps, batch_size)
+                        self.rate_dict["request_timestamps"] = timestamps
+                        if not first_wait:
+                            logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                        return
+                    else:
+                        if first_wait:
+                            logger.info(
+                                f"Rate limit reached for {self.model_name} "
+                                f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                            )
+                            first_wait = False
+                finally:
+                    await lock_queue.put.aio("LOCK_TOKEN")
+                await asyncio.sleep(1)
+        else:
+            # Local mode
+            while True:
+                async with self._local_lock:
+                    self._local_timestamps = self._prune_old_timestamps(self._local_timestamps)
+                    if self._has_capacity(self._local_timestamps, batch_size):
+                        self._local_timestamps = self._reserve_capacity(self._local_timestamps, batch_size)
+                        if not first_wait:
+                            logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                        return
+                    else:
+                        if first_wait:
+                            logger.info(
+                                f"Rate limit reached for {self.model_name} "
+                                f"({len(self._local_timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                            )
+                            first_wait = False
+                await asyncio.sleep(1)
+
+    async def can_make_request(self, batch_size: int = 1) -> bool:
+        """Check and reserve capacity without blocking; returns True if successful."""
+        if self.use_modal:
             await lock_queue.get.aio()
             try:
                 timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
-                
                 if self._has_capacity(timestamps, batch_size):
                     timestamps = self._reserve_capacity(timestamps, batch_size)
                     self.rate_dict["request_timestamps"] = timestamps
-                    
-                    if not first_wait:
-                        logger.info(f"Capacity available for {self.model_name}, resuming processing")
-                    return
+                    return True
                 else:
-                    # No capacity => must wait
-                    if first_wait:
-                        logger.info(
-                            f"Rate limit reached for {self.model_name} "
-                            f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
-                        )
-                        first_wait = False
+                    self.rate_dict["request_timestamps"] = timestamps
+                    return False
             finally:
-                # 5) Release the lock so other tasks can check
                 await lock_queue.put.aio("LOCK_TOKEN")
-            
-            # Wait a second before re-checking
-            await asyncio.sleep(1)
-
-    async def can_make_request(self, batch_size: int = 1) -> bool:
-        """
-        Do the same logic, but return True/False immediately 
-        instead of blocking until capacity.
-        """ 
-        # Acquire the lock
-        await lock_queue.get.aio()
-        try:
-            timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
-            
-            if self._has_capacity(timestamps, batch_size):
-                timestamps = self._reserve_capacity(timestamps, batch_size)
-                self.rate_dict["request_timestamps"] = timestamps
-                return True
-            else:
-                # Update pruned timestamps even when at capacity
-                self.rate_dict["request_timestamps"] = timestamps
+        else:
+            async with self._local_lock:
+                self._local_timestamps = self._prune_old_timestamps(self._local_timestamps)
+                if self._has_capacity(self._local_timestamps, batch_size):
+                    self._local_timestamps = self._reserve_capacity(self._local_timestamps, batch_size)
+                    return True
                 return False
-        finally:
-            await lock_queue.put.aio("LOCK_TOKEN")
 
     async def add_token_usage(self, tokens: int):
-        """Track token usage"""
-        if "token_usage" not in self.rate_dict:
-            self.rate_dict["token_usage"] = 0
-        current_usage = self.rate_dict["token_usage"]
-        self.rate_dict["token_usage"] = current_usage + tokens
+        """Track token usage."""
+        if self.use_modal:
+            if "token_usage" not in self.rate_dict:
+                self.rate_dict["token_usage"] = 0
+            current_usage = self.rate_dict["token_usage"]
+            self.rate_dict["token_usage"] = current_usage + tokens
+        else:
+            self._local_token_usage += tokens
+            current_usage = self._local_token_usage - tokens
         logger.info(f"Added {tokens} tokens to {self.model_name}. Total usage: {current_usage + tokens}")
         
     async def submit_request(self, request: dict) -> str:
-        """Submit request and store in Dict"""
+        """Submit request and store for processing."""
         request_id = str(uuid.uuid4())
         
-        # Store actual request data in Dict
-        self.request_dict[request_id] = request
-        
-        # Only queue the request ID
-        await self.request_queue.put.aio(request_id)
+        if self.use_modal:
+            self.request_dict[request_id] = request
+            await self.request_queue.put.aio(request_id)
+        else:
+            self._local_requests[request_id] = request
+            await self._local_queue.put(request_id)
         
         logger.debug(f"Submitted request {request_id[:8]} to {self.model_name}")
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
-        """Wait for specific request ID's response"""
+        """Wait for specific request ID's response."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if request_id in self.response_dict:
-                response = self.response_dict[request_id]
-                del self.response_dict[request_id]  # Cleanup
-                if request_id in self.request_dict:
-                    del self.request_dict[request_id]  # Cleanup request too
-                logger.debug(f"Got response for request {request_id[:8]}")
-                return response
+            if self.use_modal:
+                if request_id in self.response_dict:
+                    response = self.response_dict[request_id]
+                    del self.response_dict[request_id]
+                    if request_id in self.request_dict:
+                        del self.request_dict[request_id]
+                    logger.debug(f"Got response for request {request_id[:8]}")
+                    return response
+            else:
+                if request_id in self._local_responses:
+                    response = self._local_responses.pop(request_id)
+                    self._local_requests.pop(request_id, None)
+                    logger.debug(f"Got response for request {request_id[:8]}")
+                    return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
         
     async def process_queue(self):
-        """Process queue (runs in background)"""
+        """Process queue (runs in background)."""
         while True:
             if await self.can_make_request():
                 try:
-                    # Get only the request ID from queue
-                    request_id = await self.request_queue.get(timeout=1)
-                    
-                    # Get actual request data from Dict
-                    if request_id in self.request_dict:
-                        request = self.request_dict[request_id]
-                        logger.debug(f"Processing request {request_id[:8]}")
-                        return request_id, request
-                    
+                    if self.use_modal:
+                        request_id = await self.request_queue.get(timeout=1)
+                        if request_id in self.request_dict:
+                            request = self.request_dict[request_id]
+                            logger.debug(f"Processing request {request_id[:8]}")
+                            return request_id, request
+                    else:
+                        try:
+                            request_id = await asyncio.wait_for(self._local_queue.get(), timeout=1)
+                            if request_id in self._local_requests:
+                                request = self._local_requests[request_id]
+                                logger.debug(f"Processing request {request_id[:8]}")
+                                return request_id, request
+                        except asyncio.TimeoutError:
+                            pass
                 except TimeoutError:
                     pass
             await asyncio.sleep(0.1)
         
     def store_response(self, request_id: str, response: Any):
-        """Store response for a request"""
-        self.response_dict[request_id] = response
+        """Store response for a request."""
+        if self.use_modal:
+            self.response_dict[request_id] = response
+        else:
+            self._local_responses[request_id] = response
         logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")

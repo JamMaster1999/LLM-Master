@@ -37,6 +37,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
     _BACKEND_PREFIXES = {"vertex": "vertex", "vertexai": "vertex", "googleai": "googleai", "google": "googleai"}
     _DEFAULT_BACKEND = "googleai"
     _REASONING_EFFORT_MAP = {"none": 0, "low": 512, "medium": 2048, "high": 8192}
+    # Gemini 3 uses thinking_level instead of thinking_budget
+    _GEMINI3_THINKING_LEVEL_MAP = {"none": "minimal", "low": "low", "medium": "medium", "high": "high"}
 
     def __init__(self, config: Optional[LLMConfig] = None) -> None:
         super().__init__()
@@ -95,7 +97,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
             return LLMResponse(content=content_b64, model_name=original_model_name or model, usage=usage, latency=0.0)
 
         contents, system_instruction = self._convert_messages(messages)
-        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction)
+        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction, model=model)
 
         try:
             if native:
@@ -136,7 +138,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
         # Translate parameters to Gemini-specific names
         kwargs = self._translate_parameters(kwargs)
         contents, system_instruction = self._convert_messages(messages)
-        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction)
+        config, posthog_kwargs, request_kwargs = self._build_request_kwargs(kwargs, system_instruction, model=model)
         stream = client.models.generate_content_stream(model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
         self._current_generation = stream
         aggregated_text, last_usage = [], None
@@ -270,7 +272,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
         
         return kwargs
 
-    def _build_request_kwargs(self, kwargs: Dict[str, Any], system_instruction: Optional[Union[str, types.Content]]) -> Tuple[types.GenerateContentConfig, Dict[str, Any], Dict[str, Any]]:
+    def _build_request_kwargs(self, kwargs: Dict[str, Any], system_instruction: Optional[Union[str, types.Content]], model: str = "") -> Tuple[types.GenerateContentConfig, Dict[str, Any], Dict[str, Any]]:
         kwargs = dict(kwargs)
         config_kwargs, posthog_kwargs, request_kwargs = {}, {}, {}
 
@@ -285,10 +287,19 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
         reasoning = kwargs.pop("reasoning", None)
         reasoning_effort = kwargs.pop("reasoning_effort", None)
+        is_gemini3 = "gemini-3" in model.lower()
         if isinstance(reasoning, dict) and "thinking_budget" in reasoning:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=reasoning["thinking_budget"])
+            if is_gemini3:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="high")
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=reasoning["thinking_budget"])
         elif reasoning_effort:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=self._REASONING_EFFORT_MAP.get(reasoning_effort.lower()))
+            effort = reasoning_effort.lower()
+            if is_gemini3:
+                thinking_level = self._GEMINI3_THINKING_LEVEL_MAP.get(effort, "high")
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=self._REASONING_EFFORT_MAP.get(effort))
         elif thinking_config := kwargs.pop("thinking_config", None):
             config_kwargs["thinking_config"] = thinking_config
 
