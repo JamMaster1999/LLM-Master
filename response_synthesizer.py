@@ -104,6 +104,7 @@ class QueryLLM:
         requests: List[Dict[str, Any]],
         *,
         concurrency: Optional[int] = None,
+        progress_callback: Optional[callable] = None,
     ) -> List[LLMResponse]:
         """High-throughput variant for processing multiple requests concurrently."""
         if not requests:
@@ -132,7 +133,9 @@ class QueryLLM:
 
         max_concurrency = concurrency or 128
         rpm = rate_limiter.model_config.rate_limit_rpm or max_concurrency
-        results: List[Optional[LLMResponse]] = [None] * len(requests)
+        total_requests = len(requests)
+        completed_count = 0
+        results: List[Optional[LLMResponse]] = [None] * total_requests
         pending = list(enumerate(requests))
         async def process_request(index: int, request: Dict[str, Any]) -> Tuple[int, LLMResponse]:
             start_time = time.time()
@@ -194,13 +197,27 @@ class QueryLLM:
             semaphore = asyncio.Semaphore(min(max_concurrency, batch_size))
 
             async def gated_process(entry: Tuple[int, Dict[str, Any]]) -> Tuple[int, LLMResponse]:
+                nonlocal completed_count
                 index, request = entry
                 async with semaphore:
-                    return await process_request(index, request)
+                    result = await process_request(index, request)
+                    completed_count += 1
+                    if progress_callback:
+                        progress_callback(completed_count, total_requests)
+                    return result
 
-            batch_results = await asyncio.gather(*(gated_process(entry) for entry in batch))
+            tasks = [asyncio.create_task(gated_process(entry)) for entry in batch]
 
-            for index, response in batch_results:
+            start = time.perf_counter()
+            while True:
+                _, still_pending = await asyncio.wait(tasks, timeout=1.0)
+                now = time.perf_counter()
+                logger.debug("[%0.fs] %d/%d completed, %d pending", now - start, completed_count, total_requests, len(still_pending))
+                if not still_pending:
+                    break
+
+            for task in tasks:
+                index, response = task.result()
                 results[index] = response
 
         return [response for response in results if response is not None]
@@ -325,7 +342,8 @@ class QueryLLM:
             # Otherwise treat as file path
             path_obj = Path(image_input)
             if not path_obj.exists():
-                raise ImageFormatError(f"Image file not found: {path_obj}")
+                logger.warning(f"Image file not found, skipping: {path_obj}")
+                return None
             with open(path_obj, "rb") as image_file:
                 return base64.b64encode(image_file.read()).decode('utf-8')
 
@@ -360,22 +378,26 @@ class QueryLLM:
             
             return f"image/{mime_type}"
 
-        def build_image_part(image_input: str, detail: str = "auto") -> Dict[str, Any]:
+        def build_image_part(image_input: str, detail: str = "auto") -> Optional[Dict[str, Any]]:
             if isinstance(provider, OpenAIProvider):
                 # For Responses API, use data URIs directly or construct them
                 if isinstance(image_input, str) and (
-                    image_input.startswith("data:image/") or 
-                    image_input.startswith("http://") or 
+                    image_input.startswith("data:image/") or
+                    image_input.startswith("http://") or
                     image_input.startswith("https://")
                 ):
                     data_uri = image_input
                 else:
                     base64_image = encode_image(image_input)
+                    if base64_image is None:
+                        return None
                     mime_type = get_mime_type(image_input)
                     data_uri = f"data:{mime_type};base64,{base64_image}"
                 return {"type": "input_image", "image_url": data_uri}
 
             base64_image = encode_image(image_input)
+            if base64_image is None:
+                return None
             mime_type = get_mime_type(image_input)
 
             if isinstance(provider, AnthropicProvider):
@@ -421,11 +443,15 @@ class QueryLLM:
                     if isinstance(image_data, dict):
                         image_data = image_data.get("url", "")
                     if image_data:
-                        formatted_parts.append(build_image_part(image_data))
+                        img_part = build_image_part(image_data)
+                        if img_part:
+                            formatted_parts.append(img_part)
                 elif part_type == "image":
                     image_data = part.get("path") or part.get("source") or part.get("image") or part.get("url")
                     if image_data:
-                        formatted_parts.append(build_image_part(image_data, part.get("detail", "auto")))
+                        img_part = build_image_part(image_data, part.get("detail", "auto"))
+                        if img_part:
+                            formatted_parts.append(img_part)
                 # Pass through already provider-specific formats
                 else:
                     formatted_parts.append(part)
@@ -465,7 +491,9 @@ class QueryLLM:
                         logger.warning("Skipping image part without image input")
                         continue
                     detail = part.get("detail", "auto")
-                    formatted_parts.append(build_image_part(image_input, detail))
+                    img_part = build_image_part(image_input, detail)
+                    if img_part:
+                        formatted_parts.append(img_part)
                     continue
 
                 # Allow raw OpenAI style dicts to pass through if they already match expected schema
