@@ -342,8 +342,7 @@ class QueryLLM:
             # Otherwise treat as file path
             path_obj = Path(image_input)
             if not path_obj.exists():
-                logger.warning(f"Image file not found, skipping: {path_obj}")
-                return None
+                raise ImageFormatError(f"Image file not found: {path_obj}")
             with open(path_obj, "rb") as image_file:
                 return base64.b64encode(image_file.read()).decode('utf-8')
 
@@ -379,42 +378,41 @@ class QueryLLM:
             return f"image/{mime_type}"
 
         def build_image_part(image_input: str, detail: str = "auto") -> Optional[Dict[str, Any]]:
-            if isinstance(provider, OpenAIProvider):
-                # For Responses API, use data URIs directly or construct them
-                if isinstance(image_input, str) and (
-                    image_input.startswith("data:image/") or
-                    image_input.startswith("http://") or
-                    image_input.startswith("https://")
-                ):
-                    data_uri = image_input
-                else:
-                    base64_image = encode_image(image_input)
-                    if base64_image is None:
-                        return None
-                    mime_type = get_mime_type(image_input)
-                    data_uri = f"data:{mime_type};base64,{base64_image}"
-                return {"type": "input_image", "image_url": data_uri}
+            try:
+                if isinstance(provider, OpenAIProvider):
+                    if isinstance(image_input, str) and (
+                        image_input.startswith("data:image/") or
+                        image_input.startswith("http://") or
+                        image_input.startswith("https://")
+                    ):
+                        data_uri = image_input
+                    else:
+                        base64_image = encode_image(image_input)
+                        mime_type = get_mime_type(image_input)
+                        data_uri = f"data:{mime_type};base64,{base64_image}"
+                    return {"type": "input_image", "image_url": data_uri}
 
-            base64_image = encode_image(image_input)
-            if base64_image is None:
-                return None
-            mime_type = get_mime_type(image_input)
+                base64_image = encode_image(image_input)
+                mime_type = get_mime_type(image_input)
 
-            if isinstance(provider, AnthropicProvider):
-                return {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime_type,
-                        "data": base64_image
+                if isinstance(provider, AnthropicProvider):
+                    return {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": base64_image
+                        }
                     }
-                }
 
-            image_payload = {"url": f"data:{mime_type};base64,{base64_image}"}
-            if isinstance(provider, UnifiedProvider) and provider.provider == "openai":
-                image_payload["detail"] = detail
+                image_payload = {"url": f"data:{mime_type};base64,{base64_image}"}
+                if isinstance(provider, UnifiedProvider) and provider.provider == "openai":
+                    image_payload["detail"] = detail
 
-            return {"type": "image_url", "image_url": image_payload}
+                return {"type": "image_url", "image_url": image_payload}
+            except Exception as e:
+                logger.warning(f"Image unavailable, replacing with placeholder ({image_input}): {e}")
+                return None
 
         def build_text_part(text_value: str, role: str = "user") -> Dict[str, Any]:
             if isinstance(provider, OpenAIProvider):
@@ -444,14 +442,12 @@ class QueryLLM:
                         image_data = image_data.get("url", "")
                     if image_data:
                         img_part = build_image_part(image_data)
-                        if img_part:
-                            formatted_parts.append(img_part)
+                        formatted_parts.append(img_part or build_text_part("Image is not available", message["role"]))
                 elif part_type == "image":
                     image_data = part.get("path") or part.get("source") or part.get("image") or part.get("url")
                     if image_data:
                         img_part = build_image_part(image_data, part.get("detail", "auto"))
-                        if img_part:
-                            formatted_parts.append(img_part)
+                        formatted_parts.append(img_part or build_text_part("Image is not available", message["role"]))
                 # Pass through already provider-specific formats
                 else:
                     formatted_parts.append(part)
@@ -492,8 +488,7 @@ class QueryLLM:
                         continue
                     detail = part.get("detail", "auto")
                     img_part = build_image_part(image_input, detail)
-                    if img_part:
-                        formatted_parts.append(img_part)
+                    formatted_parts.append(img_part or build_text_part("Image is not available", message["role"]))
                     continue
 
                 # Allow raw OpenAI style dicts to pass through if they already match expected schema

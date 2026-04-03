@@ -15,11 +15,11 @@ try:
     import modal
     MODAL_AVAILABLE = True
     lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
-    if lock_queue.len() == 0:
-        lock_queue.put("LOCK_TOKEN", block=False)
+    _lock_queue_initialized = False
 except Exception:
     MODAL_AVAILABLE = False
     lock_queue = None
+    _lock_queue_initialized = True
     logger.info("Modal not installed - using local rate limiting (no distributed coordination)")
 
 class LLMError(Exception):
@@ -285,8 +285,7 @@ class RateLimiter:
             self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
             self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
             self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
-            if "request_timestamps" not in self.rate_dict:
-                self.rate_dict["request_timestamps"] = []
+            self._modal_initialized = False
         else:
             # Local in-memory storage
             self._local_timestamps: List[float] = []
@@ -316,18 +315,30 @@ class RateLimiter:
             batch_size = 1
         return len(timestamps) + batch_size <= self.model_config.rate_limit_rpm
         
+    async def _ensure_modal_initialized(self):
+        global _lock_queue_initialized
+        if not _lock_queue_initialized:
+            if await lock_queue.len.aio() == 0:
+                await lock_queue.put.aio("LOCK_TOKEN")
+            _lock_queue_initialized = True
+        if self.use_modal and not self._modal_initialized:
+            if not await self.rate_dict.contains.aio("request_timestamps"):
+                await self.rate_dict.put.aio("request_timestamps", [])
+            self._modal_initialized = True
+
     async def wait_for_capacity(self, batch_size: int = 1):
         """Block until capacity is available for batch_size requests."""
         first_wait = True
-        
+
         if self.use_modal:
+            await self._ensure_modal_initialized()
             while True:
                 await lock_queue.get.aio()
                 try:
-                    timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
+                    timestamps = self._prune_old_timestamps(await self.rate_dict.get.aio("request_timestamps"))
                     if self._has_capacity(timestamps, batch_size):
                         timestamps = self._reserve_capacity(timestamps, batch_size)
-                        self.rate_dict["request_timestamps"] = timestamps
+                        await self.rate_dict.put.aio("request_timestamps", timestamps)
                         if not first_wait:
                             logger.info(f"Capacity available for {self.model_name}, resuming processing")
                         return
@@ -363,15 +374,16 @@ class RateLimiter:
     async def can_make_request(self, batch_size: int = 1) -> bool:
         """Check and reserve capacity without blocking; returns True if successful."""
         if self.use_modal:
+            await self._ensure_modal_initialized()
             await lock_queue.get.aio()
             try:
-                timestamps = self._prune_old_timestamps(self.rate_dict["request_timestamps"])
+                timestamps = self._prune_old_timestamps(await self.rate_dict.get.aio("request_timestamps"))
                 if self._has_capacity(timestamps, batch_size):
                     timestamps = self._reserve_capacity(timestamps, batch_size)
-                    self.rate_dict["request_timestamps"] = timestamps
+                    await self.rate_dict.put.aio("request_timestamps", timestamps)
                     return True
                 else:
-                    self.rate_dict["request_timestamps"] = timestamps
+                    await self.rate_dict.put.aio("request_timestamps", timestamps)
                     return False
             finally:
                 await lock_queue.put.aio("LOCK_TOKEN")
@@ -386,10 +398,10 @@ class RateLimiter:
     async def add_token_usage(self, tokens: int):
         """Track token usage."""
         if self.use_modal:
-            if "token_usage" not in self.rate_dict:
-                self.rate_dict["token_usage"] = 0
-            current_usage = self.rate_dict["token_usage"]
-            self.rate_dict["token_usage"] = current_usage + tokens
+            if not await self.rate_dict.contains.aio("token_usage"):
+                await self.rate_dict.put.aio("token_usage", 0)
+            current_usage = await self.rate_dict.get.aio("token_usage")
+            await self.rate_dict.put.aio("token_usage", current_usage + tokens)
         else:
             self._local_token_usage += tokens
             current_usage = self._local_token_usage - tokens
@@ -400,7 +412,7 @@ class RateLimiter:
         request_id = str(uuid.uuid4())
         
         if self.use_modal:
-            self.request_dict[request_id] = request
+            await self.request_dict.put.aio(request_id, request)
             await self.request_queue.put.aio(request_id)
         else:
             self._local_requests[request_id] = request
@@ -414,11 +426,10 @@ class RateLimiter:
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self.use_modal:
-                if request_id in self.response_dict:
-                    response = self.response_dict[request_id]
-                    del self.response_dict[request_id]
-                    if request_id in self.request_dict:
-                        del self.request_dict[request_id]
+                if await self.response_dict.contains.aio(request_id):
+                    response = await self.response_dict.pop.aio(request_id)
+                    if await self.request_dict.contains.aio(request_id):
+                        await self.request_dict.pop.aio(request_id)
                     logger.debug(f"Got response for request {request_id[:8]}")
                     return response
             else:
@@ -436,9 +447,9 @@ class RateLimiter:
             if await self.can_make_request():
                 try:
                     if self.use_modal:
-                        request_id = await self.request_queue.get(timeout=1)
-                        if request_id in self.request_dict:
-                            request = self.request_dict[request_id]
+                        request_id = await self.request_queue.get.aio(timeout=1)
+                        if await self.request_dict.contains.aio(request_id):
+                            request = await self.request_dict.get.aio(request_id)
                             logger.debug(f"Processing request {request_id[:8]}")
                             return request_id, request
                     else:
@@ -454,10 +465,10 @@ class RateLimiter:
                     pass
             await asyncio.sleep(0.1)
         
-    def store_response(self, request_id: str, response: Any):
+    async def store_response(self, request_id: str, response: Any):
         """Store response for a request."""
         if self.use_modal:
-            self.response_dict[request_id] = response
+            await self.response_dict.put.aio(request_id, response)
         else:
             self._local_responses[request_id] = response
         logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")
