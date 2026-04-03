@@ -535,11 +535,8 @@ class QueryLLM:
             content.append(build_text_part(text, message["role"]))
 
         for img, detail in zip(images, image_details):
-            try:
-                content.append(build_image_part(img, detail))
-            except Exception as e:
-                logger.error(f"Error formatting image {img}: {str(e)}")
-                raise ImageFormatError(f"Failed to format image {img}: {str(e)}")
+            img_part = build_image_part(img, detail)
+            content.append(img_part or build_text_part("Image is not available", message["role"]))
 
         # Responses API requires content to always be a list
         if is_responses_api:
