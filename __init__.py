@@ -1,6 +1,7 @@
 from .base_provider import UnifiedProvider
 from .anthropic_provider import AnthropicProvider
 from .bfl_provider import BFLProvider
+from .gemini_provider import GoogleGenAIProvider
 from .classes import (
     LLMResponse, 
     Usage, 
@@ -17,6 +18,7 @@ __all__ = [
     "UnifiedProvider",
     "AnthropicProvider",
     "BFLProvider",
+    "GoogleGenAIProvider",
     "LLMResponse",
     "Usage",
     "ModelRegistry",

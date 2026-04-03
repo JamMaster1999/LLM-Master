@@ -4,18 +4,23 @@ from dataclasses import dataclass
 import time
 from enum import Enum
 import logging
-import modal
 import asyncio
 import re
+import uuid
 
 logger = logging.getLogger(__name__)
 
-# Initialize the lock queue for rate limiting
-lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
-
-# Ensure exactly one lock token exists
-if lock_queue.len() == 0:
-    lock_queue.put("LOCK_TOKEN", block=False)  # Non-blocking put for initialization
+# Try to import modal for distributed rate limiting; fall back to local mode if unavailable
+try:
+    import modal
+    MODAL_AVAILABLE = True
+    lock_queue = modal.Queue.from_name("rate_limit_lock_queue", create_if_missing=True)
+    _lock_queue_initialized = False
+except Exception:
+    MODAL_AVAILABLE = False
+    lock_queue = None
+    _lock_queue_initialized = True
+    logger.info("Modal not installed - using local rate limiting (no distributed coordination)")
 
 class LLMError(Exception):
     """Base exception for LLM-related errors"""
@@ -51,36 +56,82 @@ class ModelRegistry:
     
     CONFIGS = {
         # OpenAI Models
-        "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 5000),
-        "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 5000),
+        # "gpt-4o-mini": ModelConfig(0.15, 0.60, 0.075, 10000),
+        # "gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        # "o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
+        # "o3": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
         "gpt-4o-mini-audio-preview": ModelConfig(0.15, 0.60, 0.075, 5000),
         "gpt-4o-audio-preview": ModelConfig(2.50, 10.00, 1.25, 5000),
-        "o3-mini": ModelConfig(1.1, 4.4, 0.55, 5000),
-        "omni-moderation-latest": ModelConfig(0.00, 0.00, None, 1000),
+        "chatgpt-4o-latest": ModelConfig(5.00, 15.00, None, 5000),
+        "gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "gpt-5-chat-latest": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "gpt-image-1": ModelConfig(5.00, 40.00, None, 50),
+        
+        
+        # OpenAI Response Models
+        "responses-gpt-4o": ModelConfig(2.50, 10.00, 1.25, 10000),
+        "responses-gpt-4.1": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "responses-o4-mini": ModelConfig(1.1, 4.4, 0.275, 10000),
+        "responses-o3": ModelConfig(2.00, 8.00, 0.5, 10000),
+        "responses-gpt-5": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5.1": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5.2": ModelConfig(1.75, 14.00, 0.175, 10000),
+        "responses-gpt-5.4": ModelConfig(2.5, 15.00, 0.25, 10000),
+        "responses-gpt-5-codex": ModelConfig(1.25, 10.00, 0.125, 10000),
+        "responses-gpt-5-mini": ModelConfig(0.25, 2.00, 0.025, 10000),
+
         # Anthropic Models
-        "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
-        "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
-        "claude-3-5-haiku-latest": ModelConfig(1.00, 5.00, 0.10, 4000),
+        # "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
+        # "claude-3-7-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
+        # "claude-sonnet-4-20250514": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-haiku-4-5-20251001": ModelConfig(1.00, 5.00, 0.10, 4000),
+        "claude-sonnet-4-5-20250929": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-sonnet-4-6": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-opus-4-5-20251101": ModelConfig(5.00, 25.00, 0.50, 4000),
+        "claude-opus-4-6": ModelConfig(5.00, 25.00, 0.50, 4000),
+
         # Gemini Models
-        "gemini-1.5-pro-latest": ModelConfig(1.25, 5.00, None, 1000),
-        "gemini-1.5-flash-latest": ModelConfig(0.075, 0.30, None, 2000),
-        "gemini-2.0-flash": ModelConfig(0.1, 0.4, None, 2000),
-        "gemini-2.0-flash-thinking-exp-01-21": ModelConfig(0.075, 0.30, None, 10),
-        "imagen-3.0-generate-002": ModelConfig(0.00, 0.03, None, 20),  # Based on Gemini pricing
-        # Mistral Models
-        "mistral-large-latest": ModelConfig(2.00, 6.00, None, 300),
+        "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "googleai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
+        "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
+        "googleai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "googleai:gemini-3.1-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "googleai:gemini-3-flash-preview": ModelConfig(0.5, 3, 0.05, 20000),
+        "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+        "googleai:gemini-3-pro-image": ModelConfig(2, 0.134, None, 2000),
+
+        # Vertex Models
+        "vertexai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "vertexai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "vertexai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
+        "vertexai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
+        "vertexai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
+        "vertexai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "vertexai:gemini-3.1-pro-preview": ModelConfig(2, 12, 0.2, 2000),
+        "vertexai:gemini-3-flash-preview": ModelConfig(0.5, 3, 0.05, 20000),
+        "vertexai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
+        "vertexai:gemini-3-pro-image": ModelConfig(2, 0.134, None, 2000),
+
+
         # Recraft Models
         "recraftv3": ModelConfig(0.00, 0.04, None, 100),
+
         # Fireworks Models
-        "accounts/fireworks/models/deepseek-r1": ModelConfig(3, 8, None, 600),
+        "accounts/fireworks/models/deepseek-r1-0528": ModelConfig(3, 8, None, 600),
+        
         # BFL Models
-        "flux-dev": ModelConfig(0.00, 0.025, None, 24),
-        "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        # "flux-dev": ModelConfig(0.00, 0.025, None, 24),
+        # "flux-pro-1.1": ModelConfig(0.00, 0.04, None, 24),
+        
         # Perplexity Models
         "sonar": ModelConfig(1, 1, None, 50),
         "sonar-pro": ModelConfig(3, 15, None, 50),
-        "sonar-reasoning": ModelConfig(1, 5, None, 50),
-        "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
+        # "sonar-reasoning": ModelConfig(1, 5, None, 50),
+        # "sonar-reasoning-pro": ModelConfig(2, 8, None, 50),
+        # "sonar-deep-research": ModelConfig(2, 8, None, 5),
     }
 
     @classmethod
@@ -119,7 +170,16 @@ class Usage:
     input_tokens: int
     output_tokens: int
     cached_tokens: int = 0
-    
+    cost: float = 0.0
+
+    def compute_cost(self, model_name: str) -> float:
+        """Calculate cost from model name and store it on this instance."""
+        try:
+            self.cost = self.calculate_cost(ModelRegistry.get_config(model_name))
+        except Exception:
+            self.cost = 0.0
+        return self.cost
+
     def calculate_cost(self, model_config: ModelConfig) -> float:
         """Calculate the total cost based on token usage
         
@@ -133,10 +193,15 @@ class Usage:
             PricingError: If there's an error calculating the cost
         """
         try:
-            input_cost = (self.input_tokens / 1_000_000) * model_config.input_price_per_million
-            output_cost = (self.output_tokens / 1_000_000) * model_config.output_price_per_million
-            cached_cost = 0
+            # Calculate cost for non-cached input tokens
+            non_cached_input_tokens = self.input_tokens - self.cached_tokens
+            input_cost = (non_cached_input_tokens / 1_000_000) * model_config.input_price_per_million
             
+            # Calculate cost for output tokens
+            output_cost = (self.output_tokens / 1_000_000) * model_config.output_price_per_million
+
+            # Calculate cost for cached input tokens
+            cached_cost = 0
             if model_config.cached_input_price_per_million and self.cached_tokens > 0:
                 cached_cost = (self.cached_tokens / 1_000_000) * model_config.cached_input_price_per_million
             
@@ -156,18 +221,21 @@ class LLMResponse:
         latency: Response time in seconds
         cost: Calculated cost of the request
         audio_data: Optional base64-encoded audio data (for audio-capable models)
+        citations: Optional list of citations (for Perplexity models)
     """
     def __init__(self, 
                  content: str,
                  model_name: str,
                  usage: Usage,
                  latency: float,
-                 audio_data: Optional[str] = None):
+                 audio_data: Optional[str] = None,
+                 citations: Optional[List[str]] = None):
         self.content = content
         self.model_name = model_name
         self.usage = usage
         self.latency = latency
         self.audio_data = audio_data
+        self.citations = citations
         
         try:
             model_config = ModelRegistry.get_config(model_name)
@@ -182,6 +250,7 @@ class BaseLLMProvider(ABC):
     All LLM providers must implement these methods to ensure
     consistent behavior across different providers.
     """
+    supports_native_async: bool = False
     
     @abstractmethod
     async def generate(self, 
@@ -208,163 +277,207 @@ class BaseLLMProvider(ABC):
         pass
 
 class RateLimiter:
-    """Distributed rate limiter using a lock queue plus timestamp-based checking."""
+    """
+    Rate limiter with two modes:
+    - Modal mode: Distributed coordination via Modal Queue/Dict (when modal is installed)
+    - Local mode: In-memory rate limiting (fallback when modal is not available)
+    """
     def __init__(self, model_config: ModelConfig, model_name: str):
         self.model_config = model_config
         self.model_name = model_name
+        self.use_modal = MODAL_AVAILABLE
         
-        # Sanitize model name for queue names (replace slashes and other invalid chars with underscores)
         sanitized_name = self._sanitize_name(model_name)
         
-        # Queue only stores request IDs for coordination
-        self.request_queue = modal.Queue.from_name(f"llm_queue_{sanitized_name}", create_if_missing=True)
-        
-        # Dict stores actual request/response data
-        self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
-        self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
-        
-        # Dict for rate limiting
-        self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
-        
-        # Initialize rate tracking
-        if "request_timestamps" not in self.rate_dict:
-            self.rate_dict["request_timestamps"] = []
+        if self.use_modal:
+            self.request_queue = modal.Queue.from_name(f"llm_queue_{sanitized_name}", create_if_missing=True)
+            self.request_dict = modal.Dict.from_name(f"llm_requests_{sanitized_name}", create_if_missing=True)
+            self.response_dict = modal.Dict.from_name(f"llm_responses_{sanitized_name}", create_if_missing=True)
+            self.rate_dict = modal.Dict.from_name(f"llm_rate_limits_{sanitized_name}", create_if_missing=True)
+            self._modal_initialized = False
+        else:
+            # Local in-memory storage
+            self._local_timestamps: List[float] = []
+            self._local_token_usage: int = 0
+            self._local_requests: Dict[str, dict] = {}
+            self._local_responses: Dict[str, Any] = {}
+            self._local_queue: asyncio.Queue = asyncio.Queue()
+            self._local_lock = asyncio.Lock()
     
     def _sanitize_name(self, name: str) -> str:
-        """
-        Sanitize model name for use in Modal Queue and Dict names.
-        Replace invalid characters with underscores.
-        """
-        # Replace slashes, spaces and other potentially problematic characters
         return re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name)
+    
+    def _prune_old_timestamps(self, timestamps: List[float]) -> List[float]:
+        now = time.time()
+        return [ts for ts in timestamps if now - ts < 60]
+    
+    def _reserve_capacity(self, timestamps: List[float], batch_size: int) -> List[float]:
+        if batch_size <= 0:
+            batch_size = 1
+        now = time.time()
+        increment = 1e-6
+        timestamps.extend(now + (i * increment) for i in range(batch_size))
+        return timestamps
+    
+    def _has_capacity(self, timestamps: List[float], batch_size: int) -> bool:
+        if batch_size <= 0:
+            batch_size = 1
+        return len(timestamps) + batch_size <= self.model_config.rate_limit_rpm
         
-    async def wait_for_capacity(self):
-        """
-        Acquire our distributed 'lock_queue' to ensure 
-        read/check/write is atomic. We'll loop until capacity is found.
-        """
-        import time
-        
+    async def _ensure_modal_initialized(self):
+        global _lock_queue_initialized
+        if not _lock_queue_initialized:
+            if await lock_queue.len.aio() == 0:
+                await lock_queue.put.aio("LOCK_TOKEN")
+            _lock_queue_initialized = True
+        if self.use_modal and not self._modal_initialized:
+            if not await self.rate_dict.contains.aio("request_timestamps"):
+                await self.rate_dict.put.aio("request_timestamps", [])
+            self._modal_initialized = True
+
+    async def wait_for_capacity(self, batch_size: int = 1):
+        """Block until capacity is available for batch_size requests."""
         first_wait = True
-        while True:
-            # 1) Acquire the lock
+
+        if self.use_modal:
+            await self._ensure_modal_initialized()
+            while True:
+                await lock_queue.get.aio()
+                try:
+                    timestamps = self._prune_old_timestamps(await self.rate_dict.get.aio("request_timestamps"))
+                    if self._has_capacity(timestamps, batch_size):
+                        timestamps = self._reserve_capacity(timestamps, batch_size)
+                        await self.rate_dict.put.aio("request_timestamps", timestamps)
+                        if not first_wait:
+                            logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                        return
+                    else:
+                        if first_wait:
+                            logger.info(
+                                f"Rate limit reached for {self.model_name} "
+                                f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                            )
+                            first_wait = False
+                finally:
+                    await lock_queue.put.aio("LOCK_TOKEN")
+                await asyncio.sleep(1)
+        else:
+            # Local mode
+            while True:
+                async with self._local_lock:
+                    self._local_timestamps = self._prune_old_timestamps(self._local_timestamps)
+                    if self._has_capacity(self._local_timestamps, batch_size):
+                        self._local_timestamps = self._reserve_capacity(self._local_timestamps, batch_size)
+                        if not first_wait:
+                            logger.info(f"Capacity available for {self.model_name}, resuming processing")
+                        return
+                    else:
+                        if first_wait:
+                            logger.info(
+                                f"Rate limit reached for {self.model_name} "
+                                f"({len(self._local_timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
+                            )
+                            first_wait = False
+                await asyncio.sleep(1)
+
+    async def can_make_request(self, batch_size: int = 1) -> bool:
+        """Check and reserve capacity without blocking; returns True if successful."""
+        if self.use_modal:
+            await self._ensure_modal_initialized()
             await lock_queue.get.aio()
             try:
-                # 2) Read timestamps
-                timestamps = self.rate_dict["request_timestamps"]
-                
-                # 3) Prune old
-                now = time.time()
-                timestamps = [ts for ts in timestamps if now - ts < 60]
-                
-                # 4) Check capacity
-                if len(timestamps) < self.model_config.rate_limit_rpm:
-                    # We have capacity => append
-                    timestamps.append(now)
-                    self.rate_dict["request_timestamps"] = timestamps
-
-                    # Log if we had to wait
-                    if not first_wait:
-                        logger.info(f"Capacity available for {self.model_name}, resuming processing")
-                    
-                    return  # Done
+                timestamps = self._prune_old_timestamps(await self.rate_dict.get.aio("request_timestamps"))
+                if self._has_capacity(timestamps, batch_size):
+                    timestamps = self._reserve_capacity(timestamps, batch_size)
+                    await self.rate_dict.put.aio("request_timestamps", timestamps)
+                    return True
                 else:
-                    # No capacity => must wait
-                    if first_wait:
-                        logger.info(
-                            f"Rate limit reached for {self.model_name} "
-                            f"({len(timestamps)}/{self.model_config.rate_limit_rpm}). Waiting for capacity..."
-                        )
-                        first_wait = False
+                    await self.rate_dict.put.aio("request_timestamps", timestamps)
+                    return False
             finally:
-                # 5) Release the lock so other tasks can check
                 await lock_queue.put.aio("LOCK_TOKEN")
-            
-            # Wait a second before re-checking
-            await asyncio.sleep(1)
-
-    async def can_make_request(self) -> bool:
-        """
-        Do the same logic, but return True/False immediately 
-        instead of blocking until capacity.
-        """
-        import time
-        
-        # Acquire the lock
-        await lock_queue.get.aio()
-        try:
-            timestamps = self.rate_dict["request_timestamps"]
-            now = time.time()
-            timestamps = [ts for ts in timestamps if now - ts < 60]
-            
-            if len(timestamps) < self.model_config.rate_limit_rpm:
-                # Append now
-                timestamps.append(now)
-                self.rate_dict["request_timestamps"] = timestamps
-                return True
-            else:
-                # Update pruned timestamps even when at capacity
-                self.rate_dict["request_timestamps"] = timestamps
+        else:
+            async with self._local_lock:
+                self._local_timestamps = self._prune_old_timestamps(self._local_timestamps)
+                if self._has_capacity(self._local_timestamps, batch_size):
+                    self._local_timestamps = self._reserve_capacity(self._local_timestamps, batch_size)
+                    return True
                 return False
-        finally:
-            await lock_queue.put.aio("LOCK_TOKEN")
 
     async def add_token_usage(self, tokens: int):
-        """Track token usage"""
-        if "token_usage" not in self.rate_dict:
-            self.rate_dict["token_usage"] = 0
-        current_usage = self.rate_dict["token_usage"]
-        self.rate_dict["token_usage"] = current_usage + tokens
+        """Track token usage."""
+        if self.use_modal:
+            if not await self.rate_dict.contains.aio("token_usage"):
+                await self.rate_dict.put.aio("token_usage", 0)
+            current_usage = await self.rate_dict.get.aio("token_usage")
+            await self.rate_dict.put.aio("token_usage", current_usage + tokens)
+        else:
+            self._local_token_usage += tokens
+            current_usage = self._local_token_usage - tokens
         logger.info(f"Added {tokens} tokens to {self.model_name}. Total usage: {current_usage + tokens}")
         
     async def submit_request(self, request: dict) -> str:
-        """Submit request and store in Dict"""
-        import uuid
+        """Submit request and store for processing."""
         request_id = str(uuid.uuid4())
         
-        # Store actual request data in Dict
-        self.request_dict[request_id] = request
-        
-        # Only queue the request ID
-        await self.request_queue.put.aio(request_id)
+        if self.use_modal:
+            await self.request_dict.put.aio(request_id, request)
+            await self.request_queue.put.aio(request_id)
+        else:
+            self._local_requests[request_id] = request
+            await self._local_queue.put(request_id)
         
         logger.debug(f"Submitted request {request_id[:8]} to {self.model_name}")
         return request_id
         
     async def wait_for_response(self, request_id: str, timeout: int = 60):
-        """Wait for specific request ID's response"""
-        import time
+        """Wait for specific request ID's response."""
         start_time = time.time()
         while time.time() - start_time < timeout:
-            if request_id in self.response_dict:
-                response = self.response_dict[request_id]
-                del self.response_dict[request_id]  # Cleanup
-                if request_id in self.request_dict:
-                    del self.request_dict[request_id]  # Cleanup request too
-                logger.debug(f"Got response for request {request_id[:8]}")
-                return response
+            if self.use_modal:
+                if await self.response_dict.contains.aio(request_id):
+                    response = await self.response_dict.pop.aio(request_id)
+                    if await self.request_dict.contains.aio(request_id):
+                        await self.request_dict.pop.aio(request_id)
+                    logger.debug(f"Got response for request {request_id[:8]}")
+                    return response
+            else:
+                if request_id in self._local_responses:
+                    response = self._local_responses.pop(request_id)
+                    self._local_requests.pop(request_id, None)
+                    logger.debug(f"Got response for request {request_id[:8]}")
+                    return response
             await asyncio.sleep(0.1)
         raise TimeoutError(f"Request {request_id} timed out after {timeout} seconds")
         
     async def process_queue(self):
-        """Process queue (runs in background)"""
+        """Process queue (runs in background)."""
         while True:
             if await self.can_make_request():
                 try:
-                    # Get only the request ID from queue
-                    request_id = await self.request_queue.get(timeout=1)
-                    
-                    # Get actual request data from Dict
-                    if request_id in self.request_dict:
-                        request = self.request_dict[request_id]
-                        logger.debug(f"Processing request {request_id[:8]}")
-                        return request_id, request
-                    
+                    if self.use_modal:
+                        request_id = await self.request_queue.get.aio(timeout=1)
+                        if await self.request_dict.contains.aio(request_id):
+                            request = await self.request_dict.get.aio(request_id)
+                            logger.debug(f"Processing request {request_id[:8]}")
+                            return request_id, request
+                    else:
+                        try:
+                            request_id = await asyncio.wait_for(self._local_queue.get(), timeout=1)
+                            if request_id in self._local_requests:
+                                request = self._local_requests[request_id]
+                                logger.debug(f"Processing request {request_id[:8]}")
+                                return request_id, request
+                        except asyncio.TimeoutError:
+                            pass
                 except TimeoutError:
                     pass
             await asyncio.sleep(0.1)
         
-    def store_response(self, request_id: str, response: Any):
-        """Store response for a request"""
-        self.response_dict[request_id] = response
+    async def store_response(self, request_id: str, response: Any):
+        """Store response for a request."""
+        if self.use_modal:
+            await self.response_dict.put.aio(request_id, response)
+        else:
+            self._local_responses[request_id] = response
         logger.info(f"Stored response for request {request_id[:8]} in {self.model_name}")
