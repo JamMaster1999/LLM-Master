@@ -70,7 +70,8 @@ class QueryLLM:
         if moderation:
             self._moderate_content(messages)
         provider = self._get_provider(model_name)
-        
+        provider.last_model_name = model_name
+
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 if attempt > 0:
@@ -232,6 +233,7 @@ class QueryLLM:
 
     async def _streaming_query(self, model_name: str, messages: List[Dict[str, Any]], fallback_provider: Optional[str] = None, fallback_model: Optional[str] = None, fallback_config: Optional[Dict[str, Any]] = None, moderation: bool = False, _is_fallback: bool = False, **kwargs) -> AsyncGenerator[str, None]:
         provider = self._get_provider(model_name)
+        provider.last_model_name = model_name
         rate_limiter = self._get_rate_limiter(model_name)
         if moderation:
             self._moderate_content(messages)

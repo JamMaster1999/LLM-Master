@@ -170,7 +170,16 @@ class Usage:
     input_tokens: int
     output_tokens: int
     cached_tokens: int = 0
-    
+    cost: float = 0.0
+
+    def compute_cost(self, model_name: str) -> float:
+        """Calculate cost from model name and store it on this instance."""
+        try:
+            self.cost = self.calculate_cost(ModelRegistry.get_config(model_name))
+        except Exception:
+            self.cost = 0.0
+        return self.cost
+
     def calculate_cost(self, model_config: ModelConfig) -> float:
         """Calculate the total cost based on token usage
         

@@ -253,6 +253,7 @@ class UnifiedProvider(BaseLLMProvider):
                         output_tokens=chunk.usage.completion_tokens,
                         cached_tokens=cached_tokens
                     )
+                    self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
 
                 # --- Perplexity Specific Handling --- 
                 if self.provider == "perplexity":

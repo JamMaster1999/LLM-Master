@@ -112,6 +112,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
         text, audio_data = self._extract_content(response)
         usage = self._extract_usage(response)
         self.last_response, self.last_usage = text, usage
+        if self.last_usage:
+            self.last_usage.compute_cost(getattr(self, 'last_model_name', original_model_name or model))
 
         return LLMResponse(content=text, model_name=original_model_name or model, usage=usage, latency=0.0, audio_data=audio_data)
 
@@ -155,6 +157,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
         self.last_response = "".join(aggregated_text) if aggregated_text else None
         self.last_usage = last_usage
+        if self.last_usage:
+            self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
 
     # Message conversion
 

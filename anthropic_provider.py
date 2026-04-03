@@ -162,6 +162,7 @@ class AnthropicProvider(BaseLLMProvider):
         content = self._extract_text(response)
         usage = self._build_usage(response)
         self.last_usage = usage
+        self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
         self.last_response = content
 
         return LLMResponse(content=content, model_name=model, usage=usage, latency=0.0)
@@ -228,7 +229,8 @@ class AnthropicProvider(BaseLLMProvider):
                 output_tokens=output_tokens,
                 cached_tokens=cached_tokens
             )
-            
+            self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
+
             # Store the full response
             self.last_response = full_response
             

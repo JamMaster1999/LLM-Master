@@ -156,6 +156,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         usage = self._build_usage(response)
         self.last_usage = usage
+        self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
         self.last_response = content
 
         return LLMResponse(content=content, model_name=model, usage=usage, latency=0.0)
@@ -353,6 +354,7 @@ class OpenAIProvider(BaseLLMProvider):
                             output_tokens=output_tokens,
                             cached_tokens=cached_tokens
                         )
+                        self.last_usage.compute_cost(getattr(self, 'last_model_name', model))
                         logger.debug(f"Completed streaming with {input_tokens} input, {output_tokens} output, {cached_tokens} cached tokens")
                     break # Exit loop on completion
                 
