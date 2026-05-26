@@ -39,6 +39,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
     _REASONING_EFFORT_MAP = {"none": 0, "low": 512, "medium": 2048, "high": 8192}
     # Gemini 3 uses thinking_level instead of thinking_budget
     _GEMINI3_THINKING_LEVEL_MAP = {"none": "minimal", "low": "low", "medium": "medium", "high": "high"}
+    _TIMEOUT_BY_REASONING_EFFORT = {"none": 180, "low": 180, "medium": 300, "high": 600}
 
     def __init__(self, config: Optional[LLMConfig] = None) -> None:
         super().__init__()
@@ -83,6 +84,8 @@ class GoogleGenAIProvider(BaseLLMProvider):
         
         # Translate parameters early for all code paths
         kwargs = self._translate_parameters(kwargs)
+        effort = str(kwargs.get("reasoning_effort") or "high").lower()
+        timeout_seconds = self._TIMEOUT_BY_REASONING_EFFORT.get(effort, 600)
         
         if is_imagen:
             if not (prompt := self._extract_prompt_for_image(messages, kwargs)):
@@ -101,9 +104,17 @@ class GoogleGenAIProvider(BaseLLMProvider):
 
         try:
             if native:
-                response = await client.aio.models.generate_content(model=model, contents=contents, config=config, **request_kwargs)
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(model=model, contents=contents, config=config, **request_kwargs),
+                    timeout=timeout_seconds,
+                )
             else:
-                response = await asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs)
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(client.models.generate_content, model=model, contents=contents, config=config, **posthog_kwargs, **request_kwargs),
+                    timeout=timeout_seconds,
+                )
+        except asyncio.TimeoutError as exc:
+            raise ProviderError(f"Gemini request timed out after {timeout_seconds}s for {model}", status_code="TIMEOUT") from exc
         except Exception as exc:
             status_code = getattr(exc, 'status', None) if isinstance(exc, genai_errors.APIError) else None
             raise ProviderError(str(exc), status_code=status_code) from exc
