@@ -116,6 +116,7 @@ class GoogleGenAIProvider(BaseLLMProvider):
         except asyncio.TimeoutError as exc:
             raise ProviderError(f"Gemini request timed out after {timeout_seconds}s for {model}", status_code="TIMEOUT") from exc
         except Exception as exc:
+            print(f"Gemini request failed: model={original_model_name or model} backend={backend} status={getattr(exc, 'status', None)} code={getattr(exc, 'code', None)} error={exc}")
             status_code = getattr(exc, 'status', None) if isinstance(exc, genai_errors.APIError) else None
             raise ProviderError(str(exc), status_code=status_code) from exc
 

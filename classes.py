@@ -95,6 +95,8 @@ class ModelRegistry:
         # Gemini Models
         "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
         "googleai:gemini-2.5-flash-lite-preview-09-2025": ModelConfig(0.1, 0.4, 0.01, 30000),
+        "googleai:gemini-3.1-flash-lite": ModelConfig(0.25, 1.5, 0.025, 30000),
+        "googleai:gemini-3.1-flash-lite-preview": ModelConfig(0.25, 1.5, 0.025, 30000),
         "googleai:gemini-2.5-flash": ModelConfig(0.3, 2.5, 0.03, 10000),
         "googleai:gemini-2.5-flash-preview-09-2025": ModelConfig(0.3, 2.5, 0.075, 10000),
         "googleai:gemini-2.5-pro": ModelConfig(1.25, 10, 0.125, 2000),
