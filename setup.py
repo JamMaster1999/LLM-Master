@@ -23,10 +23,11 @@ setup(
     ],
     python_requires=">=3.11",
     install_requires=[
-        "openai>=2.30.0",
-        "anthropic>=0.88.0",
-        "google-genai>=1.70.0",
-        "requests>=2.33.1",
-        "posthog>=7.9.12",
+        "openai>=2.45.0",
+        "anthropic>=0.116.0",
+        "google-genai>=2.11.0",
+        "requests>=2.34.2",
+        "posthog>=7.22.1",
+        "pillow-heif==1.4.0",
     ],
 )

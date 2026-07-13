@@ -1,11 +1,14 @@
 import time
 import base64
+import io
 import logging
 import requests
 import os
 from pathlib import Path
 from typing import Dict, Optional, List, Union, Any, Generator, AsyncGenerator, Tuple
 import asyncio
+from PIL import Image
+from pillow_heif import register_heif_opener
 
 from .base_provider import UnifiedProvider, ProviderError
 from .anthropic_provider import AnthropicProvider
@@ -16,6 +19,7 @@ from .classes import LLMResponse, LLMError, ModelRegistry, RateLimiter
 from .config import LLMConfig
 
 logger = logging.getLogger(__name__)
+register_heif_opener()
 
 class ImageFormatError(LLMError):
     """Raised when there's an issue with image formatting"""
@@ -379,23 +383,32 @@ class QueryLLM:
             
             return f"image/{mime_type}"
 
+        def encode_supported_image(image_input: str, mime_type: Optional[str] = None) -> Tuple[str, str]:
+            base64_image = encode_image(image_input)
+            mime_type = mime_type or get_mime_type(image_input)
+            if mime_type in {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}:
+                with Image.open(io.BytesIO(base64.b64decode(base64_image))) as image:
+                    output = io.BytesIO()
+                    image.convert("RGB").save(output, format="PNG")
+                return base64.b64encode(output.getvalue()).decode("utf-8"), "image/png"
+            return base64_image, mime_type
+
         def build_image_part(image_input: str, detail: str = "auto") -> Optional[Dict[str, Any]]:
             try:
+                mime_type = get_mime_type(image_input)
                 if isinstance(provider, OpenAIProvider):
                     if isinstance(image_input, str) and (
                         image_input.startswith("data:image/") or
                         image_input.startswith("http://") or
                         image_input.startswith("https://")
-                    ):
+                    ) and mime_type in self.SUPPORTED_MIME_TYPES:
                         data_uri = image_input
                     else:
-                        base64_image = encode_image(image_input)
-                        mime_type = get_mime_type(image_input)
+                        base64_image, mime_type = encode_supported_image(image_input, mime_type)
                         data_uri = f"data:{mime_type};base64,{base64_image}"
                     return {"type": "input_image", "image_url": data_uri}
 
-                base64_image = encode_image(image_input)
-                mime_type = get_mime_type(image_input)
+                base64_image, mime_type = encode_supported_image(image_input, mime_type)
 
                 if isinstance(provider, AnthropicProvider):
                     return {
