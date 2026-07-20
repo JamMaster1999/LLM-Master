@@ -449,7 +449,10 @@ class QueryLLM:
 
                 # Handle text parts
                 if part_type in ("text", "input_text", "output_text"):
-                    formatted_parts.append(build_text_part(part.get("text", ""), message["role"]))
+                    text_part = build_text_part(part.get("text", ""), message["role"])
+                    if "cache_control" in part:
+                        text_part["cache_control"] = part["cache_control"]
+                    formatted_parts.append(text_part)
                 # Handle image parts
                 elif part_type in ("image_url", "input_image"):
                     image_data = part.get("image_url")
@@ -489,7 +492,10 @@ class QueryLLM:
                 if part_type in ("text", "input_text", "output_text"):
                     text_value = part.get("text") or part.get("value")
                     if text_value:
-                        formatted_parts.append(build_text_part(text_value, message["role"]))
+                        text_part = build_text_part(text_value, message["role"])
+                        if "cache_control" in part:
+                            text_part["cache_control"] = part["cache_control"]
+                        formatted_parts.append(text_part)
                     continue
 
                 if part_type == "image_url" and isinstance(part.get("image_url"), dict):
@@ -532,7 +538,7 @@ class QueryLLM:
             for img, detail in zip(images, image_details):
                 try:
                     mime_type = get_mime_type(img)
-                    if mime_type in self.SUPPORTED_MIME_TYPES:
+                    if mime_type in self.SUPPORTED_MIME_TYPES + ['image/heic', 'image/heif']:
                         valid_images.append(img)
                         valid_details.append(detail)
                     else:

@@ -338,9 +338,10 @@ class OpenAIProvider(BaseLLMProvider):
                          yield "\n```\n\n"
                          in_code_block = False
                     
-                    # Process usage etc.
-                    if hasattr(event, 'usage'):
-                        usage = event.usage
+                    # Process usage — on response.completed, usage lives on event.response
+                    resp = getattr(event, 'response', None)
+                    usage = getattr(resp, 'usage', None) or getattr(event, 'usage', None)
+                    if usage:
                         input_tokens = usage.input_tokens
                         output_tokens = usage.output_tokens
                         

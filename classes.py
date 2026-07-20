@@ -78,9 +78,12 @@ class ModelRegistry:
         "responses-gpt-5.1": ModelConfig(1.25, 10.00, 0.125, 15000),
         "responses-gpt-5.2": ModelConfig(1.75, 14.00, 0.175, 15000),
         "responses-gpt-5.4": ModelConfig(2.5, 15.00, 0.25, 15000),
-        "responses-gpt-5.5": ModelConfig(5.00, 30.00, 0.30, 15000),
+        "responses-gpt-5.5": ModelConfig(5.00, 30.00, 0.50, 15000),
         "responses-gpt-5-codex": ModelConfig(1.25, 10.00, 0.125, 10000),
         "responses-gpt-5-mini": ModelConfig(0.25, 2.00, 0.025, 10000),
+        "responses-gpt-5.6-sol": ModelConfig(5.00, 30.00, 0.50, 15000),
+        "responses-gpt-5.6-terra": ModelConfig(2.50, 15.00, 0.25, 15000),
+        "responses-gpt-5.6-luna": ModelConfig(1.00, 6.00, 0.10, 15000),
 
         # Anthropic Models
         # "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
@@ -91,6 +94,8 @@ class ModelRegistry:
         "claude-sonnet-4-6": ModelConfig(3.00, 15.00, 0.30, 4000),
         "claude-opus-4-5-20251101": ModelConfig(5.00, 25.00, 0.50, 4000),
         "claude-opus-4-6": ModelConfig(5.00, 25.00, 0.50, 4000),
+        "claude-opus-4-8": ModelConfig(5.00, 25.00, 0.50, 4000),
+        "claude-sonnet-5": ModelConfig(3.00, 15.00, 0.30, 4000),
 
         # Gemini Models
         "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
@@ -126,6 +131,7 @@ class ModelRegistry:
 
         # Fireworks Models
         "accounts/fireworks/models/deepseek-r1-0528": ModelConfig(3, 8, None, 600),
+        "accounts/fireworks/models/kimi-k2p5": ModelConfig(0.60, 3.00, 0.10, 600),
         
         # BFL Models
         # "flux-dev": ModelConfig(0.00, 0.025, None, 24),
