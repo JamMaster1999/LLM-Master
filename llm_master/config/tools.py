@@ -10,9 +10,9 @@ def translate(tools: list[Any], api: API) -> dict:
     specs = [tool if isinstance(tool, dict) else callable_to_tool(tool) for tool in tools]
     if api == "completion":
         return {"tools": specs}  # openai nested form as-is; any-llm converts per provider
-    functions = [spec["function"] for spec in specs]
+    functions = [dict(spec["function"]) for spec in specs]
     if api == "messages":
-        return {"tools": [{"name": f["name"], "description": f.get("description", ""),
-                           "input_schema": f.get("parameters", {})} for f in functions]}
-    return {"tools": [{"type": "function", "name": f["name"], "description": f.get("description", ""),
-                       "parameters": f.get("parameters", {})} for f in functions]}
+        for f in functions:  # rename only; every other key rides through and the provider judges it
+            f["input_schema"] = f.pop("parameters", {})
+        return {"tools": functions}
+    return {"tools": [{"type": "function", **f} for f in functions]}  # responses takes tools flat

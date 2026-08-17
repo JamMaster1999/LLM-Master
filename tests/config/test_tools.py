@@ -33,6 +33,14 @@ def test_callables_convert_then_reshape():
         assert "city" in out[name_key]["properties"]
 
 
+def test_unknown_keys_ride_through():
+    strict = [{"type": "function", "function": {"name": "f", "parameters": {}, "strict": True}}]
+    assert tools.translate(strict, "responses")["tools"] == [
+        {"type": "function", "name": "f", "parameters": {}, "strict": True}]
+    assert tools.translate(strict, "messages")["tools"] == [
+        {"name": "f", "strict": True, "input_schema": {}}]  # anthropic judges strict, not us
+
+
 @pytest.mark.live
 async def test_completion_gemini_calls_translated_tool():
     llm = AnyLLM.create("gemini")
