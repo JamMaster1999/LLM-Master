@@ -1,0 +1,19 @@
+[project]
+name = "llm-master"
+version = "2.0.0a0"
+description = "Lite multi-provider LLM wrapper on any-llm"
+requires-python = ">=3.11"
+dependencies = ["any-llm-sdk[gemini]"]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.uv.sources]
+any-llm-sdk = { path = "../any-llm", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_master"]
