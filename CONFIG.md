@@ -265,10 +265,21 @@ warnings, no response inspection, no model list.
   calls in the response trace times the published fee, one line, until upstream settles their
   #202.
 
-## 11. `response_format` — a pydantic model class or json-schema dict, default None
+## 11. `response_format` — `Format(type, schema) | None`, default None
 
-- One pydantic model, zero per-provider schemas — confirmed in their types: completion and
-  responses take `response_format: dict | type`, messages takes the identical
+- Flat object shaped like ToolChoice (2026-08-17 redesign, replacing the `"json" | type | dict`
+  union): `type` says the mode (`"text"` / `"json"` / `"schema"`), `schema` carries the shape
+  (pydantic class or json-schema dict). A validator keeps them honest — `type="schema"` needs a
+  schema, the other modes forbid one — mirroring tool_choice's `mode="none"` forbids `only`.
+  `None` = unset; `type="text"` emits nothing (every provider's default, and messages has no
+  explicit text spelling at all). Pydantic reserves the name `schema`, so the field is `schema_`
+  with `alias="schema"` — callers write `Format(schema=X)` either way.
+- `type="json"` maps to `{"response_format": {"type": "json_object"}}` on completion and
+  responses; messages raises typed (anthropic has no schema-less JSON mode). Live note: json
+  mode guarantees syntax only — gemini returns the primes as strings about a third of runs, so
+  the live tests assert parseability and key presence, never value types.
+- The schema arm stays one pydantic model, zero per-provider schemas — confirmed in their types:
+  completion and responses take `response_format: dict | type`, messages takes the identical
   `output_format: type | dict`. Our entire translation is that field rename on the anthropic
   route.
 - completion: each provider's converter does the rest — gemini rides `response_json_schema` (a

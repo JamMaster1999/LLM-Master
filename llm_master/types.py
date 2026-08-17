@@ -62,7 +62,7 @@ class Config(BaseModel, extra="forbid"):
     tools: list[Any] | None = None  # openai-format dicts or python callables
     tool_choice: ToolChoice | None = None
     web_search: Search | None = None
-    response_format: Format | None = None  # "json", a pydantic model class, or a json-schema dict
+    response_format: Format | None = None  # type="text" | "json" | "schema" (with schema=...)
     max_tokens: int | None = Field(None, gt=0)
     timeout: float | None = Field(None, gt=0)
     cache: Literal["auto", "none"] | int = "auto"  # int = minutes, 5-60
