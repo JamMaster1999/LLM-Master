@@ -153,7 +153,7 @@ warnings, no response inspection, no model list.
   produce thinking blocks, disabled produces none.
 - responses: `reasoning={"effort": ...}` passed through, plus `summary: "auto"` on every level —
   summaries are always fetched (openai's thought text is opt-in; the mirror of gemini's hardwired
-  include_thoughts), with the view governed by thinking_summaries (card 7). Tiers a model doesn't
+  include_thoughts), with the view governed by thinking_summaries. Tiers a model doesn't
   take come back as openai's rejection, typed.
 - No capability list: providers that map a tier clamp to nearest, providers that reject fail
   typed, and consumer smoke runs catch config rot in CI. One adoption note for future providers:
@@ -165,7 +165,7 @@ warnings, no response inspection, no model list.
 - A pure view flag — no config file, no request-side translation on any API (2026-08-17
   redesign). Thought text is always fetched when thinking is on: gemini via any-llm's hardwired
   `include_thoughts=True` (fork `gemini/base.py`), anthropic's full blocks by its own design,
-  openai via `summary: "auto"` riding thinking's responses arm (card 6). io filters what the
+  openai via `summary: "auto"` riding thinking's responses arm. io filters what the
   readable view exposes, uniformly. Cost is unchanged everywhere — thought tokens are billed
   whether or not you look at them.
 - Live-observed on openai: a summary only materializes when there's enough reasoning to
@@ -192,8 +192,9 @@ warnings, no response inspection, no model list.
   loop. Verified in code: gemini tool messages become `Part.from_function_response`
   (gemini/utils.py:252), grok's converter handles role "tool" (xai.py:195), glm rides
   openai-compatible verbatim.
-- messages: any-llm's own anthropic converters, reused — `_convert_tool_spec` for schemas, tool
-  messages → `tool_result` blocks including the consecutive-result merging
+- messages: tool schemas are our own one-rename translation (`parameters` → `input_schema`,
+  everything else rides through — the pass-through law). Tool-result messages still ride
+  any-llm's anthropic converters, including the consecutive-result merging
   (anthropic/utils.py:181).
 - responses: same information, flattened — two three-line reshapes at build (tool schemas, and
   results as `function_call_output` items).
@@ -206,8 +207,9 @@ warnings, no response inspection, no model list.
 
 - One flat object, every field optional and mixable; unset = provider default. `mode`: `auto` /
   `none` / `required`. `only`: one name or a list — restrict the menu. `parallel`: False = one
-  call per turn. `mode="none"` with `only` set is rejected at authoring (nothing would run);
-  `only=[]` likewise. A one-name list normalizes to the string at authoring (2026-08-17), so
+  call per turn. `mode="none"` with `only` or `parallel` set is rejected at authoring (nothing
+  would run, so neither has anything to govern; anthropic's `none` variant also rejects
+  `disable_parallel_tool_use` on the wire — 2026-08-17 review); `only=[]` likewise. A one-name list normalizes to the string at authoring (2026-08-17), so
   `only=["f"]` and `only="f"` translate identically on every API.
   Redesigned 2026-08-17 from the string-or-object union: the union blocked mixing (`required` +
   `parallel=False` was unsayable) and hid "restrict without forcing" entirely.
@@ -297,24 +299,32 @@ warnings, no response inspection, no model list.
 
 - Caller set it → passes through untouched: `max_tokens` on completion and messages,
   `max_output_tokens` on responses.
-- Caller left it unset → anthropic requires the field, so its candidates get `8192` (any-llm's
-  own default constant), or `thinking budget + 8192` when thinking is on — anthropic rejects any
-  request where the budget isn't strictly under the cap. The other dialects send nothing and the
-  model's own maximum applies.
-- Net meaning of None: "model's max" everywhere except anthropic, where it means "plenty, and
-  never conflicting with thinking."
+- Caller left it unset → completion and responses send nothing and the model's own maximum
+  applies. anthropic requires the field, so its candidates get `64000` — the sonnet-line output
+  ceiling, big enough that the default never clips. Models with smaller ceilings (opus-4 class)
+  reject it with a typed 400; fallback moves on.
+- 64k trips any-llm's long-request guard on plain non-streaming calls ("needs an explicit
+  timeout ... or use `stream=True`"), so when `timeout` is also unset the pair ships together:
+  `max_tokens=64000, timeout=600` — anthropic's own 10-minute request ceiling (see `timeout`).
+  Caller-set values always win. Live-verified: 64000 alone rejects with that guard; with
+  `timeout=600` it completes on claude-sonnet-5.
+- The old `thinking budget + 8192` arm died with budgets: adaptive thinking has no budget
+  (see `thinking`), so no cap/budget interaction is left to manage.
+- Net meaning of None: "model's max" everywhere — by absence where the API allows it, by
+  anthropic's own maxima where it demands a number.
 - Truncation live-verified on all three: `finish_reason="length"` (completion),
   `stop_reason="max_tokens"` (messages), `status="incomplete"` + reason max_output_tokens
   (responses).
 
 ## 13. `timeout` — `float` seconds `| None`, default None
 
-- completion + messages: any-llm's timeout param, live-verified enforced (a 1ms timeout errors on
-  both gemini and anthropic). The audit's "all three covered" claim was wrong for responses:
-  `ResponsesParams` forbids the field, so timeout there fails loud at validation today. Fork fix
-  pending (openai's SDK takes per-request `timeout` fine) — bundled with the gemini tool_choice
-  fix.
-- None → the SDK's own default applies.
+- All three dialects take any-llm's `timeout` param — completion and messages natively, responses
+  via our carried fork fix ([#1308](https://github.com/mozilla-ai/any-llm/pull/1308), upstream PR
+  open). Enforcement live-verified on all three: a 1ms timeout raises the typed error
+  (test_trivials).
+- None → the SDK's own default applies. One exception: anthropic with max_tokens also unset
+  gets `timeout=600`, because the 64k cap default creates the guard's timeout demand (see
+  `max_tokens`).
 - An expiry surfaces as the typed timeout error, which counts as a retryable failure — the retry
   and fallback layers (section 6) decide what happens next, not this field.
 

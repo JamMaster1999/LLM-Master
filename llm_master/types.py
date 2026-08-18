@@ -1,51 +1,22 @@
-"""The assemblies: provider registry rows, then what you write per call. Field types live in config/."""
+"""What you write per call: Model, one fallback candidate, and Config, its tunables."""
 from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
-from llm_master.config import API
 from llm_master.config.modalities import Modality
 from llm_master.config.response_format import Format
 from llm_master.config.thinking import Level
 from llm_master.config.tool_choice import ToolChoice
-from llm_master.config.web_search import Search, SearchStance
-
-
-class Provider(BaseModel, frozen=True, extra="forbid"):
-    name: str
-    api: API                                   # required: which of the three APIs this provider speaks
-    search: SearchStance                       # required: every provider takes a search decision
-    requests: int = Field(gt=0)
-    interval: int = Field(gt=0)                # seconds
-    models: tuple[ModelLimit, ...]             # exceptions only; () means none
-    price_id: str | None = None                # genai-prices name, only when it differs
-
-    @model_validator(mode="after")
-    def _no_duplicate_models(self):
-        names = [m.name for m in self.models]
-        if len(names) != len(set(names)):
-            raise ValueError(f"{self.name}: duplicate model entries")
-        return self
-
-
-class ModelLimit(BaseModel, frozen=True, extra="forbid"):
-    name: str
-    requests: int | None = Field(None, gt=0)   # None = inherit from provider
-    interval: int | None = Field(None, gt=0)   # seconds
-
-    @model_validator(mode="after")
-    def _overrides_something(self):
-        if self.requests is None and self.interval is None:
-            raise ValueError(f"{self.name}: overrides nothing")
-        return self
+from llm_master.config.web_search import Search
+from llm_master.providers import ProviderName
 
 
 class Model(BaseModel, extra="forbid"):
     """One fallback candidate: where it runs and the config it runs with."""
 
-    provider: Literal["openai", "anthropic", "gemini", "vertexai", "fireworks"]
+    provider: ProviderName
     model: str
     config: Config = Field(default_factory=lambda: Config())  # omitted = all defaults
     extra: dict[str, Any] = {}  # raw pass-through, merged last

@@ -1,9 +1,9 @@
-"""tool_choice: who picks the tool. Card 9 in CONFIG.md."""
-from typing import Literal
+"""tool_choice: who picks the tool. See CONFIG.md."""
+from typing import Literal, assert_never
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from llm_master.config import API
+from llm_master.providers import API
 
 
 class ToolChoice(BaseModel, extra="forbid"):
@@ -29,16 +29,24 @@ class ToolChoice(BaseModel, extra="forbid"):
         return v
 
     @model_validator(mode="after")
-    def _none_forbids_only(self):
+    def _none_forbids_only_and_parallel(self):
         if self.mode == "none" and self.only is not None:
             raise ValueError("mode='none' forbids only: no tools will run")
+        if self.mode == "none" and self.parallel is not None:
+            raise ValueError("mode='none' forbids parallel: no tools will run")
         return self
 
 
 def translate(choice: ToolChoice, api: API) -> dict:
-    if api == "messages":
-        return _anthropic(choice)
-    return _openai(choice, flat=api == "responses")
+    match api:
+        case "completion":
+            return _openai(choice, flat=False)
+        case "messages":
+            return _anthropic(choice)
+        case "responses":
+            return _openai(choice, flat=True)
+        case _:
+            assert_never(api)
 
 
 def _anthropic(c: ToolChoice) -> dict:
@@ -46,7 +54,7 @@ def _anthropic(c: ToolChoice) -> dict:
         return {}
     if c.mode == "required" and isinstance(c.only, str):
         tc = {"type": "tool", "name": c.only}
-    else:  # anthropic has no subset form: a multi-name only collapses to forcing any tool (card 9)
+    else:  # anthropic has no subset form: a multi-name only collapses to forcing any tool
         tc = {"type": "any" if c.mode == "required" else c.mode or "auto"}
     if c.parallel is not None:
         tc["disable_parallel_tool_use"] = not c.parallel

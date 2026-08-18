@@ -1,9 +1,12 @@
-"""modalities gate: text passes, everything else raises typed on every API (card 4)."""
+"""modalities gate: text passes, everything else raises typed on every API."""
+from typing import get_args
+
 import pytest
 
 from llm_master.config import UnsupportedField, modalities
+from llm_master.providers import API
 
-APIS = ("completion", "messages", "responses")
+APIS = get_args(API)
 
 
 def test_text_only_says_nothing():

@@ -1,4 +1,4 @@
-"""web_search: stance goldens + live search on all three tool providers (card 10)."""
+"""web_search: stance goldens + live search on all three tool providers."""
 import pytest
 from any_llm import AnyLLM
 

@@ -1,57 +1,81 @@
-"""Rate-limit data: edit rows here when models change. Shapes live in types.py; SPEC section 1."""
-from llm_master.types import ModelLimit, Provider
+"""The providers. Pure data: every roster the repo derives its types from lives on this page.
 
-_GEMINI_MODELS = [
-    ModelLimit(name="gemini-2.5-flash-lite", requests=30000),
-    ModelLimit(name="gemini-2.5-flash-lite-preview-09-2025", requests=30000),
-    ModelLimit(name="gemini-3.1-flash-lite", requests=30000),
-    ModelLimit(name="gemini-3.1-flash-lite-preview", requests=30000),
-    ModelLimit(name="gemini-3.5-flash", requests=20000),
-    ModelLimit(name="gemini-3-flash-preview", requests=20000),
-    ModelLimit(name="gemini-2.5-pro", requests=2000),
-    ModelLimit(name="gemini-3-pro-preview", requests=2000),
-    ModelLimit(name="gemini-3.1-pro-preview", requests=2000),
-    ModelLimit(name="gemini-2.5-flash-image", requests=5000),
-    ModelLimit(name="gemini-3-pro-image", requests=2000),
-]
+Row shapes are in shapes.py; reads and import-time checks are in registry.py.
+"""
+from __future__ import annotations
 
-PROVIDERS = [
-    Provider(
-        name="openai",
-        api="responses",
-        search="tool",
-        requests=10000,
-        interval=60,
-        models=[
-            ModelLimit(name="gpt-5.1", requests=15000),
-            ModelLimit(name="gpt-5.2", requests=15000),
-            ModelLimit(name="gpt-5.4", requests=15000),
-            ModelLimit(name="gpt-5.5", requests=15000),
-            ModelLimit(name="gpt-5.6-sol", requests=15000),
-            ModelLimit(name="gpt-5.6-terra", requests=15000),
-            ModelLimit(name="gpt-5.6-luna", requests=15000),
-            ModelLimit(name="chatgpt-4o-latest", requests=5000),
-            ModelLimit(name="gpt-audio-mini", requests=5000),
-            ModelLimit(name="gpt-4o-audio-preview", requests=5000),
-            ModelLimit(name="omni-moderation-latest", requests=1000),
-            ModelLimit(name="gpt-image-1", requests=50),
-        ],
-    ),
-    Provider(name="anthropic", api="messages", search="tool", requests=4000, interval=60, models=[]),
-    Provider(name="gemini", api="completion", search="tool", price_id="google", requests=10000, interval=60, models=_GEMINI_MODELS),
-    Provider(name="vertexai", api="completion", search="tool", price_id="google", requests=10000, interval=60, models=_GEMINI_MODELS),
-    Provider(name="fireworks", api="completion", search="none", requests=600, interval=60, models=[]),
-]
+from typing import TYPE_CHECKING, Literal
 
-_BY_NAME = {p.name: p for p in PROVIDERS}
-assert len(_BY_NAME) == len(PROVIDERS), "duplicate provider names"
+if TYPE_CHECKING:
+    from llm_master.shapes import ModelRow, ProviderRow
 
+API = Literal["completion", "messages", "responses"]
+ProviderName = Literal["openai", "anthropic", "gemini", "vertexai", "fireworks"]
+SearchStance = Literal["tool", "none"]
 
-def limit(provider: str, model: str) -> tuple[int, int]:
-    """(requests, interval) for one bucket. A model override replaces the provider default."""
-    p = _BY_NAME[provider]  # unknown provider fails loud, on purpose
-    m = next((x for x in p.models if x.name == model), None)
-    return (
-        m.requests if m and m.requests else p.requests,
-        m.interval if m and m.interval else p.interval,
-    )
+_GEMINI_MODELS: dict[str, ModelRow] = {
+    "gemini-2.5-flash-lite": {"requests": 30000},
+    "gemini-2.5-flash-lite-preview-09-2025": {"requests": 30000},
+    "gemini-3.1-flash-lite": {"requests": 30000},
+    "gemini-3.1-flash-lite-preview": {"requests": 30000},
+    "gemini-3.5-flash": {"requests": 20000},
+    "gemini-3-flash-preview": {"requests": 20000},
+    "gemini-2.5-pro": {"requests": 2000},
+    "gemini-3-pro-preview": {"requests": 2000},
+    "gemini-3.1-pro-preview": {"requests": 2000},
+    "gemini-2.5-flash-image": {"requests": 5000},
+    "gemini-3-pro-image": {"requests": 2000},
+}
+
+PROVIDERS: dict[ProviderName, ProviderRow] = {
+    "openai": {
+        "api": "responses",
+        "search": "tool",
+        "requests": 10000,
+        "interval": 60,
+        "models": {
+            "gpt-5.1": {"requests": 15000},
+            "gpt-5.2": {"requests": 15000},
+            "gpt-5.4": {"requests": 15000},
+            "gpt-5.5": {"requests": 15000},
+            "gpt-5.6-sol": {"requests": 15000},
+            "gpt-5.6-terra": {"requests": 15000},
+            "gpt-5.6-luna": {"requests": 15000},
+            "chatgpt-4o-latest": {"requests": 5000},
+            "gpt-audio-mini": {"requests": 5000},
+            "gpt-4o-audio-preview": {"requests": 5000},
+            "omni-moderation-latest": {"requests": 1000},
+            "gpt-image-1": {"requests": 50},
+        },
+    },
+    "anthropic": {
+        "api": "messages",
+        "search": "tool",
+        "requests": 4000,
+        "interval": 60,
+        "models": {},
+    },
+    "gemini": {
+        "api": "completion",
+        "search": "tool",
+        "price_id": "google",
+        "requests": 10000,
+        "interval": 60,
+        "models": _GEMINI_MODELS,
+    },
+    "vertexai": {
+        "api": "completion",
+        "search": "tool",
+        "price_id": "google",
+        "requests": 10000,
+        "interval": 60,
+        "models": _GEMINI_MODELS,
+    },
+    "fireworks": {
+        "api": "completion",
+        "search": "none",
+        "requests": 600,
+        "interval": 60,
+        "models": {},
+    },
+}

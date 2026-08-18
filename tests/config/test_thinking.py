@@ -2,7 +2,7 @@
 import pytest
 from any_llm import AnyLLM
 
-from llm_master.config.thinking import translate
+from llm_master.config import thinking
 
 Q = "What is 15% of 240? Think it through carefully before answering."
 RIDDLE = [{"role": "user", "content": "A farmer has 17 sheep; all but 9 run away, then he buys twice "
@@ -10,15 +10,21 @@ RIDDLE = [{"role": "user", "content": "A farmer has 17 sheep; all but 9 run away
 
 
 def test_responses_levels_carry_summary_ask():
-    assert translate("high", "responses") == {"reasoning": {"effort": "high", "summary": "auto"}}
-    assert translate("none", "responses") == {"reasoning": {"effort": "none"}}
+    assert thinking.translate("high", "responses") == {"reasoning": {"effort": "high", "summary": "auto"}}
+    assert thinking.translate("none", "responses") == {"reasoning": {"effort": "none"}}
+
+
+def test_messages_levels_spelling():
+    # the live test can't catch a lost output_config: adaptive alone still produces thinking blocks
+    assert thinking.translate("low", "messages") == {"thinking": {"type": "adaptive"}, "output_config": {"effort": "low"}}
+    assert thinking.translate("none", "messages") == {"thinking": {"type": "disabled"}}
 
 
 @pytest.mark.live
 async def test_responses_levels_always_return_summary_text():
-    # needs real reasoning: openai emits summaries only when there is enough to summarize (card 7)
+    # needs real reasoning: openai emits summaries only when there is enough to summarize
     llm = AnyLLM.create("openai")
-    r = await llm.aresponses("gpt-5.1", RIDDLE, max_output_tokens=4000, **translate("high", "responses"))
+    r = await llm.aresponses("gpt-5.1", RIDDLE, max_output_tokens=4000, **thinking.translate("high", "responses"))
     text = "".join(part.text for item in r.output if item.type == "reasoning"
                    for part in (item.summary or []))
     assert text, "levels must always fetch readable thought text"
@@ -33,9 +39,9 @@ async def test_completion_gemini():
         return d.reasoning_tokens if d else 0
 
     low = await llm.acompletion(model="gemini-2.5-flash", messages=[{"role": "user", "content": Q}],
-                                max_tokens=3000, **translate("low", "completion"))
+                                max_tokens=3000, **thinking.translate("low", "completion"))
     none = await llm.acompletion(model="gemini-2.5-flash", messages=[{"role": "user", "content": Q}],
-                                 max_tokens=3000, **translate("none", "completion"))
+                                 max_tokens=3000, **thinking.translate("none", "completion"))
     assert thought(low) > 0, f"low produced no thinking tokens: {low.usage}"
     assert thought(none) == 0, f"none still thought: {none.usage}"
 
@@ -44,9 +50,9 @@ async def test_completion_gemini():
 async def test_messages_anthropic():
     llm = AnyLLM.create("anthropic")
     low = await llm.amessages("claude-sonnet-5", [{"role": "user", "content": Q}], 3000,
-                              **translate("low", "messages"))
+                              **thinking.translate("low", "messages"))
     none = await llm.amessages("claude-sonnet-5", [{"role": "user", "content": Q}], 3000,
-                               **translate("none", "messages"))
+                               **thinking.translate("none", "messages"))
     assert any(b.type == "thinking" for b in low.content), f"no thinking block in {[b.type for b in low.content]}"
     assert not any(b.type == "thinking" for b in none.content)
 
@@ -55,8 +61,8 @@ async def test_messages_anthropic():
 async def test_responses_openai():
     llm = AnyLLM.create("openai")
     low = await llm.aresponses("gpt-5.1", [{"role": "user", "content": Q}],
-                               max_output_tokens=3000, **translate("low", "responses"))
+                               max_output_tokens=3000, **thinking.translate("low", "responses"))
     none = await llm.aresponses("gpt-5.1", [{"role": "user", "content": Q}],
-                                max_output_tokens=3000, **translate("none", "responses"))
+                                max_output_tokens=3000, **thinking.translate("none", "responses"))
     assert low.usage.output_tokens_details.reasoning_tokens > 0
     assert none.usage.output_tokens_details.reasoning_tokens == 0

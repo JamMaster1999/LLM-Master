@@ -1,6 +1,6 @@
 # llm_master v2
 
-Clean-slate rewrite: a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm) (pinned 1.25.0).
+Clean-slate rewrite: a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm) (our fork's main: upstream + carried fixes, until upstream releases them).
 Old `main` stays frozen for existing consumers. This branch (`v2`) replaces everything.
 
 ## Plan

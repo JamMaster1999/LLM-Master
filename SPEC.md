@@ -1,8 +1,8 @@
 # llm_master v2 — API spec
 
 A lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm), installed as a git
-dependency on our fork's main (`github.com/JamMaster1999/any-llm@main` = upstream + our three
-fixes) until upstream merges.
+dependency on our fork's main (`github.com/JamMaster1999/any-llm@main` = upstream + our carried
+fixes) until upstream merges them all and releases — then the dependency becomes a plain PyPI pin.
 
 ## Build order
 
@@ -40,97 +40,46 @@ provider-native batch.
 
 ## 1. Providers
 
-One Python file inside the package. It holds four facts per provider: rate limits, the name map
-genai-prices needs, which API it speaks, and its web-search stance. It holds no prices, no model
-allowlist, no API keys.
+Three modules with one job each. `providers.py` is pure data — the page you edit when
+providers change. It holds four facts per provider: rate limits, the name map genai-prices
+needs, which API it speaks, and its web-search stance. It holds no prices, no model
+allowlist, no API keys. The rosters everything derives from (`API`, `ProviderName`,
+`SearchStance`) live at its top; the rows are a dict keyed by provider name.
 
 ```python
-from pydantic import BaseModel, Field, model_validator
+API = Literal["completion", "messages", "responses"]
+ProviderName = Literal["openai", "anthropic", "gemini", "vertexai", "fireworks"]
+SearchStance = Literal["tool", "none"]
 
+PROVIDERS: dict[ProviderName, ProviderRow] = {
+    "openai": {
+        "api": "responses",
+        "search": "tool",
+        "requests": 10000,
+        "interval": 60,
+        "models": {
+            "gpt-5.1": {"requests": 15000},
+            # ... one model per line ...
+        },
+    },
+    # ... one row per provider ...
+}
+```
 
-class ModelLimit(BaseModel, frozen=True, extra="forbid"):
-    name: str
-    requests: int | None = Field(None, gt=0)   # None = inherit from provider
-    interval: int | None = Field(None, gt=0)   # seconds
+`shapes.py` holds the `ProviderRow` / `ModelRow` TypedDicts the page is checked against.
+`registry.py` holds the reads and the import-time asserts:
 
-    @model_validator(mode="after")
-    def _overrides_something(self):
-        if self.requests is None and self.interval is None:
-            raise ValueError(f"{self.name}: overrides nothing")
-        return self
-
-
-class Provider(BaseModel, frozen=True, extra="forbid"):
-    name: str
-    api: Literal["completion", "messages", "responses"]  # required: which API it speaks
-    search: Literal["tool", "none"]  # required: its web-search stance (card 10)
-    requests: int = Field(gt=0)
-    interval: int = Field(gt=0)                # seconds
-    models: tuple[ModelLimit, ...]             # exceptions only; () means none
-    price_id: str | None = None                # genai-prices name, only when it differs
-
-    @model_validator(mode="after")
-    def _no_duplicate_models(self):
-        names = [m.name for m in self.models]
-        if len(names) != len(set(names)):
-            raise ValueError(f"{self.name}: duplicate model entries")
-        return self
-
-
-_GEMINI_MODELS = [
-    ModelLimit(name="gemini-2.5-flash-lite", requests=30000),
-    ModelLimit(name="gemini-2.5-flash-lite-preview-09-2025", requests=30000),
-    ModelLimit(name="gemini-3.1-flash-lite", requests=30000),
-    ModelLimit(name="gemini-3.1-flash-lite-preview", requests=30000),
-    ModelLimit(name="gemini-3.5-flash", requests=20000),
-    ModelLimit(name="gemini-3-flash-preview", requests=20000),
-    ModelLimit(name="gemini-2.5-pro", requests=2000),
-    ModelLimit(name="gemini-3-pro-preview", requests=2000),
-    ModelLimit(name="gemini-3.1-pro-preview", requests=2000),
-    ModelLimit(name="gemini-2.5-flash-image", requests=5000),
-    ModelLimit(name="gemini-3-pro-image", requests=2000),
-]
-
-PROVIDERS = [
-    Provider(
-        name="openai",
-        api="responses",
-        search="tool",
-        requests=10000,
-        interval=60,
-        models=[
-            ModelLimit(name="gpt-5.1", requests=15000),
-            ModelLimit(name="gpt-5.2", requests=15000),
-            ModelLimit(name="gpt-5.4", requests=15000),
-            ModelLimit(name="gpt-5.5", requests=15000),
-            ModelLimit(name="gpt-5.6-sol", requests=15000),
-            ModelLimit(name="gpt-5.6-terra", requests=15000),
-            ModelLimit(name="gpt-5.6-luna", requests=15000),
-            ModelLimit(name="chatgpt-4o-latest", requests=5000),
-            ModelLimit(name="gpt-audio-mini", requests=5000),
-            ModelLimit(name="gpt-4o-audio-preview", requests=5000),
-            ModelLimit(name="omni-moderation-latest", requests=1000),
-            ModelLimit(name="gpt-image-1", requests=50),
-        ],
-    ),
-    Provider(name="anthropic", api="messages", search="tool", requests=4000, interval=60, models=[]),
-    Provider(name="gemini", api="completion", search="tool", price_id="google", requests=10000, interval=60, models=_GEMINI_MODELS),
-    Provider(name="vertexai", api="completion", search="tool", price_id="google", requests=10000, interval=60, models=_GEMINI_MODELS),
-    Provider(name="fireworks", api="completion", search="none", requests=600, interval=60, models=[]),
-]
-
-_BY_NAME = {p.name: p for p in PROVIDERS}
-assert len(_BY_NAME) == len(PROVIDERS), "duplicate provider names"
-
-
-def limit(provider: str, model: str) -> tuple[int, int]:
+```python
+def limit(provider: ProviderName, model: str) -> tuple[int, int]:
     """(requests, interval) for one bucket. A model override replaces the provider default."""
-    p = _BY_NAME[provider]  # unknown provider fails loud, on purpose
-    m = next((x for x in p.models if x.name == model), None)
-    return (
-        m.requests if m and m.requests else p.requests,
-        m.interval if m and m.interval else p.interval,
-    )
+    row = PROVIDERS[provider]  # unknown provider fails loud, on purpose
+    override = row["models"].get(model, {})
+    return override.get("requests", row["requests"]), override.get("interval", row["interval"])
+
+
+def search(provider: ProviderName) -> SearchStance:
+    """The provider's web-search stance, from its row."""
+    return PROVIDERS[provider]["search"]
 ```
 
 Rules:
@@ -145,9 +94,10 @@ Rules:
 
 Validation:
 
-- The editor flags wrong types, missing fields, and misspelled fields at save (pydantic + Pylance).
-- The value rules (positive numbers, duplicates, rows that override nothing) run as repo tests
-  before committing.
+- The editor flags an unregistered provider key, wrong types, missing fields, and misspelled
+  fields as you type (TypedDict + Literal, via Pylance).
+- The value rules (keys match `ProviderName`, positive numbers, overrides that override
+  something) are import-time asserts in registry.py — any test run or real import trips them.
 
 ## 2. Facade + persistent clients
 

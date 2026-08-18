@@ -1,4 +1,4 @@
-"""moderation: free openai pre-check before dispatch. Card 15 in CONFIG.md."""
+"""moderation: free openai pre-check before dispatch. See CONFIG.md."""
 from any_llm import AnyLLM
 
 

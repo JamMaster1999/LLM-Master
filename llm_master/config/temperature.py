@@ -1,6 +1,16 @@
-"""temperature: same name on every API. Card 5 in CONFIG.md."""
-from llm_master.config import API
+"""temperature: same name on every API. See CONFIG.md."""
+from typing import assert_never
+
+from llm_master.providers import API
 
 
 def translate(t: float, api: API) -> dict:
-    return {"temperature": t}
+    match api:
+        case "completion":
+            return {"temperature": t}
+        case "messages":
+            return {"temperature": t}
+        case "responses":
+            return {"temperature": t}
+        case _:
+            assert_never(api)

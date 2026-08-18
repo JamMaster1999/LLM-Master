@@ -1,25 +1,23 @@
-"""web_search: ask for live search. Card 10 in CONFIG.md.
+"""web_search: ask for live search. See CONFIG.md.
 
-Every provider row in providers.py declares a SearchStance — adding a provider without a
-search decision fails validation there.
+Every provider's row in providers.py declares its search stance — adding a provider
+without a search decision fails the registry's import-time checks.
 """
-from typing import Literal, assert_never
+from typing import assert_never
 
 from pydantic import BaseModel, Field
 
-from llm_master.config import API, UnsupportedField
-
-SearchStance = Literal["tool", "none"]
+from llm_master import registry
+from llm_master.config import UnsupportedField
+from llm_master.providers import API, ProviderName
 
 
 class Search(BaseModel, extra="forbid"):
     max_searches: int | None = Field(None, gt=0)
 
 
-def translate(search: Search, api: API, provider: str) -> dict:
-    from llm_master.providers import _BY_NAME  # function-level: providers → types → config
-
-    stance: SearchStance = _BY_NAME[provider].search
+def translate(search: Search, api: API, provider: ProviderName) -> dict:
+    stance = registry.search(provider)
     match stance:
         case "none":
             raise UnsupportedField(api, "web_search", f"{provider} has no search (its providers.py stance)")

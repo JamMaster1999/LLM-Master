@@ -1,5 +1,7 @@
-"""system: the system prompt. Card 1 in CONFIG.md."""
-from llm_master.config import API
+"""system: the system prompt. See CONFIG.md."""
+from typing import assert_never
+
+from llm_master.providers import API
 
 
 def translate(text: str, api: API) -> dict:
@@ -10,3 +12,5 @@ def translate(text: str, api: API) -> dict:
             return {"system": text}
         case "responses":
             return {"instructions": text}
+        case _:
+            assert_never(api)

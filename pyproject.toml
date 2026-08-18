@@ -3,7 +3,7 @@ name = "llm-master"
 version = "2.0.0a0"
 description = "Lite multi-provider LLM wrapper on any-llm"
 requires-python = ">=3.11"
-dependencies = ["any-llm-sdk[gemini]"]
+dependencies = ["any-llm-sdk[gemini] @ git+https://github.com/JamMaster1999/any-llm@main"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio"]

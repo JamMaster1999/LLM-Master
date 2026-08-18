@@ -1,4 +1,4 @@
-"""response_format: Json goldens, live structured output on all three APIs (card 11)."""
+"""response_format: Json goldens, live structured output on all three APIs."""
 import json
 from typing import Literal
 

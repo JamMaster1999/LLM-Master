@@ -1,4 +1,4 @@
-"""moderation pre-check, live both directions — the endpoint is free (card 15)."""
+"""moderation pre-check, live both directions — the endpoint is free."""
 import pytest
 from any_llm import AnyLLM
 

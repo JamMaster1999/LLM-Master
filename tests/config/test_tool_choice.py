@@ -31,7 +31,7 @@ def test_required_subset():
                         "allowed_tools": {"mode": "required",
                                           "tools": [{"type": "function", "function": {"name": "a"}},
                                                     {"type": "function", "function": {"name": "b"}}]}}}
-    assert tool_choice.translate(c, "messages") == {"tool_choice": {"type": "any"}}  # no subset form (card 9)
+    assert tool_choice.translate(c, "messages") == {"tool_choice": {"type": "any"}}  # anthropic has no subset form
 
 
 def test_singleton_list_is_its_name():
@@ -62,13 +62,15 @@ def test_empty_says_nothing_and_none_forbids_only():
     assert tool_choice.translate(ToolChoice(), "completion") == {}
     with pytest.raises(ValidationError):
         ToolChoice(mode="none", only="f")
+    with pytest.raises(ValidationError):
+        ToolChoice(mode="none", parallel=False)  # anthropic's none variant takes no parallel key
 
 
 # --- live: require get_time on a weather question — only obedience proves the param landed ---
 
 Q = [{"role": "user", "content": "What's the weather in Toronto?"}]
 
-# both target shapes come from the tools translation, so these live tests prove it too (card 8)
+# both target shapes come from the tools translation, so these live tests prove it too
 _SCHEMA = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
 OPENAI_TOOLS = [
     {"type": "function", "function": {"name": "get_weather", "description": "Current weather for a city",

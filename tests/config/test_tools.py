@@ -1,4 +1,4 @@
-"""tools definitions: goldens for both input kinds, live proof of gemini's converter path (card 8)."""
+"""tools definitions: goldens for both input kinds, live proof of gemini's converter path."""
 import pytest
 from any_llm import AnyLLM
 

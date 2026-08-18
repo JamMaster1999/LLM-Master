@@ -1,10 +1,14 @@
 """The trivial four (system, temperature, max_tokens, timeout): goldens + one batched live call per API."""
+from typing import get_args
+
 import pytest
 from any_llm import AnyLLM
+from any_llm.exceptions import ProviderError
 
 from llm_master.config import max_tokens, system, temperature, thinking, timeout
+from llm_master.providers import API
 
-APIS = ("completion", "messages", "responses")
+APIS = get_args(API)
 
 
 def test_temperature_same_everywhere():
@@ -24,7 +28,7 @@ def test_max_tokens_renames_on_responses():
 
 
 def test_system_placement():
-    assert system.translate("Be brief.", "completion") == {}  # prepended at assembly instead (card 1)
+    assert system.translate("Be brief.", "completion") == {}  # prepended at assembly instead
     assert system.translate("Be brief.", "messages") == {"system": "Be brief."}
     assert system.translate("Be brief.", "responses") == {"instructions": "Be brief."}
 
@@ -39,7 +43,7 @@ STORY = [{"role": "user", "content": "Write a 500 word story about a lighthouse.
 @pytest.mark.live
 async def test_completion_four_accepted_system_obeyed():
     llm = AnyLLM.create("gemini")
-    msgs = [{"role": "system", "content": S}, *HELLO]  # card 1: completion prepends
+    msgs = [{"role": "system", "content": S}, *HELLO]  # completion has no system param: prepend
     r = await llm.acompletion(model="gemini-2.5-flash", messages=msgs,
                               **temperature.translate(0.2, "completion"),
                               **max_tokens.translate(300, "completion"),
@@ -50,7 +54,7 @@ async def test_completion_four_accepted_system_obeyed():
 
 @pytest.mark.live
 async def test_messages_accepted_system_obeyed():
-    # no temperature: claude-sonnet-5 rejects it as deprecated (live-observed, card 5)
+    # no temperature: claude-sonnet-5 rejects it as deprecated (live-observed)
     llm = AnyLLM.create("anthropic")
     r = await llm.amessages("claude-sonnet-5", HELLO,
                             **max_tokens.translate(300, "messages"),
@@ -63,11 +67,11 @@ async def test_messages_accepted_system_obeyed():
 
 @pytest.mark.live
 async def test_responses_accepted_system_obeyed():
-    # no timeout: any-llm's ResponsesParams has no such field yet (card 13, fork fix pending)
     llm = AnyLLM.create("openai")
     r = await llm.aresponses("gpt-5.1", HELLO,
                              **temperature.translate(0.2, "responses"),
                              **max_tokens.translate(300, "responses"),
+                             **timeout.translate(60, "responses"),
                              **thinking.translate("none", "responses"),
                              **system.translate(S, "responses"))
     text = "".join(part.text for item in r.output if item.type == "message"
@@ -96,3 +100,17 @@ async def test_responses_max_tokens_truncates():
     r = await llm.aresponses("gpt-5.1", STORY,
                              **thinking.translate("none", "responses"), **max_tokens.translate(32, "responses"))
     assert r.status == "incomplete" and r.incomplete_details.reason == "max_output_tokens"
+
+
+@pytest.mark.live
+async def test_timeout_enforced_on_all_apis():
+    # 1ms expires before any reply; all three dialects surface it as the typed ProviderError
+    with pytest.raises(ProviderError):
+        await AnyLLM.create("gemini").acompletion(model="gemini-2.5-flash", messages=HELLO,
+                                                  **timeout.translate(0.001, "completion"))
+    with pytest.raises(ProviderError):
+        await AnyLLM.create("anthropic").amessages("claude-sonnet-5", HELLO, 300,
+                                                   **timeout.translate(0.001, "messages"))
+    with pytest.raises(ProviderError):
+        await AnyLLM.create("openai").aresponses("gpt-5.1", HELLO,
+                                                 **timeout.translate(0.001, "responses"))

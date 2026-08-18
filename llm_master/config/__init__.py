@@ -1,7 +1,4 @@
 """Bucket 1: one module per config field — the field's type and its per-API translation."""
-from typing import Literal
-
-API = Literal["completion", "messages", "responses"]
 
 
 def merge(*fragments: dict) -> dict:
