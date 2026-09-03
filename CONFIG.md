@@ -98,14 +98,15 @@ Today, any non-text value raises our typed unsupported error on every dialect. P
 - completion, gemini: the request side works (`response_modalities=["TEXT", "IMAGE"]`), but
   any-llm still throws away the media parts of the response
   ([#1295](https://github.com/mozilla-ai/any-llm/issues/1295)) — you'd be billed for an image you
-  never receive. Until the fix lands, refusing beats silently charging.
+  never receive. The fix is in review as [mozilla-ai#1344](https://github.com/mozilla-ai/any-llm/pull/1344),
+  images plus audio. Until it ships, refusing beats silently charging.
 - completion, fireworks: no such capability exists.
 - messages, anthropic: no output modalities at all. Permanent.
 - responses, openai: audio lives on their chat dialect, and images (gpt-image-2) need
   verification before their arms open.
 
-The field is the stable config; the arms unlock one by one: gemini image and audio when #1295
-merges; openai audio by routing those candidates to the completion dialect; openai images once a
+The field is the stable config; the arms unlock one by one: gemini image and audio when #1344
+ships; openai audio by routing those candidates to the completion dialect; openai images once a
 live seed verifies the wire shape and that any-llm preserves the returned images.
 
 The modality comes from picking the right model, not just setting the field. Once an arm is open,
@@ -191,10 +192,9 @@ like any other typed error.
   the named-function form; any other `only` is `allowed_tools` with mode auto|required (auto =
   may use only these); `parallel` splits out as `parallel_tool_calls`. completion nests the
   openai spellings, responses is flat. any-llm standardizes completion per provider; gemini's
-  named / `none` / `allowed_tools` forms come from
-  [mozilla-ai#1300](https://github.com/mozilla-ai/any-llm/pull/1300), carried on the fork until
-  merged (an auto-mode menu on gemini stays a typed error — gemini only honors the name list in
-  ANY mode).
+  named / `none` / `allowed_tools` forms are native since any-llm 1.27.0
+  ([mozilla-ai#1352](https://github.com/mozilla-ai/any-llm/pull/1352)); an auto-mode menu on
+  gemini stays a typed error — gemini only honors the name list in ANY mode.
 - messages: `required`+single → `{type: tool, name}`; `required` otherwise → `any`; `none` →
   `none`; else `auto`; `parallel` folds in as `disable_parallel_tool_use`. Anthropic has no
   subset form, so a multi-name `only` collapses to the bare mode — with several allowed tools,
@@ -220,9 +220,8 @@ like any other typed error.
   tool we inject.
 - Citations are not standardized by any-llm — two native styles (anthropic citation objects,
   openai `url_citation` annotations), gemini none. Our response type folds all three into one
-  canonical citation shape. Upstream path: any-llm's `annotations` field exists unwritten — a
-  gemini-first PR mapping `grounding_metadata` into it is staged on the fork; wrapper-side
-  normalization covers everyone except gemini, whose data dies inside any-llm.
+  canonical citation shape. Wrapper-side normalization covers everyone except gemini, whose data
+  dies inside any-llm.
 - Search fees: genai-prices already prices anthropic ($10/1k, extractor included). openai reports
   no count in usage: we count the search calls in the response trace times the published fee.
 
