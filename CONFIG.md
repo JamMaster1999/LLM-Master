@@ -130,10 +130,11 @@ like any other typed error.
 ## 6. `thinking` — `"none" | "low" | "medium" | "high" | "xhigh" | None`, None = provider default
 
 - completion: `reasoning_effort=` passed through; any-llm owns the per-provider mapping. `none`
-  genuinely disables where possible; thinking-only models surface the provider's own 400 typed;
-  gemini 3.5+ clamps to MINIMAL with a logged warning
-  ([#1294](https://github.com/mozilla-ai/any-llm/pull/1294), carried on the fork until merged).
-  `xhigh` maps to gemini's top tier.
+  genuinely disables where the model has an off setting (gemini sends `thinking_budget=0`);
+  models that only run with thinking on (gemini 3.x, gemini-2.5-pro) reject it before the wire
+  with any-llm's typed `UnsupportedParameterError`. Native since any-llm 1.27.2
+  ([mozilla-ai#1381](https://github.com/mozilla-ai/any-llm/pull/1381)). `xhigh` maps to gemini's
+  top tier.
 - messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive"}`
   plus `output_config: {"effort": level}`. Anthropic's named tiers map 1:1, no budget table.
   Live-verified on claude-sonnet-5: adaptive levels produce thinking blocks, disabled produces
