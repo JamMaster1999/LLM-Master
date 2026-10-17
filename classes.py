@@ -84,6 +84,10 @@ class ModelRegistry:
         "responses-gpt-5.6-sol": ModelConfig(5.00, 30.00, 0.50, 15000),
         "responses-gpt-5.6-terra": ModelConfig(2.50, 15.00, 0.25, 15000),
         "responses-gpt-5.6-luna": ModelConfig(1.00, 6.00, 0.10, 15000),
+        "responses-gpt-6-astra": ModelConfig(10.00, 50.00, 1.00, 15000),
+        "responses-gpt-6-sol": ModelConfig(2.00, 10.00, 0.20, 15000),
+        "responses-gpt-6.1-sol": ModelConfig(2.00, 10.00, 0.10, 15000),
+        "responses-gpt-6-luna": ModelConfig(0.10, 0.50, 0.01, 15000),
 
         # Anthropic Models
         # "claude-3-5-sonnet-latest": ModelConfig(3.00, 15.00, 0.30, 4000),
@@ -96,6 +100,8 @@ class ModelRegistry:
         "claude-opus-4-6": ModelConfig(5.00, 25.00, 0.50, 4000),
         "claude-opus-4-8": ModelConfig(5.00, 25.00, 0.50, 4000),
         "claude-sonnet-5": ModelConfig(3.00, 15.00, 0.30, 4000),
+        "claude-opus-5-5": ModelConfig(4.00, 20.00, 0.20, 4000),
+        "claude-sonnet-5-5": ModelConfig(2.00, 10.00, 0.20, 4000),
 
         # Gemini Models
         "googleai:gemini-2.5-flash-lite": ModelConfig(0.1, 0.4, 0.01, 30000),
@@ -108,6 +114,9 @@ class ModelRegistry:
         "googleai:gemini-3-pro-preview": ModelConfig(2, 12, 0.2, 2000),
         "googleai:gemini-3.1-pro-preview": ModelConfig(2, 12, 0.2, 2000),
         "googleai:gemini-3.5-flash": ModelConfig(1.5, 9, 0.15, 20000),
+        # Introductory prices; 3.8 Flash goes to 1.5 / 7.5 / 0.15 on 2027-01-01, 4 Argon to 4 / 20 / 0.2 on 2026-12-01
+        "googleai:gemini-3.8-flash": ModelConfig(0.75, 3.75, 0.075, 20000),
+        "googleai:gemini-4-argon": ModelConfig(2, 10, 0.1, 2000),
         "googleai:gemini-3-flash-preview": ModelConfig(0.5, 3, 0.05, 20000),
         "googleai:gemini-2.5-flash-image": ModelConfig(0.3, 0.039, None, 5000),
         "googleai:gemini-3-pro-image": ModelConfig(2, 0.134, None, 2000),
