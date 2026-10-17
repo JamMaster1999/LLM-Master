@@ -52,15 +52,21 @@ decision fails the type check instead of silently passing something through.
 The shape is openai's: each message is a role plus content.
 
 - Roles: `user`, `assistant`, `tool`. System-role entries are rejected (field 1's rule).
-- Content: a string, or a list of `text` / `image_url` / `file` (pdf) parts. Nothing else; unknown
-  part types fail validation. v1's five alternate message shapes are gone.
+- Content: a string, or a list of `text` / `image_url` / `file` (pdf) / `input_audio` parts.
+  Nothing else; unknown part types fail validation. v1's five alternate message shapes are gone.
 - Typed both ways: plain openai-shaped dicts validate through pydantic, and typed part classes
   exist for autocomplete. Same schema either way.
 - Images: we accept a data-uri, a URL, or a local file path — and always convert to a base64
   data-uri before sending, downloading and converting (HEIC→PNG) as needed. One code path for all
   providers; no provider is ever handed a URL.
 - PDFs: the `file` part with a base64 data-uri, live-verified on anthropic, openai, and gemini.
-  Audio and video input exist nowhere in any-llm today — those parts get added when that changes.
+- Audio: the `input_audio` part, openai's spelling — base64 data plus a format name. gemini takes
+  every format it lists (wav, mp3, aac, ogg, flac, m4a, opus, webm, ...); openai's audio models
+  take wav and mp3 on the completion dialect only, so an openai candidate carrying audio input
+  routes to completion, the same rule as audio output (field 4). anthropic and the responses
+  dialect have no audio input: typed unsupported. Live-verified on gemini and gpt-audio — a
+  spoken sentence transcribes word for word on both. Video input has no part; no consumer needs
+  it.
 - Tool results: openai shape (`{"role": "tool", "tool_call_id": ..., "content": ...}`), per
   field 8.
 
@@ -73,7 +79,8 @@ Assistant turns — the two rules that make history work:
   Translating another model's reasoning is the LiteLLM bug; deleting is the only correct move.
 
 Translation per dialect: completion — handed over as-is, each provider's converter consumes this
-shape. messages — any-llm's own openai→anthropic converter, reused. responses — our rename
+shape. messages — our own walk into anthropic's blocks (IO.md); any-llm's openai→anthropic
+converter is not reused, since it keeps only the last thinking signature. responses — our rename
 (`text`→`input_text` and friends); native items pass verbatim.
 
 The round trip: the response's history-ready form appends straight onto this list, so
@@ -93,21 +100,24 @@ save → reload → next call is lossless by construction.
 
 ## 4. `modalities` — `list["text" | "image" | "audio"] | None`, None = text
 
-Today, any non-text value raises our typed unsupported error on every dialect. Per dialect, why:
+Per dialect:
 
-- completion, gemini: the request side works (`response_modalities=["TEXT", "IMAGE"]`), but
-  any-llm still throws away the media parts of the response
-  ([#1295](https://github.com/mozilla-ai/any-llm/issues/1295)) — you'd be billed for an image you
-  never receive. The fix is in review as [mozilla-ai#1344](https://github.com/mozilla-ai/any-llm/pull/1344),
-  images plus audio. Until it ships, refusing beats silently charging.
-- completion, fireworks: no such capability exists.
+- completion, gemini: `response_modalities=["TEXT", "IMAGE"]` or `["AUDIO"]` rides the request.
+  any-llm returns the media on the message — images as `message.images` (base64 data URLs), audio
+  as `message.audio` (raw PCM wrapped as WAV, sample rate from the MIME) — and on `delta.images` /
+  `delta.audio` when streaming. Live-verified on gemini-2.5-flash-image and
+  gemini-2.5-flash-preview-tts, plain and streamed; an image message replays as history.
+- completion, fireworks: no such capability exists. Typed unsupported.
 - messages, anthropic: no output modalities at all. Permanent.
-- responses, openai: audio lives on their chat dialect, and images (gpt-image-2) need
-  verification before their arms open.
+- responses, openai: neither modality lives here. Audio lives on openai's chat dialect
+  (`modalities=["text", "audio"]` plus a required `audio={"voice", "format"}`), so an openai
+  candidate asking for audio routes to completion; live-verified on gpt-audio-mini, plain and
+  streamed, `message.audio` a valid WAV. Image generation on openai is a Responses built-in tool
+  (`image_generation`), not a modality — a separate decision.
 
-The field is the stable config; the arms unlock one by one: gemini image and audio when #1344
-ships; openai audio by routing those candidates to the completion dialect; openai images once a
-live seed verifies the wire shape and that any-llm preserves the returned images.
+Open decision before the audio arms build: both providers need a voice, and openai needs an
+output format. `modalities` is an enum list today; either it grows into branches
+(`Audio(voice=..., format=...)`, GRAMMAR.md) or voice and format ride the candidate's `extra`.
 
 The modality comes from picking the right model, not just setting the field. Once an arm is open,
 we translate and send — a model that rejects the ask fails typed (live: gemini-2.5-flash 400s
@@ -132,9 +142,7 @@ like any other typed error.
 - completion: `reasoning_effort=` passed through; any-llm owns the per-provider mapping. `none`
   genuinely disables where the model has an off setting (gemini sends `thinking_budget=0`);
   models that only run with thinking on (gemini 3.x, gemini-2.5-pro) reject it before the wire
-  with any-llm's typed `UnsupportedParameterError`. Native since any-llm 1.27.2
-  ([mozilla-ai#1381](https://github.com/mozilla-ai/any-llm/pull/1381)). `xhigh` maps to gemini's
-  top tier.
+  with any-llm's typed `UnsupportedParameterError`. `xhigh` maps to gemini's top tier.
 - messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive"}`
   plus `output_config: {"effort": level}`. Anthropic's named tiers map 1:1, no budget table.
   Live-verified on claude-sonnet-5: adaptive levels produce thinking blocks, disabled produces
@@ -173,7 +181,8 @@ like any other typed error.
 - completion: openai format is the native input; each provider's any-llm converter handles the
   whole loop.
 - messages: tool schemas are our own one-rename translation (`parameters` → `input_schema`);
-  tool-result messages ride any-llm's anthropic converter, consecutive-result merging included.
+  tool results become `tool_result` blocks in a user turn, consecutive results merged into one
+  message (IO.md).
 - responses: same information, flattened — two three-line reshapes at build (tool schemas, and
   results as `function_call_output` items).
 - Scope boundary: `query()` never runs a tool. It returns the model's tool calls; executing and
@@ -192,10 +201,9 @@ like any other typed error.
 - completion + responses: bare `mode` passes as the openai string; `required` + single `only` is
   the named-function form; any other `only` is `allowed_tools` with mode auto|required (auto =
   may use only these); `parallel` splits out as `parallel_tool_calls`. completion nests the
-  openai spellings, responses is flat. any-llm standardizes completion per provider; gemini's
-  named / `none` / `allowed_tools` forms are native since any-llm 1.27.0
-  ([mozilla-ai#1352](https://github.com/mozilla-ai/any-llm/pull/1352)); an auto-mode menu on
-  gemini stays a typed error — gemini only honors the name list in ANY mode.
+  openai spellings, responses is flat. any-llm standardizes completion per provider, gemini's
+  named / `none` / `allowed_tools` forms included; an auto-mode menu on gemini stays a typed
+  error — gemini only honors the name list in ANY mode.
 - messages: `required`+single → `{type: tool, name}`; `required` otherwise → `any`; `none` →
   `none`; else `auto`; `parallel` folds in as `disable_parallel_tool_use`. Anthropic has no
   subset form, so a multi-name `only` collapses to the bare mode — with several allowed tools,
@@ -289,8 +297,10 @@ like any other typed error.
   caches nothing without one. Gemini: no lifetime control exists → typed unsupported.
 - Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on
   one-shot prompts, which is why `"none"` exists. Anthropic writes 1.25x at 5m and 2x at 1h;
-  reads 0.1x everywhere. genai-prices carries a single cache-write price, so anthropic's 1h-tier
-  2x would undercount — noted for the cost step.
+  reads 0.1x everywhere. any-llm's usage reports reads as `cached_tokens` and writes as
+  `cache_write_tokens`, with anthropic's 5m/1h split in `cache_creation_token_details`, so the
+  cost step has every count it needs. genai-prices carries a single cache-write price, so
+  anthropic's 1h-tier 2x needs our own multiplier — noted for the cost step.
 - Build seed: whether pre-5.6 openai models accept `prompt_cache_options` gracefully.
 - Lifetime exotics beyond the field ride the candidate's `extra`.
 

@@ -1,10 +1,8 @@
 # llm_master v2 — spec
 
-llm_master v2 is a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm).
-We install any-llm from our fork's main (`github.com/JamMaster1999/any-llm@main`), which
-carries our open fixes. Once upstream merges and releases them, the dependency becomes a
-plain PyPI pin. Old `main` stays frozen for existing consumers; this branch (`v2`) replaces
-everything.
+llm_master v2 is a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm),
+installed from PyPI. Old `main` stays frozen for existing consumers; this branch (`v2`)
+replaces everything.
 
 Three documents split the law. GRAMMAR.md says how config code must be shaped. CONFIG.md
 rules on every config field. This file holds the build order and the project-wide decisions.
@@ -62,14 +60,12 @@ overhead at concurrency 50, and streaming time to first token.
 ## Not rebuilt
 
 any-llm covers these natively, and the wrapper passes them through: tool calling,
-thinking-block replay, structured outputs, PDF inputs, web search, typed errors
-(`ANY_LLM_UNIFIED_EXCEPTIONS=1`), provider-native batch.
+thinking-block replay, structured outputs, PDF and audio inputs, image and audio outputs,
+cache-token usage, web search, typed errors (`ANY_LLM_UNIFIED_EXCEPTIONS=1`), provider-native
+batch.
 
 ## Deferred
 
-- Gemini media (nano-banana, Imagen) waits on
-  [mozilla-ai/any-llm#1295](https://github.com/mozilla-ai/any-llm/issues/1295); the fix
-  lands in any-llm, not here.
 - Code interpreter and agentic escalation get their own design round. A harness (Claude
   Agent SDK / Codex) would sit beside llm_master, not under it.
 - Consumer migration is a later phase. Old main stays frozen until the last consumer moves.
