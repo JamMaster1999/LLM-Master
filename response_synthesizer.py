@@ -162,7 +162,7 @@ class QueryLLM:
             fallback_config = request.get("fallback_config")
 
             async def try_fallback() -> Tuple[int, LLMResponse]:
-                fb_response = await self.query(model_name=fallback_model, messages=local_messages, stream=False, fallback_provider=None, fallback_model=None, fallback_config=fallback_config, moderation=moderation)
+                fb_response = await self.query(model_name=fallback_model, messages=local_messages, stream=False, fallback_provider=None, fallback_model=None, moderation=moderation, **(fallback_config or {}))
                 return index, fb_response
 
             last_error: Optional[Exception] = None
