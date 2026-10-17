@@ -3,13 +3,10 @@ name = "llm-master"
 version = "2.0.0a0"
 description = "Lite multi-provider LLM wrapper on any-llm"
 requires-python = ">=3.11"
-dependencies = ["any-llm-sdk[gemini] @ git+https://github.com/JamMaster1999/any-llm@main"]
+dependencies = ["any-llm-sdk[gemini]==1.37.0"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio"]
-
-[tool.uv.sources]
-any-llm-sdk = { path = "../any-llm", editable = true }
 
 [build-system]
 requires = ["hatchling"]
