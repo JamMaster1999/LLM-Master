@@ -5,21 +5,27 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from importlib import resources
+from typing import Annotated
 
-from agent.files import MAX_BYTES, MAX_LINES
-from agent.result import Result, ToolError
-from agent.sandbox import Sandbox
+from pydantic import Field
 
-MAX_TIMEOUT = 600
+from agent.reader import MAX_BYTES, MAX_LINES
+from agent.result import Result
+from agent.sandbox import SCRATCH, Sandbox
+
 MAX_CALLS = 100  # tool calls one program may make
-LOGS = "/workspace/.agent"  # long output lands here, where read can page through it
+MAX_CALL_BYTES = 1024 * 1024  # one call's JSON line; a program sending more is stopped
+MAX_ARGUMENT = 60_000  # characters; Modal takes at most 65,536 in one exec argument
+Timeout = Annotated[float, Field(gt=0, le=600)]
+_RUNNER = resources.files("agent").joinpath("runner.py").read_text()
 
 BASH = {"type": "function", "function": {
     "name": "bash",
     "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is "
                    "truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is "
                    "saved to a file you can read. Optionally provide a timeout in seconds (default 120, max 600). "
-                   "The network reaches only the Python package index.",
+                   "The sandbox has no network.",
     "parameters": {"type": "object", "properties": {
         "command": {"type": "string", "description": "Shell command to execute"},
         "timeout": {"type": "number", "description": "Timeout in seconds (default 120, max 600)"},
@@ -57,9 +63,12 @@ tail_log "$3"
 """
 
 
-async def bash(sandbox: Sandbox, command: str, timeout: float = 120) -> Result:
-    _check(timeout)
-    log = f"{LOGS}/bash-{uuid.uuid4().hex[:8]}.log"
+async def bash(sandbox: Sandbox, command: str, timeout: Timeout = 120) -> Result:
+    name = uuid.uuid4().hex[:8]
+    log = f"{SCRATCH}/bash-{name}.log"
+    if len(command) > MAX_ARGUMENT:  # Modal caps one exec argument, and a heredoc can pass it
+        await sandbox.write(f"/tmp/bash-{name}.sh", command.encode())
+        command = f"source /tmp/bash-{name}.sh"
     _, stdout, _ = await sandbox.exec("bash", "-c", _BASH, "bash", command, f"{timeout:g}", log,
                                       timeout=timeout + 30)
     status, rest = stdout.split(b"\n", 1)
@@ -68,21 +77,20 @@ async def bash(sandbox: Sandbox, command: str, timeout: float = 120) -> Result:
 
 
 async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Result]], tools: list[str],
-                      code: str, timeout: float = 120) -> Result:
-    """`run` runs one call from the program. It must check the name against `tools` itself: the
-    program shares a process with the stubs that send its calls, so it can send any line."""
-    _check(timeout)
+                      code: str, timeout: Timeout = 120) -> Result:
+    """`run` runs one call from the program. Every check is here, on the host: the program shares
+    a process with the stubs that send its calls, so it can send any line."""
     name = uuid.uuid4().hex[:8]
-    program, log = f"/tmp/program-{name}.py", f"{LOGS}/program-{name}.log"
+    program, log = f"/tmp/program-{name}.py", f"{SCRATCH}/program-{name}.log"
     await sandbox.write(program, code.encode())
     start = time.monotonic()
     process = await sandbox.start("python", "-u", "-c", _RUNNER, program, log, json.dumps(tools), timeout=timeout)
-    files, sources, calls, lock = [], [], 0, asyncio.Lock()
+    files, sources, lock = [], [], asyncio.Lock()
 
-    async def answer(request: dict) -> None:
-        nonlocal calls
-        calls += 1
-        if calls > MAX_CALLS:
+    async def answer(request: dict, number: int) -> None:
+        if request["name"] not in tools:
+            result = Result(f"{request['name']} can't be called from a program.", error=True)
+        elif number > MAX_CALLS:
             result = Result(f"run_program allows at most {MAX_CALLS} tool calls.", error=True)
         else:
             result = await run(request["name"], request["arguments"])
@@ -95,12 +103,20 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
                 await process.stdin.drain.aio()
 
     async with asyncio.TaskGroup() as group:
-        pending, buffer = set(), b""
+        pending, buffer, calls = set(), b"", 0
         async for chunk in process.stdout:
-            buffer += chunk
-            *lines, buffer = buffer.split(b"\n")
+            *lines, buffer = (buffer + chunk).split(b"\n")
+            calls += len(lines)
+            if len(buffer) > MAX_CALL_BYTES or calls > 2 * MAX_CALLS:  # it's flooding the bridge, not calling tools
+                await sandbox.exec("pkill", "-f", program, timeout=30)
+                break
             for line in lines:
-                pending.add(group.create_task(answer(json.loads(line))))
+                with contextlib.suppress(ValueError, KeyError, TypeError):  # a forged line that isn't a call
+                    request = json.loads(line)
+                    task = group.create_task(answer({"id": request["id"], "name": request["name"],
+                                                     "arguments": dict(request["arguments"])}, calls))
+                    pending.add(task)
+                    task.add_done_callback(pending.discard)
         exit_code = await process.wait.aio()
         for task in pending:  # the program is gone; nobody is waiting for these
             task.cancel()
@@ -108,11 +124,6 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
     result = _output(stdout, log, exit_code, time.monotonic() - start, timeout, "Program")
     result.files, result.sources = files, sources
     return result
-
-
-def _check(timeout: float) -> None:
-    if not 0 < timeout <= MAX_TIMEOUT:
-        raise ToolError(f"timeout must be more than 0 and at most {MAX_TIMEOUT} seconds.")
 
 
 def _output(tailed: bytes, log: str, code: int, elapsed: float, timeout: float, what: str) -> Result:
@@ -140,72 +151,3 @@ def _output(tailed: bytes, log: str, code: int, elapsed: float, timeout: float, 
     if code:
         return Result(out + f"\n\n{what} exited with code {code}", error=True)
     return Result(out)
-
-
-# Runs inside the sandbox. The program's prints go to the log; the runner's original stdout carries
-# its calls to the host, one JSON line each, and replies come back on stdin.
-_RUNNER = r"""
-import ast, asyncio, itertools, json, os, sys, traceback
-
-program, log, names = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
-calls = os.fdopen(os.dup(1), "w")
-os.makedirs(os.path.dirname(log), exist_ok=True)
-output = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
-os.dup2(output, 1)
-os.dup2(output, 2)
-
-
-class ToolError(Exception):
-    "A tool call that failed; the message says why."
-
-
-waiting, ids = {}, itertools.count()
-
-
-async def replies():
-    reader = asyncio.StreamReader()
-    await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
-    while line := await reader.readline():
-        reply = json.loads(line)
-        future = waiting.pop(reply["id"], None)
-        if future is None:  # a reply to a call the program forged
-            continue
-        if "error" in reply:
-            future.set_exception(ToolError(reply["error"]))
-        else:
-            future.set_result(reply["result"])
-
-
-def tool(name):
-    async def call(arguments=None, /, **more):
-        future = asyncio.get_running_loop().create_future()
-        id = next(ids)
-        waiting[id] = future
-        calls.write(json.dumps({"id": id, "name": name, "arguments": {**(arguments or {}), **more}}) + "\n")
-        calls.flush()
-        return await future
-    call.__name__ = name
-    return call
-
-
-async def main():
-    listener = asyncio.create_task(replies())
-    scope = {"__name__": "__main__", "asyncio": asyncio, "ToolError": ToolError, **{name: tool(name) for name in names}}
-    with open(program) as f:
-        code = compile(f.read(), program, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
-    try:
-        if (coroutine := eval(code, scope)) is not None:
-            await coroutine
-    finally:
-        listener.cancel()
-
-
-try:
-    asyncio.run(main())
-except Exception as error:  # show the program's frames, not the runner's
-    tb = error.__traceback__
-    while tb and tb.tb_frame.f_code.co_filename != program:
-        tb = tb.tb_next
-    traceback.print_exception(type(error), error, tb)
-    sys.exit(1)
-"""

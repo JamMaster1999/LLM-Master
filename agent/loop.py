@@ -1,4 +1,6 @@
 """The loop tools: todo is Codex's update_plan; ask_user is Claude Code's AskUserQuestion."""
+from typing import Literal, TypedDict
+
 from agent.result import Result
 
 TODO = {"type": "function", "function": {
@@ -49,11 +51,28 @@ ASK_USER = {"type": "function", "function": {
     }, "required": ["questions"]}}}
 
 
-def todo(plan: list[dict], explanation: str | None = None) -> str:
+class Step(TypedDict):
+    step: str
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class Option(TypedDict):
+    label: str
+    description: str
+
+
+class Question(TypedDict):
+    question: str
+    header: str
+    options: list[Option]
+    multiSelect: bool
+
+
+def todo(plan: list[Step], explanation: str | None = None) -> str:
     return "Plan updated"  # the UI draws the plan from the call's arguments
 
 
-def ask_user(questions: list[dict]) -> Result:
+def ask_user(questions: list[Question]) -> Result:
     return Result("", waiting="question")
 
 

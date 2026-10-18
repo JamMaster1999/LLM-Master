@@ -12,6 +12,7 @@ from modal.types import FileInfo
 
 APP = "llm-master-agent"
 WORKSPACE = "/workspace"
+SCRATCH = f"{WORKSPACE}/.agent"  # where long output waits for read
 IMAGE = (modal.Image.debian_slim(python_version="3.13")
          .apt_install("libreoffice-nogui", "poppler-utils", "fonts-liberation", "fonts-dejavu", "procps")
          .uv_pip_install("pillow", "pillow-heif", "openpyxl"))
@@ -51,7 +52,7 @@ class Sandbox:
         """Runs args with stdin closed; returns the exit code, stdout and stderr. Raises TimeoutError
         past `timeout` seconds. Past MAX_OUTPUT bytes of output the sandbox is stopped, and
         OverflowError is raised."""
-        box = await self.running()
+        box = await self.running()  # the clock starts once the sandbox has
         start = time.monotonic()
         process = await self.start(*args, timeout=timeout)
         process.stdin.write_eof()
