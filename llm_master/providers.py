@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 API = Literal["completion", "messages", "responses"]
 ProviderName = Literal["openai", "anthropic", "gemini", "vertexai", "fireworks"]
 SearchStance = Literal["tool", "none"]
+SDK = Literal["openai", "anthropic", "genai"]
 
 _GEMINI_MODELS: dict[str, ModelRow] = {
     "gemini-2.5-flash-lite": {"requests": 30000},
@@ -31,6 +32,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "openai": {
         "api": "responses",
         "search": "tool",
+        "sdk": "openai",
         "requests": 10000,
         "interval": 60,
         "models": {
@@ -51,6 +53,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "anthropic": {
         "api": "messages",
         "search": "tool",
+        "sdk": "anthropic",
         "requests": 4000,
         "interval": 60,
         "models": {},
@@ -58,6 +61,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "gemini": {
         "api": "completion",
         "search": "tool",
+        "sdk": "genai",
         "price_id": "google",
         "requests": 10000,
         "interval": 60,
@@ -66,6 +70,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "vertexai": {
         "api": "completion",
         "search": "tool",
+        "sdk": "genai",
         "price_id": "google",
         "requests": 10000,
         "interval": 60,
@@ -74,6 +79,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "fireworks": {
         "api": "completion",
         "search": "none",
+        "sdk": "openai",
         "requests": 600,
         "interval": 60,
         "models": {},

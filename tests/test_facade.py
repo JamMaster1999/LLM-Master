@@ -15,22 +15,20 @@ from llm_master.providers import ProviderName
 # vertexai is absent: each of its requests first fetches a real GCP login token
 BASE_URL_VARS = {"openai": "OPENAI_BASE_URL", "anthropic": "ANTHROPIC_BASE_URL",
                  "gemini": "GOOGLE_GEMINI_BASE_URL", "fireworks": "FIREWORKS_API_BASE"}
+GENAI_RETRIES_DROPS = pytest.mark.xfail(strict=True, raises=AssertionError,
+                                        reason="googleapis/python-genai#3160: genai on aiohttp retries a drop by itself")
 
 
 @pytest.fixture(autouse=True)
 def credentials(monkeypatch):
-    """Fake credentials for every provider: these tests need no keys and never send a real one."""
-    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_KEY"):
-        monkeypatch.setenv(var, "test-key")
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_KEY",
+                "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"):
+        monkeypatch.setenv(var, "test")
 
 
 @pytest.fixture
 def serve(monkeypatch, request):
-    """Points every provider at a local server that answers each request with `status`; returns its hit log.
-
-    A None status reads the request and hangs up without answering."""
+    """Points every provider at a local server answering `status` (None hangs up); returns its hit log."""
     def start(status: int | None) -> list[str]:
         hits: list[str] = []
 
@@ -38,15 +36,9 @@ def serve(monkeypatch, request):
             def do_POST(self):
                 hits.append(self.path)
                 self.rfile.read(int(self.headers["Content-Length"]))
-                if status is None:
-                    return
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error": {"message": "refused"}}')
-
-            def log_message(self, format, *args):
-                pass
+                if status:
+                    self.send_response(status)
+                    self.end_headers()
 
         server = ThreadingTCPServer(("127.0.0.1", 0), Answer)  # HTTPServer would reverse-DNS the host
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
@@ -60,7 +52,6 @@ def serve(monkeypatch, request):
 
 @pytest.fixture
 async def llm():
-    """A facade closed at teardown, as an app closes its own at shutdown."""
     llm = LLM()
     yield llm
     await llm.aclose()
@@ -70,15 +61,11 @@ async def ask(llm, provider):
     await llm.client(provider).acompletion(model="m", messages=[{"role": "user", "content": "hi"}])
 
 
-def test_same_provider_reuses_its_client():
-    llm = LLM()
-    assert llm.client("openai") is llm.client("openai")
-
-
-def test_each_provider_gets_its_own_client():
+def test_one_held_client_per_provider():
     llm = LLM()
     roster = get_args(ProviderName)
     assert [llm.client(p).PROVIDER_NAME for p in roster] == list(roster)
+    assert llm.client("openai") is llm.client("openai")
 
 
 def test_unknown_provider_raises():
@@ -94,18 +81,6 @@ async def test_sdk_retries_are_off(provider, serve, llm):
     assert len(hits) == 1, hits
 
 
-@pytest.mark.parametrize("provider", BASE_URL_VARS)
-async def test_errors_come_back_typed(provider, serve, llm, monkeypatch):
-    monkeypatch.delenv("ANY_LLM_UNIFIED_EXCEPTIONS")  # conftest's global switch would hide a missing flag
-    serve(401)
-    with pytest.raises(AuthenticationError):
-        await ask(llm, provider)
-
-
-GENAI_RETRIES_DROPS = pytest.mark.xfail(strict=True, raises=AssertionError,
-                                        reason="googleapis/python-genai#3160: genai on aiohttp retries a drop by itself")
-
-
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "fireworks",
                                       pytest.param("gemini", marks=GENAI_RETRIES_DROPS)])
 async def test_dropped_connection_is_not_retried(provider, serve, llm):
@@ -115,7 +90,15 @@ async def test_dropped_connection_is_not_retried(provider, serve, llm):
     assert len(hits) == 1, hits
 
 
-async def test_aclose_closes_every_client_and_the_next_call_reopens(serve):
+@pytest.mark.parametrize("provider", BASE_URL_VARS)
+async def test_errors_come_back_typed(provider, serve, llm, monkeypatch):
+    monkeypatch.delenv("ANY_LLM_UNIFIED_EXCEPTIONS")  # conftest's global switch would hide a missing flag
+    serve(401)
+    with pytest.raises(AuthenticationError):
+        await ask(llm, provider)
+
+
+async def test_aclose_closes_and_forgets_every_client(serve):
     hits = serve(500)
     llm = LLM()
     for provider in BASE_URL_VARS:
