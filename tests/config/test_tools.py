@@ -1,9 +1,11 @@
 """tools definitions: goldens for both input kinds, live proof of gemini's converter path."""
 import pytest
 from any_llm import AnyLLM
+from pydantic import ValidationError
 
 from llm_master.config import thinking, tool_choice, tools
 from llm_master.config.tool_choice import ToolChoice
+from llm_master.types import Config
 
 OPENAI_TOOLS = [{"type": "function", "function": {
     "name": "get_weather", "description": "Current weather for a city",
@@ -39,6 +41,12 @@ def test_unknown_keys_ride_through():
         {"type": "function", "name": "f", "parameters": {}, "strict": True}]
     assert tools.translate(strict, "messages")["tools"] == [
         {"name": "f", "strict": True, "input_schema": {}}]  # anthropic judges strict, not us
+
+
+def test_provider_hosted_tools_fail_validation():
+    Config(tools=[get_time, *OPENAI_TOOLS])
+    with pytest.raises(ValidationError, match="function tools only"):
+        Config(tools=[get_time, {"type": "web_search"}])
 
 
 @pytest.mark.live

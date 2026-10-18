@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from llm_master.config.response_format import Format
 from llm_master.config.thinking import Level
 from llm_master.config.tool_choice import ToolChoice
+from llm_master.config.tools import Tool
 from llm_master.providers import ProviderName
 
 
@@ -26,7 +27,7 @@ class Config(BaseModel, extra="forbid"):
     system: str | None = None
     temperature: float | None = None
     thinking: Level | None = None
-    tools: list[Any] | None = None  # openai-format dicts or python callables
+    tools: list[Tool] | None = None  # openai-format function dicts or python callables
     tool_choice: ToolChoice | None = None
     response_format: Format | None = None  # type="text" | "json" | "schema" (with schema=...)
     max_tokens: int | None = Field(None, gt=0)
