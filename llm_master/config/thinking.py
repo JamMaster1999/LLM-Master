@@ -17,8 +17,7 @@ def translate(level: Level, api: API) -> dict:
         case "responses":
             if level == "none":
                 return {"reasoning": {"effort": "none"}}
-            # summary always fetched (openai's thought text is opt-in); thinking_summaries
-            # governs only the readable view, io-side
+            # summary always fetched: openai's thought text is opt-in
             return {"reasoning": {"effort": level, "summary": "auto"}}
         case _:
             assert_never(api)
