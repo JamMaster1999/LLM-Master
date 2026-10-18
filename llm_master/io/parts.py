@@ -35,7 +35,8 @@ class Image(BaseModel, extra="forbid"):
             raw, _, _ = _read(source)
             try:
                 with Pillow.open(io.BytesIO(raw)) as img:  # the bytes say what they are, not the name
-                    mime = img.get_format_mimetype()
+                    # a phone's multi-picture JPEG is a JPEG to every provider
+                    mime = "image/jpeg" if img.format == "MPO" else img.get_format_mimetype()
                     if img.format == "HEIF":  # a phone photo as PNG runs ~18 MB, past Claude's 10 MB cap
                         out = io.BytesIO()
                         img.convert("RGB").save(out, "JPEG", quality=90)
@@ -86,12 +87,17 @@ def uri(mime: str, data: str) -> str:
     return f"data:{mime};base64,{data}"
 
 
+def decode(data_uri: str) -> tuple[bytes, str]:
+    """A data-uri's bytes and its mime type."""
+    header, _, data = data_uri.partition(",")
+    return base64.b64decode(data, validate=True), header.removeprefix("data:").split(";")[0]
+
+
 def _read(source: str) -> tuple[bytes, str, str]:
     """The bytes, the type the source declares ("" for a path), and its last path segment ("" for a data-uri)."""
     try:
         if source.startswith("data:"):
-            header, _, data = source.partition(",")
-            return base64.b64decode(data, validate=True), header.removeprefix("data:").split(";")[0], ""
+            return *decode(source), ""
         if source.startswith(("http://", "https://")):
             reply = httpx.get(source, follow_redirects=True, timeout=30).raise_for_status()
             declared = reply.headers.get("content-type", "").split(";")[0]

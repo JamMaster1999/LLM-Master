@@ -64,17 +64,21 @@ def provider_server(monkeypatch, request):
 @pytest.fixture
 def recorded(provider_server, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
-    that each JSON request body matches the recorded one: the goldens of the same-bytes rule.
+    that each request body matches the recorded one: the goldens of the same-bytes rule.
     RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys).
-    Multipart bodies (image edits) carry a random boundary, so only their path is pinned."""
+    A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
     def serve(name: str) -> None:
         path, live = FIXTURES / f"{name}.json", os.environ.get("RECORD") == "1"
         exchanges = [] if live else json.loads(path.read_text())
         received: list[dict] = []
 
         def answer(handler: BaseHTTPRequestHandler, provider: str, path: str, body: bytes) -> None:
-            is_json = handler.headers.get("Content-Type", "").startswith("application/json")
-            received.append({"path": path, "body": json.loads(body) if is_json else None})
+            kind = handler.headers.get("Content-Type", "")
+            if kind.startswith("multipart/"):
+                pinned = base64.b64encode(body.replace(kind.split("boundary=")[1].encode(), b"BOUNDARY")).decode()
+            else:
+                pinned = json.loads(body)
+            received.append({"path": path, "body": pinned})
             if live:
                 headers = {k: v for k, v in handler.headers.items()
                            if k.lower() not in ("host", "content-length", "accept-encoding")}
