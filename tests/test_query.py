@@ -1,6 +1,9 @@
 """query() at its entry point, against recorded provider exchanges (RECORD=1 re-records them live)."""
+import asyncio
 import json
 import pathlib
+import threading
+import time
 from typing import Literal
 
 import pytest
@@ -14,6 +17,7 @@ from llm_master.config.tool_choice import ToolChoice
 from llm_master.facade import LLM
 from llm_master.io.messages import validate
 from llm_master.io.parts import Audio, Text
+from llm_master.io.response import CutCall
 from llm_master.types import Config, Model
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -71,7 +75,7 @@ async def test_tool_loop_replays_the_models_own_turn(provider, stream, recorded,
     assert first.finish == "calls" and sorted(str(c.arguments["city"]) for c in calls) == ["Paris", "Toronto"]
     assert all(c.id.startswith("lm_") and c.wire_id for c in calls)
     assert first.message.origin and first.message.origin.model == candidate.model and first.message.native
-    assert first.message.reasoning and first.usage.reasoning > 0
+    assert first.usage and first.message.reasoning and first.usage.reasoning > 0
     assert first.usage.input > 0 and first.usage.output > 0 and len(first.attempts) == 1
     if stream:
         check_stream(chunks, first)
@@ -169,22 +173,83 @@ async def test_a_completion_stream_without_its_closing_usage_is_cut(recorded, ll
     assert chunks[-1] == {"type": "reset-step"} and s.response is None
 
 
-async def test_a_tool_call_cut_by_max_tokens_raises_typed(recorded, llm):
-    recorded("openai_cut_call")
-    candidate = Model(provider="openai", model="gpt-5.6-luna",
-                      config=Config(tools=[WRITE], thinking="none", max_tokens=16))
-    with pytest.raises(ProviderError, match="aren't complete JSON"):
-        await llm.query(candidate, [{"role": "user", "content": "Call write_file with a 300-word poem as content."}])
+# the streamed anthropic call is the sly one: eager_input_streaming sends the arguments unbuffered, and
+# anthropic's SDK parses the cut JSON into a valid-looking input
+CUT = {"openai": Model(provider="openai", model="gpt-5.6-luna",
+                       config=Config(tools=[WRITE], thinking="none", max_tokens=16)),
+       "anthropic": Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
+           tools=[{**WRITE, "function": {**WRITE["function"], "eager_input_streaming": True}}],
+           tool_choice=ToolChoice(mode="required"), thinking="none", max_tokens=60))}
 
 
-async def test_leaving_a_stream_early_and_closing_it_is_quiet(recorded, llm):
-    recorded("anthropic_cut_stream")
+@pytest.mark.parametrize("provider, stream", [("openai", False), ("anthropic", True)])
+async def test_a_tool_call_cut_by_max_tokens_raises_typed(provider, stream, recorded, llm):
+    recorded(f"{provider}_cut_call" + ("_stream" if stream else ""))
+    history = [{"role": "user", "content": "Call write_file with a 300-word poem as content."}]
+    chunks = []
+    with pytest.raises(CutCall):
+        if stream:
+            async for c in await llm.query(CUT[provider], history, stream=True):
+                chunks.append(c)
+        else:
+            await llm.query(CUT[provider], history)
+    if stream:
+        assert chunks[-1] == {"type": "reset-step"} and "tool-input-available" not in {c["type"] for c in chunks}
+
+
+class Essay(BaseModel):
+    title: str
+    body: str
+
+
+async def test_a_schema_answer_cut_by_max_tokens_parses_to_none(recorded, llm):
+    recorded("anthropic_parsed_cut")  # a schema class once raised here, from the SDK's parse
+    candidate = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
+        response_format=Format(type="schema", schema=Essay), thinking="none", max_tokens=30))
+    r = await llm.query(candidate, [{"role": "user", "content": "Write a 300-word essay about rivers."}])
+    assert r.finish == "length" and r.parsed is None and r.message.content
+
+
+@pytest.fixture
+def held(provider_server):
+    """anthropic_loop_stream's first event, then pings until the client hangs up; returns the hang-up."""
+    hung_up = threading.Event()
+    first = json.loads((FIXTURES / "anthropic_loop_stream.json").read_text())[0]["response"]["body"].split("\n\n")[0]
+
+    def answer(handler, provider, path, body):
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.end_headers()
+        try:
+            handler.wfile.write(f"{first}\n\n".encode())
+            for _ in range(500):  # 5 seconds at most
+                time.sleep(0.01)
+                handler.wfile.write(b'event: ping\ndata: {"type": "ping"}\n\n')
+        except OSError:
+            hung_up.set()
+    provider_server(answer)
+    return hung_up
+
+
+@pytest.mark.parametrize("leave", ["aclose", "cancel"])
+async def test_leaving_a_stream_closes_the_providers_stream(leave, held, llm):
     s = await llm.query(LOOPS["anthropic"], ASK, stream=True)
-    async for c in s:
-        if c["type"] != "start-step":
+    if leave == "aclose":
+        async for _ in s:
             break
-    await s.aclose()
-    assert s.response is None
+        await s.aclose()
+    else:  # cancelled inside the loop body, as while awaiting sse.send(chunk)
+        forwarding = asyncio.Event()
+
+        async def forward():
+            async for _ in s:
+                forwarding.set()
+                await asyncio.Event().wait()
+        task = asyncio.create_task(forward())
+        await forwarding.wait()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert await asyncio.to_thread(held.wait, 5) and s.response is None
 
 
 # --- live: behaviour no recording can show ---

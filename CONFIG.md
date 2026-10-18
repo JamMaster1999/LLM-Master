@@ -79,8 +79,8 @@ save → reload → next call is lossless by construction.
 - responses: `stream=True` on the event stream.
 - Return type changes: off → one `Response`; on → a stream of AI SDK protocol chunks whose
   `response` holds the same `Response` once it ends (IO.md, Streams).
-- Known limit: a stream the caller kills mid-flight records zero usage, so that one generation
-  logs no cost.
+- Known limit: a stream the caller kills mid-flight never builds its `Response`, so that one
+  generation logs no usage and no cost.
 
 ## 4. `temperature` — `float | None`, default None
 
@@ -113,8 +113,8 @@ save → reload → next call is lossless by construction.
   come back as openai's rejection, typed.
 - Thought text is always fetched when thinking is on: gemini via any-llm's hardwired
   `include_thoughts=True`, anthropic via `display: "summarized"`, openai via `summary: "auto"`.
-  It lands on `message.reasoning`; whether a user sees it is the caller's choice at render time. Cost is the same either way — thought tokens are billed whether or not anyone
-  reads them. Live note, openai: a summary only materializes when there's enough reasoning to
+  It lands on `message.reasoning`; whether a user sees it is the caller's choice at render time.
+  Cost is the same either way — thought tokens are billed whether or not anyone reads them. Live note, openai: a summary only materializes when there's enough reasoning to
   summarize; an empty summary list is not an error.
 - No capability list: providers that map a tier clamp to nearest, providers that reject fail
   typed, and consumer smoke runs catch config rot in CI. Adoption note: any-llm sometimes
@@ -174,20 +174,18 @@ save → reload → next call is lossless by construction.
   responses; messages raises typed (anthropic has no schema-less JSON mode). Live note: json mode
   guarantees syntax only — gemini returns numbers as strings about a third of runs, so live tests
   assert parseability and key presence, never value types.
-- The schema arm stays one pydantic model, zero per-provider schemas: completion and responses
-  take `response_format`, messages takes the identical `output_format` — for a schema class our
-  entire translation is that rename. A schema dict goes in each API's own format object:
-  `{"type": "json_schema", "json_schema": {"name": "response", "schema": ...}}` on completion,
-  `{"type": "json_schema", "name": "response", "schema": ...}` on responses, and
-  `output_config.format` on messages, where it merges with thinking's `output_config.effort`.
-- completion: each provider's converter does the rest (gemini rides `response_json_schema`).
-  messages: anthropic's parse path via the beta client. responses: openai's native parse.
+- The schema goes in each API's own format object:
+  `{"type": "json_schema", "json_schema": {"name": ..., "schema": ...}}` on completion,
+  `{"type": "json_schema", "name": ..., "schema": ...}` on responses, and `output_config.format` on
+  messages, where it merges with thinking's `output_config.effort`. completion leaves the rest to
+  each provider's converter (gemini rides `response_json_schema`).
+- A schema dict rides as written, named `response`. A schema class goes out as the JSON schema its
+  provider's own SDK would send: openai's strict schema, named after the class, with
+  `strict: true` on completion and responses; anthropic's `transform_schema` on messages. No SDK
+  parse path runs, so a class streams on every API, and a cut or refused answer returns its
+  `finish` with `parsed=None` instead of raising inside the SDK.
 - The parsed object is `response.parsed`, read by llm_master from `message.content` (IO.md, The
   response), so a stream and a plain call parse the same way.
-- Honest unknown: `stream=True` with `response_format` behaves differently per provider, and
-  any-llm's parse paths may not stream at all: on responses, a schema class with `stream=True`
-  raises typed before sending, while a schema dict streams. We pass through and rejections surface
-  typed.
 
 ## 9. `max_tokens` — `int | None`, default None
 
@@ -232,7 +230,8 @@ save → reload → next call is lossless by construction.
   naming the supported set) — with one breakpoint placed at the end of the prompt, since explicit
   mode caches nothing without one. Assembly puts `prompt_cache_breakpoint: {"mode": "explicit"}`
   on the last block of the last item (IO.md). Live-verified: a saved and reloaded conversation
-  reads the cache on its next turn, with only the new end marked. Gemini: implicit caching only, so minutes raise typed. any-llm
+  reads the cache on its next turn, with only the new end marked. Gemini: implicit caching only,
+  so minutes raise typed. any-llm
   can turn a `cache_control` breakpoint into an explicit gemini context cache; this field never
   emits one.
 - Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on

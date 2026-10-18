@@ -1,5 +1,4 @@
 """query(): one conversation call. Builds each candidate's request, sends it, reads the Response. See IO.md."""
-import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, assert_never
@@ -10,8 +9,8 @@ from llm_master import pipeline
 from llm_master.config import (cache, max_tokens, merge, moderation, response_format, stream as streaming, system,
                                temperature, thinking, timeout, tool_choice, tools)
 from llm_master.io.messages import Message, Origin, assemble, validate
-from llm_master.io.parts import Audio, Text
-from llm_master.io.response import Attempt, Response, parse, read
+from llm_master.io.parts import Audio
+from llm_master.io.response import Answer, Response, read
 from llm_master.io.stream import Stream, adapter
 from llm_master.providers import API, PROVIDERS
 from llm_master.types import Model
@@ -48,44 +47,48 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequenc
     history = validate(messages)
     chain = pipeline.chain(candidates)
     if any(c.config.moderation for c in chain):  # once per call: the input is the same for every candidate
-        await moderation.check(llm.client("openai"), _last_user_text(history))
+        await moderation.check(llm.client("openai"), history)
     if stream:
-        api, request = build(chain[0], history, stream=True)  # a field with no spelling raises before the stream
-        return Stream(_streamed(llm, chain[0], api, request))
+        return Stream(_events(llm, chain, history))
 
-    async def once(candidate: Model):
+    async def once(candidate: Model) -> Answer:
         api, request = build(candidate, history, stream=False)
-        message, finish, usage = read(api, await _send(llm, candidate, api, request), _origin(candidate), {})
-        return message, finish, usage, parse(candidate.config.response_format, message, finish)
+        raw = await _send(llm, candidate, api, request)
+        return read(api, raw, _origin(candidate), {}, candidate.config.response_format)
 
-    (message, finish, usage, parsed), _, attempts, latency = await pipeline.run(chain, once)
-    return Response(message=message, parsed=parsed, finish=finish, usage=usage, attempts=attempts, latency=latency)
+    return _response(await pipeline.run(chain, once))
 
 
-async def _streamed(llm: "LLM", candidate: Model, api: API, request: dict) -> AsyncGenerator[dict | Response, None]:
-    started, ids, opened = time.monotonic(), {}, False
-    convert = adapter(api, ids)
+async def _events(llm: "LLM", chain: list[Model], history: list[Message]) -> AsyncGenerator[dict | Response, None]:
+    """The pipeline's chunks, then the Response."""
+    async with aclosing(pipeline.stream(chain, lambda c: _streamed(llm, c, history))) as items:
+        async for item in items:
+            yield _response(item) if isinstance(item, pipeline.Done) else item
+
+
+async def _streamed(llm: "LLM", candidate: Model, history: list[Message]) -> AsyncGenerator[dict | Answer, None]:
+    """One streamed try: its chunks, then its answer."""
+    api, request = build(candidate, history, stream=True)
+    convert, opened = adapter(api), False
     async with aclosing(await _send(llm, candidate, api, request)) as events:
-        try:
-            async for event in events:
-                if not opened:  # the request opened: the provider's first event arrived
-                    opened = True
-                    yield {"type": "start-step"}
-                for chunk in convert.feed(event):
-                    yield chunk
-            tail, raw = convert.finish()
-            for chunk in tail:
+        async for event in events:
+            if not opened:  # the request opened: the provider's first event arrived
+                opened = True
+                yield {"type": "start-step"}
+            for chunk in convert.feed(event):
                 yield chunk
-            message, finish, usage = read(api, raw, _origin(candidate), ids)
-            parsed = parse(candidate.config.response_format, message, finish)
-        except Exception:
-            if opened:
-                yield {"type": "reset-step"}  # the browser drops this attempt's output
-            raise
+    tail, raw = convert.finish()
+    for chunk in tail:
+        yield chunk
+    answer = read(api, raw, _origin(candidate), convert.tools.ids, candidate.config.response_format)
     yield {"type": "finish-step"}
-    latency = time.monotonic() - started
-    yield Response(message=message, parsed=parsed, finish=finish, usage=usage, latency=latency,
-                   attempts=[Attempt(candidate.provider, candidate.model, latency)])
+    yield answer
+
+
+def _response(done: "pipeline.Done[Answer]") -> Response:
+    a = done.result
+    return Response(message=a.message, parsed=a.parsed, finish=a.finish, usage=a.usage, attempts=done.attempts,
+                    latency=done.latency)
 
 
 async def _send(llm: "LLM", candidate: Model, api: API, request: dict) -> Any:
@@ -110,9 +113,3 @@ def _api(candidate: Model, history: list[Message]) -> API:
 
 def _origin(candidate: Model) -> Origin:
     return Origin(provider=candidate.provider, model=candidate.model)
-
-
-def _last_user_text(history: list[Message]) -> str:
-    """What moderation reads: the newest user message's text, as v1 did."""
-    content = next((m.content for m in reversed(history) if m.role == "user"), "")
-    return content if isinstance(content, str) else "\n".join(p.text for p in content if isinstance(p, Text))

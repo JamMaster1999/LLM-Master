@@ -1,4 +1,4 @@
-"""response_format: Json goldens, live structured output on all three APIs."""
+"""response_format: json mode and validation; the schema bodies are pinned by test_query's recordings."""
 import json
 from collections.abc import AsyncIterator
 from typing import Literal
@@ -17,23 +17,6 @@ class Verdict(BaseModel):
 
 
 PROMPT: list = [{"role": "user", "content": "What is 2+2? Give your confidence."}]
-
-
-def test_a_schema_class_is_one_rename():
-    assert response_format.translate(Format(type="schema", schema=Verdict), "completion") == {"response_format": Verdict}
-    assert response_format.translate(Format(type="schema", schema=Verdict), "responses") == {"response_format": Verdict}
-    assert response_format.translate(Format(type="schema", schema=Verdict), "messages") == {"output_format": Verdict}
-
-
-def test_a_schema_dict_goes_in_each_apis_format_object():
-    schema = {"type": "object", "properties": {"answer": {"type": "integer"}}}
-    fmt = Format(type="schema", schema=schema)
-    assert response_format.translate(fmt, "completion") == {
-        "response_format": {"type": "json_schema", "json_schema": {"name": "response", "schema": schema}}}
-    assert response_format.translate(fmt, "messages") == {
-        "output_config": {"format": {"type": "json_schema", "schema": schema}}}
-    assert response_format.translate(fmt, "responses") == {
-        "response_format": {"type": "json_schema", "name": "response", "schema": schema}}
 
 
 def test_bare_json_mode():
