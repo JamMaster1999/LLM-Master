@@ -1,0 +1,136 @@
+{
+ "messages": [
+  {
+   "role": "system",
+   "content": "Be brief."
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "Weather in Paris? And what's in these?"
+    },
+    {
+     "type": "image_url",
+     "image_url": {
+      "url": "data:image/png;base64,iVBORw0KGgo="
+     }
+    },
+    {
+     "type": "file",
+     "file": {
+      "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+      "filename": "a.pdf"
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "reasoning": "Need the weather.",
+   "tool_calls": [
+    {
+     "id": "call_g1",
+     "type": "function",
+     "function": {
+      "name": "weather",
+      "arguments": "{\"city\": \"Paris\"}"
+     },
+     "extra_content": {
+      "google": {
+       "thought_signature": "c2ln"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_g1",
+   "content": [
+    {
+     "type": "text",
+     "text": "18C, sunny"
+    },
+    {
+     "type": "image_url",
+     "image_url": {
+      "url": "data:image/png;base64,iVBORw0KGgo="
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": "Checking two more.",
+   "tool_calls": [
+    {
+     "id": "lm_cla1",
+     "type": "function",
+     "function": {
+      "name": "weather",
+      "arguments": "{\"city\": \"Rome\"}"
+     }
+    },
+    {
+     "id": "lm_cla2",
+     "type": "function",
+     "function": {
+      "name": "weather",
+      "arguments": "{\"city\": \"Oslo\"}"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "lm_cla1",
+   "content": "rain"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "lm_cla2",
+   "content": ""
+  },
+  {
+   "role": "assistant",
+   "content": null,
+   "tool_calls": [
+    {
+     "id": "lm_gpt1",
+     "type": "function",
+     "function": {
+      "name": "read",
+      "arguments": "{\"path\": \"a.pdf\"}"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "lm_gpt1",
+   "content": [
+    {
+     "type": "file",
+     "file": {
+      "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+      "filename": "a.pdf"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "Go on."
+  },
+  {
+   "role": "assistant",
+   "content": "All four are checked."
+  },
+  {
+   "role": "user",
+   "content": "Summarize."
+  }
+ ]
+}

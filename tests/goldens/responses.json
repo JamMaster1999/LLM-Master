@@ -1,0 +1,109 @@
+{
+ "input_data": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "input_text",
+     "text": "Weather in Paris? And what's in these?"
+    },
+    {
+     "type": "input_image",
+     "image_url": "data:image/png;base64,iVBORw0KGgo="
+    },
+    {
+     "type": "input_file",
+     "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+     "filename": "a.pdf"
+    }
+   ]
+  },
+  {
+   "type": "function_call",
+   "call_id": "lm_gem1",
+   "name": "weather",
+   "arguments": "{\"city\": \"Paris\"}"
+  },
+  {
+   "type": "function_call_output",
+   "call_id": "lm_gem1",
+   "output": [
+    {
+     "type": "input_text",
+     "text": "18C, sunny"
+    },
+    {
+     "type": "input_image",
+     "image_url": "data:image/png;base64,iVBORw0KGgo="
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": "Checking two more."
+  },
+  {
+   "type": "function_call",
+   "call_id": "lm_cla1",
+   "name": "weather",
+   "arguments": "{\"city\": \"Rome\"}"
+  },
+  {
+   "type": "function_call",
+   "call_id": "lm_cla2",
+   "name": "weather",
+   "arguments": "{\"city\": \"Oslo\"}"
+  },
+  {
+   "type": "function_call_output",
+   "call_id": "lm_cla1",
+   "output": "rain"
+  },
+  {
+   "type": "function_call_output",
+   "call_id": "lm_cla2",
+   "output": ""
+  },
+  {
+   "type": "reasoning",
+   "id": "rs_1",
+   "summary": [],
+   "encrypted_content": "enc1"
+  },
+  {
+   "type": "function_call",
+   "id": "fc_1",
+   "call_id": "call_o1",
+   "name": "read",
+   "arguments": "{\"path\": \"a.pdf\"}",
+   "status": "completed"
+  },
+  {
+   "type": "function_call_output",
+   "call_id": "call_o1",
+   "output": [
+    {
+     "type": "input_file",
+     "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+     "filename": "a.pdf"
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "Go on."
+  },
+  {
+   "role": "assistant",
+   "content": "All four are checked."
+  },
+  {
+   "role": "user",
+   "content": "Summarize."
+  }
+ ],
+ "store": false,
+ "include": [
+  "reasoning.encrypted_content"
+ ]
+}
