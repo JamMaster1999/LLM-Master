@@ -99,9 +99,10 @@ def test_content_without_a_spelling_raises(history, provider, model, api, error)
         assemble(validate(history), provider, model, api, None)
 
 
-def test_reasoning_accepts_any_llms_object_form():
-    m = Message.model_validate({"role": "assistant", "content": "x", "reasoning": {"content": "thought"}})
-    assert m.reasoning == "thought"
+def test_claudes_empty_answer_is_left_out_of_its_own_replay():
+    empty = {"role": "assistant", "content": "", "origin": origin(CLAUDE), "native": []}
+    sent = assemble(validate([U, empty, U]), *CLAUDE, "messages", None)["messages"]
+    assert [m["role"] for m in sent] == ["user", "user"]
 
 
 U = {"role": "user", "content": "hi"}
@@ -117,7 +118,6 @@ ANSWER = {"role": "tool", "call_id": "lm_1", "content": "ok"}
     ([{"role": "tool", "content": "x"}], "call_id is required"),
     ([{**U, "call_id": "lm_1"}], "call_id is required"),
     ([{**U, "reasoning": "r"}], "can't carry reasoning"),
-    ([U, {"role": "assistant", "content": "x", "reasoning": {}}, U], "string_type"),
     ([U, {"role": "assistant", "content": "x", "native": {}}, U], "native requires origin"),
     ([U, {"role": "assistant"}, U], "needs content, calls or native"),
     ([U, {"role": "assistant", "content": []}, U], "assistant content is a string"),

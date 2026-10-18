@@ -4,7 +4,7 @@ import secrets
 from collections.abc import Callable, Sequence
 from typing import Any, Literal, assert_never
 
-from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
+from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from llm_master.config import UnsupportedField
 from llm_master.io.parts import Audio, File, Image, Part, Text, uri
@@ -37,11 +37,6 @@ class Message(BaseModel, extra="forbid"):
     reasoning: str | None = None
     origin: Origin | None = None
     native: Any = None           # the provider's raw output, JSON, never re-validated
-
-    @field_validator("reasoning", mode="before")
-    @classmethod
-    def _reasoning_text(cls, v):
-        return v["content"] if isinstance(v, dict) and "content" in v else v  # any-llm's {"content": str}
 
     @model_validator(mode="after")
     def _fields_fit_role(self):
@@ -154,7 +149,7 @@ def _messages(messages: list[Message], replays: list[bool], wire: dict) -> list[
         match m.role:
             case "user":
                 out.append({"role": "user", "content": _each(m.content, _messages_part)})
-            case "assistant" if replay:
+            case "assistant" if replay and m.native:  # claude's empty answer (content: []) 400s when sent back
                 out.append({"role": "assistant", "content": m.native})
             case "assistant":
                 blank = not isinstance(m.content, str) or not m.content.strip()

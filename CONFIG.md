@@ -55,7 +55,7 @@ The shape is llm_master's own; IO.md is its law and holds every per-dialect spel
 - Typed both ways: plain dicts validate through pydantic, and typed part classes exist for
   autocomplete. Same schema either way.
 - Images, PDFs, audio: a part accepts a data-uri, a URL, or a local file path and encodes it to
-  base64 when it is built, downloading and converting (HEIC→PNG) as needed. History never holds a
+  base64 when it is built, downloading and converting (HEIC→JPEG) as needed. History never holds a
   URL, so every call sends the same bytes and no provider is ever handed a URL.
 - PDFs: live-verified on anthropic, openai, and gemini.
 - Audio: base64 data plus a format name. gemini takes every format it lists (wav, mp3, aac, ogg,

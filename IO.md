@@ -56,7 +56,7 @@ Parts are a fixed set, told apart by `type`. An unknown `type` fails validation.
 - audio — `{"type": "audio", "data": <base64>, "format": str}`, user messages only
 
 Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` accept a
-data-uri, a URL or a local path, and read, convert (HEIC to PNG) and encode the data when the part
+data-uri, a URL or a local path, and read, convert (HEIC to JPEG) and encode the data when the part
 is created: `Image("photo.heic")`. HEIC becomes JPEG (quality 90): a 12-megapixel phone photo as
 PNG runs about 18 MB, past Claude's limit. The bytes decide what an image is, not its name or
 `Content-Type`. The caller then saves exactly the bytes every later call sends (see The same-bytes
@@ -140,7 +140,6 @@ One validator checks every rule, before anything is sent:
   - `call_id` is required on tool messages and forbidden on the others.
   - `calls`, `reasoning`, `origin` and `native` belong to assistant messages only.
   - `native` requires `origin`.
-  - `reasoning` also accepts any-llm's `{"content": str}` form and stores the plain string.
 - **Content**
   - Audio parts appear only in user messages.
   - Tool messages hold text, image and file parts.
@@ -188,7 +187,9 @@ every key except role and content, and rebuilds thinking from a format we never 
   - image → `{"type": "image", "source": {"type": "base64", "media_type", "data"}}`
   - file → the same shape as a `document` block
   - audio → `UnsupportedField` (Anthropic has no audio input)
-- assistant from the same model: `{"role": "assistant", "content": <native unchanged>}`.
+- assistant from the same model: `{"role": "assistant", "content": <native unchanged>}`. Claude
+  sometimes answers with an empty `content` list; that message is left out, because Anthropic
+  returns a 400 on an empty assistant turn.
 - tool: `{"type": "tool_result", "tool_use_id", "content"}` inside a user message.
   - Consecutive results go in one user message.
   - Parts become text, image and document blocks.
