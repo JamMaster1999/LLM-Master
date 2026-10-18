@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from functools import partial
 
+from any_llm.tools import callable_to_tool
 from pydantic import ConfigDict, ValidationError, validate_call
 
 from agent import files, loop, reader, shell, web
@@ -17,17 +18,18 @@ from agent.web import Web
 log = logging.getLogger(__name__)
 
 SERIAL = {"write", "edit", "bash", "run_program"}  # they change the sandbox, so they run one at a time
-PROGRAM_TOOLS = ["web_search", "fetch_url", "deliver_file"]  # the host's tools a program may call
+PROGRAM_TOOLS = ["web_search", "fetch_url", "deliver_file"]  # the host's tools a program may call; custom ones join
 CUT_THEIR_OWN = {"read", "bash", "run_program"}  # every other tool's long text is cut here
 
 
 class Toolbox:
-    def __init__(self, conversation_id: str, sources: Sequence[dict] = (), urls: Sequence[str] = ()) -> None:
-        """`sources` are the source parts already sent in this conversation; `urls` the ones the user
-        wrote, which fetch_url may read."""
+    def __init__(self, conversation_id: str, tools: Sequence[Callable] = (), sources: Sequence[dict] = (),
+                 urls: Sequence[str] = ()) -> None:
+        """`tools` are the caller's own functions; `sources` the source parts already sent in this
+        conversation; `urls` the ones the user wrote, which fetch_url may read."""
         self.sandbox = Sandbox(conversation_id)
         self.web = Web(list(sources), urls)
-        self._program_tools = PROGRAM_TOOLS
+        self._program_tools = PROGRAM_TOOLS + [tool.__name__ for tool in tools]
         run_program = dict(shell.RUN_PROGRAM, function={**shell.RUN_PROGRAM["function"], "description":
                            shell.RUN_PROGRAM["function"]["description"].format(tools=", ".join(self._program_tools))})
         builtins = [
@@ -42,7 +44,10 @@ class Toolbox:
             (loop.TODO, loop.todo),
             (loop.ASK_USER, loop.ask_user),
         ]
-        self.tools = {spec["function"]["name"]: (spec, run) for spec, run in builtins}  # each one's schema and function
+        self.tools = {spec["function"]["name"]: (spec, run)  # each one's schema and function
+                      for spec, run in [*builtins, *((callable_to_tool(tool), tool) for tool in tools)]}
+        if len(self.tools) < len(builtins) + len(tools):
+            raise ValueError("a custom tool can't share its name with another tool")
         self._checked = {name: _checked(run) for name, (_, run) in self.tools.items()}
         self._serial = asyncio.Lock()
 
