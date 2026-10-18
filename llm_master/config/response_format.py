@@ -7,6 +7,8 @@ provider's default, so it emits nothing. None = unset.
 """
 from typing import Any, Literal, assert_never
 
+from anthropic import transform_schema
+from any_llm.utils.structured_output import get_strict_json_schema
 from pydantic import BaseModel, Field, model_validator
 
 from llm_master.config import UnsupportedField
@@ -34,11 +36,8 @@ def translate(fmt: Format, api: API) -> dict:
                     return {}  # the provider default everywhere; messages has no explicit spelling at all
                 case "json":
                     return {"response_format": {"type": "json_object"}}
-                case "schema" if isinstance(fmt.schema_, type):  # a class rides any-llm's parse path
-                    return {"response_format": fmt.schema_}
-                case "schema":  # a bare json schema dict goes in the API's own format object
-                    return {"response_format": {"type": "json_schema",
-                                                "json_schema": {"name": "response", "schema": fmt.schema_}}}
+                case "schema":
+                    return {"response_format": {"type": "json_schema", "json_schema": _openai(fmt.schema_)}}
                 case _:
                     assert_never(fmt.type)
         case "messages":
@@ -48,10 +47,9 @@ def translate(fmt: Format, api: API) -> dict:
                 case "json":
                     raise UnsupportedField(api, "response_format",
                                            "anthropic has no schema-less JSON mode — pass a schema instead")
-                case "schema" if isinstance(fmt.schema_, type):
-                    return {"output_format": fmt.schema_}
                 case "schema":  # output_config, so it merges with thinking's effort instead of colliding
-                    return {"output_config": {"format": {"type": "json_schema", "schema": fmt.schema_}}}
+                    schema = transform_schema(fmt.schema_) if isinstance(fmt.schema_, type) else fmt.schema_
+                    return {"output_config": {"format": {"type": "json_schema", "schema": schema}}}
                 case _:
                     assert_never(fmt.type)
         case "responses":
@@ -60,11 +58,16 @@ def translate(fmt: Format, api: API) -> dict:
                     return {}
                 case "json":
                     return {"response_format": {"type": "json_object"}}
-                case "schema" if isinstance(fmt.schema_, type):
-                    return {"response_format": fmt.schema_}
                 case "schema":
-                    return {"response_format": {"type": "json_schema", "name": "response", "schema": fmt.schema_}}
+                    return {"response_format": {"type": "json_schema", **_openai(fmt.schema_)}}
                 case _:
                     assert_never(fmt.type)
         case _:
             assert_never(api)
+
+
+def _openai(schema: type | dict[str, Any] | None) -> dict[str, Any]:
+    """The json_schema fields. A class gets the strict schema openai's own SDK sends for it; a dict rides as written."""
+    if isinstance(schema, type):
+        return {"name": schema.__name__, "schema": get_strict_json_schema(schema), "strict": True}
+    return {"name": "response", "schema": schema}
