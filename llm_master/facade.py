@@ -6,9 +6,12 @@ import anthropic
 import openai
 from any_llm import AnyLLM
 
+from llm_master import media
 from llm_master.io.messages import Message
+from llm_master.io.parts import Image
 from llm_master.io.response import Response
 from llm_master.io.stream import Stream
+from llm_master.media import Media
 from llm_master.providers import PROVIDERS, SDK, ProviderName
 from llm_master.query import run
 from llm_master.types import Model
@@ -50,6 +53,14 @@ class LLM:
         moderation checks the newest user message once, before any candidate (CONFIG.md field 12).
         """
         return await run(self, candidates, messages, stream, moderation)
+
+    async def image(self, candidates: Model | Sequence[Model], prompt: str, images: Sequence[Image] = ()) -> Media:
+        """A new image, or an edit of the parent images. See SPEC.md Media."""
+        return await media.image(self, candidates, prompt, images)
+
+    async def speech(self, candidates: Model | Sequence[Model], text: str) -> Media:
+        """The text spoken. See SPEC.md Media."""
+        return await media.speech(self, candidates, text)
 
     async def aclose(self) -> None:
         http, self._http, self._clients = self._http, [], {}

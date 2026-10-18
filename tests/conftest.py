@@ -1,4 +1,5 @@
 """Live-test env: keys from the repo .env, typed any-llm errors on. And the recorded provider stand-in."""
+import base64
 import json
 import os
 import pathlib
@@ -63,27 +64,33 @@ def provider_server(monkeypatch, request):
 @pytest.fixture
 def recorded(provider_server, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
-    that each request body matches the recorded one: the goldens of the same-bytes rule.
-    RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys)."""
+    that each JSON request body matches the recorded one: the goldens of the same-bytes rule.
+    RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys).
+    Multipart bodies (image edits) carry a random boundary, so only their path is pinned."""
     def serve(name: str) -> None:
         path, live = FIXTURES / f"{name}.json", os.environ.get("RECORD") == "1"
         exchanges = [] if live else json.loads(path.read_text())
         received: list[dict] = []
 
         def answer(handler: BaseHTTPRequestHandler, provider: str, path: str, body: bytes) -> None:
-            received.append({"path": path, "body": json.loads(body)})
+            is_json = handler.headers.get("Content-Type", "").startswith("application/json")
+            received.append({"path": path, "body": json.loads(body) if is_json else None})
             if live:
                 headers = {k: v for k, v in handler.headers.items()
                            if k.lower() not in ("host", "content-length", "accept-encoding")}
                 reply = httpx.post(f"{UPSTREAM[provider][1]}{path}", content=body, headers=headers, timeout=600)
+                kind = reply.headers.get("content-type", "")
+                text = kind.startswith(("application/json", "text/"))  # else binary, kept as base64
                 exchanges.append({"request": received[-1], "response": {
-                    "status": reply.status_code, "type": reply.headers.get("content-type", ""), "body": reply.text}})
+                    "status": reply.status_code, "type": kind,
+                    **({"body": reply.text} if text else {"base64": base64.b64encode(reply.content).decode()})}})
             reply = exchanges[len(received) - 1]["response"]
+            payload = reply["body"].encode() if "body" in reply else base64.b64decode(reply["base64"])
             handler.send_response(reply["status"])
             handler.send_header("Content-Type", reply["type"])
-            handler.send_header("Content-Length", str(len(reply["body"].encode())))
+            handler.send_header("Content-Length", str(len(payload)))
             handler.end_headers()
-            handler.wfile.write(reply["body"].encode())
+            handler.wfile.write(payload)
 
         provider_server(answer)
 

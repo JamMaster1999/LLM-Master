@@ -14,7 +14,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 
 1. **Providers** — the registry data page. Done.
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
-3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures.
+3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
@@ -48,11 +48,18 @@ belongs to the caller.
 
 **Media.** `query()` is conversation only: text and tool calls, no media out. Images and
 speech get their own calls, `image(candidates, prompt, images)` and `speech(candidates, text)`,
-on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns
-the file's bytes, its mime type, the candidate that made it, usage and cost. One case per
-provider: gemini through `acompletion` with response modalities, openai through its Images API
-(generate, and edit on the held client, since any-llm doesn't wrap it) and `aspeech`. A
-candidate that answers without the media raises typed, so fallback moves on.
+on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns a
+`Media`: the file's bytes, its mime type, the candidate that made it (`origin`), usage, cost,
+attempts and latency. One case per provider: gemini through `acompletion` with
+`response_modalities` `["IMAGE"]` or `["AUDIO"]` (any-llm wraps gemini's PCM speech as WAV),
+openai through the held client's own SDK calls, `images.generate`, `images.edit` and
+`audio.speech.create`. any-llm wraps no image edit and forbids every extra key on generate and
+speech, so the held client keeps the pass-through law; its errors convert to any-llm's typed ones.
+A media candidate takes only `timeout` from its config; the rest raises `UnsupportedField`.
+Everything else rides its `extra`: size, quality, `output_format`, `voice` (openai's default is
+`alloy`, since the API requires one), gemini's `image_config`. Anthropic and Fireworks make no
+media and raise `UnsupportedField`. A candidate that answers without the media raises typed
+`MissingMedia`, so fallback moves on.
 
 An edit is lineage, not a conversation: the parent image plus the new instruction, one
 request, no history and no server state. Any provider can edit any provider's image.
