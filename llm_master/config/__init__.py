@@ -3,8 +3,7 @@
 
 def merge(*fragments: dict) -> dict:
     """Combine translation fragments into one request: nested dicts deep-merge (extra into
-    reasoning), lists concatenate (web_search's tool joins the caller's tools), scalars
-    last-wins. Candidate extra merges last."""
+    reasoning), lists concatenate, scalars last-wins. Candidate extra merges last."""
     out: dict = {}
     for fragment in fragments:
         for key, value in fragment.items():

@@ -1,7 +1,7 @@
 """Row shapes for the providers page — pyright checks the page against these as you edit."""
 from typing import NotRequired, TypedDict
 
-from llm_master.providers import API, SDK, SearchStance
+from llm_master.providers import API, SDK
 
 
 class ModelRow(TypedDict):
@@ -13,7 +13,6 @@ class ModelRow(TypedDict):
 
 class ProviderRow(TypedDict):
     api: API                       # which of the three APIs it speaks
-    search: SearchStance           # its web-search stance
     sdk: SDK                       # the SDK under its any-llm client; decides the aiohttp transport
     requests: int
     interval: int                  # seconds

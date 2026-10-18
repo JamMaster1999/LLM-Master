@@ -9,7 +9,6 @@ from llm_master.config.modalities import Modality
 from llm_master.config.response_format import Format
 from llm_master.config.thinking import Level
 from llm_master.config.tool_choice import ToolChoice
-from llm_master.config.web_search import Search
 from llm_master.providers import ProviderName
 
 
@@ -32,7 +31,6 @@ class Config(BaseModel, extra="forbid"):
     thinking_summaries: bool = False
     tools: list[Any] | None = None  # openai-format dicts or python callables
     tool_choice: ToolChoice | None = None
-    web_search: Search | None = None
     response_format: Format | None = None  # type="text" | "json" | "schema" (with schema=...)
     max_tokens: int | None = Field(None, gt=0)
     timeout: float | None = Field(None, gt=0)
