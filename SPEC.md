@@ -29,9 +29,9 @@ On fireworks: GLM, DeepSeek and Kimi, at lower priority. Rules that only older m
 not written.
 
 **Providers (built).** providers.py is pure data: name-keyed rows, one field per line, no
-code. The rosters (`API`, `ProviderName`, `SearchStance`) sit at its top, and every type in
-the repo derives from them. shapes.py holds the row TypedDicts. registry.py holds `limit()`,
-`search()`, and import-time asserts. The editor flags a bad row as you type; the asserts
+code. The rosters (`API`, `ProviderName`, `SDK`) sit at its top, and every type in
+the repo derives from them. shapes.py holds the row TypedDicts. registry.py holds `limit()`
+and import-time asserts. The editor flags a bad row as you type; the asserts
 catch it at import. A model override replaces the provider default. Unknown models inherit
 the provider default, so new models work day one. Unknown providers raise. vertexai uses
 any-llm's first-class provider with full GCP login; v1's express mode is gone.

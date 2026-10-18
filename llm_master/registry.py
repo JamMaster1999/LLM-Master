@@ -1,14 +1,13 @@
 """Reads of the providers page, plus the import-time checks that keep it honest."""
 from typing import get_args
 
-from llm_master.providers import API, PROVIDERS, SDK, ProviderName, SearchStance
+from llm_master.providers import API, PROVIDERS, SDK, ProviderName
 from llm_master.shapes import ProviderRow
 
 assert set(PROVIDERS) == set(get_args(ProviderName)), "ProviderName and PROVIDERS keys disagree"
 for _name, _row in PROVIDERS.items():
     assert _row.keys() >= ProviderRow.__required_keys__, f"{_name}: missing {ProviderRow.__required_keys__ - _row.keys()}"
     assert _row["api"] in get_args(API), f"{_name}: unknown api {_row['api']!r}"
-    assert _row["search"] in get_args(SearchStance), f"{_name}: unknown search {_row['search']!r}"
     assert _row["sdk"] in get_args(SDK), f"{_name}: unknown sdk {_row['sdk']!r}"
     assert _row["requests"] > 0 and _row["interval"] > 0, f"{_name}: limits must be positive"
     for _model, _override in _row["models"].items():
@@ -22,8 +21,3 @@ def limit(provider: ProviderName, model: str) -> tuple[int, int]:
     row = PROVIDERS[provider]  # unknown provider fails loud, on purpose
     override = row["models"].get(model, {})
     return override.get("requests", row["requests"]), override.get("interval", row["interval"])
-
-
-def search(provider: ProviderName) -> SearchStance:
-    """The provider's web-search stance, from its row."""
-    return PROVIDERS[provider]["search"]
