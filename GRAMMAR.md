@@ -13,7 +13,7 @@ Two primitives, two compositions. Use the smallest step that fits the field.
 |---|---|---|---|
 | scalar | a plain value | one number or string, no choices | `temperature=0.2` |
 | enum | one choice from a fixed set | modes with no settings | `thinking="low"` |
-| objects | scalars grouped in an object | one behavior, optional knobs; presence = on | `Search(max_searches=2)` |
+| objects | scalars grouped in an object | one behavior, optional knobs; presence = on | `ToolChoice(mode="required", parallel=False)` |
 | branches | enum + objects in one object | several behaviors, each configurable | `Format(type="schema", schema=Verdict)` |
 
 Rules:

@@ -8,9 +8,9 @@ from llm_master.providers import API
 
 
 def _function_only(tool: Any) -> Any:
-    if isinstance(tool, dict) and tool.get("type") != "function":
-        raise ValueError(f"function tools only, got type={tool.get('type')!r}: provider-hosted tools are not supported")
-    return tool
+    if callable(tool) or (isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool):
+        return tool
+    raise ValueError(f"function tools only (an openai function dict or a python callable), got {tool!r}")
 
 
 Tool = Annotated[Any, AfterValidator(_function_only)]  # an openai-format function dict or a python callable

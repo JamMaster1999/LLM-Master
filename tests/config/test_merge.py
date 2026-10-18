@@ -12,4 +12,4 @@ def test_scalars_last_wins():
 
 
 def test_lists_concat():
-    assert merge({"tools": [{"a": 1}]}, {"tools": [{"b": 2}]}) == {"tools": [{"a": 1}, {"b": 2}]}
+    assert merge({"include": ["a"]}, {"include": ["b"]}) == {"include": ["a", "b"]}
