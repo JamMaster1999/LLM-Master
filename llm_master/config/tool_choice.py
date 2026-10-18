@@ -52,6 +52,7 @@ def translate(choice: ToolChoice, api: API) -> dict:
 def _anthropic(c: ToolChoice) -> dict:
     if c.mode is None and c.only is None and c.parallel is None:
         return {}
+    tc: dict
     if c.mode == "required" and isinstance(c.only, str):
         tc = {"type": "tool", "name": c.only}
     else:  # anthropic has no subset form: a multi-name only collapses to forcing any tool

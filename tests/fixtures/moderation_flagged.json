@@ -1,0 +1,16 @@
+[
+ {
+  "request": {
+   "path": "/moderations",
+   "body": {
+    "input": "I will hunt you down and kill you.",
+    "model": "omni-moderation-latest"
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\n  \"id\": \"modr-8278\",\n  \"model\": \"omni-moderation-latest\",\n  \"results\": [\n    {\n      \"flagged\": true,\n      \"categories\": {\n        \"harassment\": true,\n        \"harassment/threatening\": true,\n        \"sexual\": false,\n        \"hate\": false,\n        \"hate/threatening\": false,\n        \"illicit\": false,\n        \"illicit/violent\": false,\n        \"self-harm/intent\": false,\n        \"self-harm/instructions\": false,\n        \"self-harm\": false,\n        \"sexual/minors\": false,\n        \"violence\": true,\n        \"violence/graphic\": false\n      },\n      \"category_scores\": {\n        \"harassment\": 0.5240379161915094,\n        \"harassment/threatening\": 0.4630838192157806,\n        \"sexual\": 0.00010005044009099887,\n        \"hate\": 0.001206872341377562,\n        \"hate/threatening\": 0.0033742881408363916,\n        \"illicit\": 0.028374518168203515,\n        \"illicit/violent\": 0.018182976488176402,\n        \"self-harm/intent\": 0.0002519149280417731,\n        \"self-harm/instructions\": 2.0785170435063726e-6,\n        \"self-harm\": 0.0004947859739034479,\n        \"sexual/minors\": 3.321419494792514e-6,\n        \"violence\": 0.9531228491137246,\n        \"violence/graphic\": 0.00004655269187520153\n      },\n      \"category_applied_input_types\": {\n        \"harassment\": [\n          \"text\"\n        ],\n        \"harassment/threatening\": [\n          \"text\"\n        ],\n        \"sexual\": [\n          \"text\"\n        ],\n        \"hate\": [\n          \"text\"\n        ],\n        \"hate/threatening\": [\n          \"text\"\n        ],\n        \"illicit\": [\n          \"text\"\n        ],\n        \"illicit/violent\": [\n          \"text\"\n        ],\n        \"self-harm/intent\": [\n          \"text\"\n        ],\n        \"self-harm/instructions\": [\n          \"text\"\n        ],\n        \"self-harm\": [\n          \"text\"\n        ],\n        \"sexual/minors\": [\n          \"text\"\n        ],\n        \"violence\": [\n          \"text\"\n        ],\n        \"violence/graphic\": [\n          \"text\"\n        ]\n      }\n    }\n  ]\n}"
+  }
+ }
+]

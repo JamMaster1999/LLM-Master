@@ -1,10 +1,11 @@
 """What you write per call: Model, one fallback candidate, and Config, its tunables."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from llm_master.config.cache import Cache
 from llm_master.config.response_format import Format
 from llm_master.config.thinking import Level
 from llm_master.config.tool_choice import ToolChoice
@@ -30,7 +31,7 @@ class Config(BaseModel, extra="forbid"):
     tools: list[Tool] | None = None  # openai-format function dicts or python callables
     tool_choice: ToolChoice | None = None
     response_format: Format | None = None  # type="text" | "json" | "schema" (with schema=...)
-    max_tokens: int | None = Field(None, gt=0)
-    timeout: float | None = Field(None, gt=0)
-    cache: Literal["auto", "none"] | int = "auto"  # int = minutes, 5-60
+    max_tokens: int | None = Field(default=None, gt=0)
+    timeout: float | None = Field(default=None, gt=0)
+    cache: Cache = "auto"  # int = minutes, 5-60
     moderation: bool = False

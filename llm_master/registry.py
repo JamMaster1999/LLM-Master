@@ -8,6 +8,7 @@ assert set(PROVIDERS) == set(get_args(ProviderName)), "ProviderName and PROVIDER
 for _name, _row in PROVIDERS.items():
     assert _row.keys() >= ProviderRow.__required_keys__, f"{_name}: missing {ProviderRow.__required_keys__ - _row.keys()}"
     assert _row["api"] in get_args(API), f"{_name}: unknown api {_row['api']!r}"
+    assert _row.get("audio_api", _row["api"]) in get_args(API), f"{_name}: unknown audio_api"
     assert _row["sdk"] in get_args(SDK), f"{_name}: unknown sdk {_row['sdk']!r}"
     assert _row["requests"] > 0 and _row["interval"] > 0, f"{_name}: limits must be positive"
     for _model, _override in _row["models"].items():

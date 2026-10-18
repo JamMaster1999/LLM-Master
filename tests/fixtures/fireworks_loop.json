@@ -1,0 +1,116 @@
+[
+ {
+  "request": {
+   "path": "/chat/completions",
+   "body": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     }
+    ],
+    "model": "accounts/fireworks/models/deepseek-v4p1-flash",
+    "tools": [
+     {
+      "type": "function",
+      "function": {
+       "name": "get_weather",
+       "description": "Current weather for a city",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "city": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "city"
+        ]
+       }
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\"id\":\"chatcmpl-0764b6fd8af44cd0a43ebff0ba899883\",\"object\":\"chat.completion\",\"created\":1792352537,\"model\":\"accounts/fireworks/models/deepseek-v4p1-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Let me work through the arithmetic step by step.\\n\\n1. **Start:** 17 sheep.\\n2. **\\\"All but 9 run away\\\":** This means 9 remain (a classic trick \u2014 the number that stay is 9, not 17 \u2212 9).\\n3. **\\\"Buys twice as many as remain\\\":** twice 9 = 18 bought \u2192 9 + 18 = **27** sheep.\\n4. **\\\"Sells a third of the flock\\\":** 27 \u00f7 3 = 9 sold \u2192 27 \u2212 9 = **18** sheep.\\n\\n**Answer: 18 sheep.**\\n\\nNow the weather calls, in parallel:\",\"reasoning_content\":\"Let me work through this carefully.\\n\\nFarmer has 17 sheep. All but 9 run away \u2192 9 remain.\\n\\nThen he buys twice as many as remain: twice 9 = 18, so 9 + 18 = 27.\\n\\nThen sells a third of the flock: 27/3 = 9 sold, so 27 - 9 = 18.\\n\\nAnswer: 18 sheep.\\n\\nNow call get_weather for Toronto and Paris in parallel.\",\"tool_calls\":[{\"index\":0,\"id\":\"chatcmpl-tool-9e1e8d24a8574877\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\": \\\"Toronto\\\"}\"},\"name\":null},{\"index\":1,\"id\":\"chatcmpl-tool-849dce6fd2d0714a\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\": \\\"Paris\\\"}\"},\"name\":null}],\"tools\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":340,\"total_tokens\":641,\"completion_tokens\":301,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":96},\"output_tokens_details\":{\"reasoning_tokens\":96}}}"
+  }
+ },
+ {
+  "request": {
+   "path": "/chat/completions",
+   "body": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     },
+     {
+      "content": "Let me work through the arithmetic step by step.\n\n1. **Start:** 17 sheep.\n2. **\"All but 9 run away\":** This means 9 remain (a classic trick \u2014 the number that stay is 9, not 17 \u2212 9).\n3. **\"Buys twice as many as remain\":** twice 9 = 18 bought \u2192 9 + 18 = **27** sheep.\n4. **\"Sells a third of the flock\":** 27 \u00f7 3 = 9 sold \u2192 27 \u2212 9 = **18** sheep.\n\n**Answer: 18 sheep.**\n\nNow the weather calls, in parallel:",
+      "role": "assistant",
+      "tool_calls": [
+       {
+        "id": "chatcmpl-tool-9e1e8d24a8574877",
+        "function": {
+         "arguments": "{\"city\": \"Toronto\"}",
+         "name": "get_weather"
+        },
+        "type": "function",
+        "index": 0
+       },
+       {
+        "id": "chatcmpl-tool-849dce6fd2d0714a",
+        "function": {
+         "arguments": "{\"city\": \"Paris\"}",
+         "name": "get_weather"
+        },
+        "type": "function",
+        "index": 1
+       }
+      ],
+      "reasoning": "Let me work through this carefully.\n\nFarmer has 17 sheep. All but 9 run away \u2192 9 remain.\n\nThen he buys twice as many as remain: twice 9 = 18, so 9 + 18 = 27.\n\nThen sells a third of the flock: 27/3 = 9 sold, so 27 - 9 = 18.\n\nAnswer: 18 sheep.\n\nNow call get_weather for Toronto and Paris in parallel.",
+      "reasoning_content": "Let me work through this carefully.\n\nFarmer has 17 sheep. All but 9 run away \u2192 9 remain.\n\nThen he buys twice as many as remain: twice 9 = 18, so 9 + 18 = 27.\n\nThen sells a third of the flock: 27/3 = 9 sold, so 27 - 9 = 18.\n\nAnswer: 18 sheep.\n\nNow call get_weather for Toronto and Paris in parallel."
+     },
+     {
+      "role": "tool",
+      "tool_call_id": "chatcmpl-tool-9e1e8d24a8574877",
+      "content": "Toronto: 20C, sunny"
+     },
+     {
+      "role": "tool",
+      "tool_call_id": "chatcmpl-tool-849dce6fd2d0714a",
+      "content": "Paris: 20C, sunny"
+     }
+    ],
+    "model": "accounts/fireworks/models/deepseek-v4p1-flash",
+    "tools": [
+     {
+      "type": "function",
+      "function": {
+       "name": "get_weather",
+       "description": "Current weather for a city",
+       "parameters": {
+        "type": "object",
+        "properties": {
+         "city": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "city"
+        ]
+       }
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\"id\":\"chatcmpl-b43d0188996b4a699df95441258f090a\",\"object\":\"chat.completion\",\"created\":1792352541,\"model\":\"accounts/fireworks/models/deepseek-v4p1-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"**Final answers:**\\n\\n\ud83d\udc11 **Sheep:** 18\\n\\n\ud83c\udf24\ufe0f **Weather:**\\n- **Toronto:** 20\u00b0C, sunny\\n- **Paris:** 20\u00b0C, sunny\\n\\nBoth cities are enjoying identical pleasant conditions \u2014 20\u00b0C and sunny.\",\"tools\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":674,\"total_tokens\":733,\"completion_tokens\":59,\"prompt_tokens_details\":{\"cached_tokens\":210},\"completion_tokens_details\":{\"reasoning_tokens\":0},\"output_tokens_details\":{\"reasoning_tokens\":0}}}"
+  }
+ }
+]

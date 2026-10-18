@@ -78,8 +78,8 @@ A message a provider produced has two more fields:
 
 - `origin` — `{"provider": ..., "model": ...}`, the candidate that produced it. It's set from the
   candidate, not from the model name in the response, because Gemini's response says `google/genai`.
-- `native` — the provider's raw output, stored as JSON exactly as received and never
-  re-validated:
+- `native` — the provider's raw output as JSON: the SDK's parsed objects dumped with their nulls
+  dropped, never re-validated:
   - Anthropic: the response's `content` list (signed thinking, redacted thinking, text,
     tool_use, and any block type added later).
   - OpenAI: the response's `output` list (reasoning with `encrypted_content`, message,
@@ -254,10 +254,14 @@ Text, calls and reasoning live only on `message`; nothing is copied to the top l
 user sees `reasoning` is the caller's choice when rendering. The other fields describe this one
 call and never go into history:
 
-- `parsed` — the `response_format` object, or None.
+- `parsed` — the `response_format` object, or None. llm_master reads it from `message.content`
+  when the model stopped normally: a schema class validates into its instance, a schema dict or
+  `type="json"` gives the parsed JSON, and `type="text"` or any other `finish` gives None. Streams
+  parse the same way.
 - `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
   any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
-- `usage` — input, output, reasoning, cache-read and cache-write tokens.
+- `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
+  prompt token, cache reads and writes included; `output` counts reasoning.
 - `cost` — dollars (SPEC.md step 4).
 - `attempts` — every candidate tried, in order, with the one that answered last. One entry when
   the first candidate answers. Each attempt holds:
@@ -292,7 +296,7 @@ history.append(stream.response.message)
 
 For each model call, llm_master yields:
 
-- `start-step` when an attempt starts, `finish-step` when it ends.
+- `start-step` when an attempt's request opens, `finish-step` when it ends.
 - `reasoning-start` / `-delta` / `-end`: the thought text, always. The caller forwards or drops
   it.
 - `text-start` / `-delta` / `-end`: the answer.
@@ -305,12 +309,16 @@ For each model call, llm_master yields:
 
 The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
 and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
-call raises; llm_master never sends an `error` chunk. A half-streamed tool call can't be run:
-tools run from `response.message.calls` after the loop ends.
+call raises; llm_master never sends an `error` chunk. A stream that ends before the provider's
+final event raises a typed `ProviderError` after its `reset-step`. A half-streamed tool call can't
+be run: tools run from `response.message.calls` after the loop ends. `await stream.aclose()`
+aborts: it closes the provider's stream.
 
 The final `message` is built from the stream with the same extraction as a normal call, and
-`native` from the provider's own stream events. Usage comes from the last usage event, never a
-sum, because Gemini sends a running total on every chunk.
+`native` from the provider's own stream events: Anthropic's SDK hands over the whole message at
+`message_stop`, OpenAI's `response.completed` carries the whole response, and the completion
+deltas are joined into the message any-llm would have returned. Usage comes from the last usage
+event, never a sum, because Gemini sends a running total on every chunk.
 
 ## Known limits
 
@@ -328,11 +336,9 @@ sum, because Gemini sends a running total on every chunk.
     released upstream, llm_master installs any-llm from a fork build that includes them.
 - Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
   and Vertex reject each other's thought signatures.
-- Still to test live during the build:
-  - a conversation saved, reloaded in a new process and continued, hitting the cache on every
-    provider;
-  - whether `include: reasoning.encrypted_content` is still accepted now that encryption is the
-    default.
+- Live-tested during the build: a conversation saved to JSON, reloaded and continued reads the
+  cache on its next turn on Anthropic (with `cache` minutes), OpenAI (auto, and 30 minutes),
+  Gemini and Fireworks. OpenAI still accepts `include: reasoning.encrypted_content`.
 - Parts travel only as inline base64. Files above the inline limits would need a provider's Files
   API. any-llm exposes Anthropic's and OpenAI's (upload, list, retrieve, download, delete) and
   Gemini's (no download), but no part can reference an uploaded file yet. That gets added when
