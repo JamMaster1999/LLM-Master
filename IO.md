@@ -43,6 +43,8 @@ Two terms come up throughout:
   - Plain dicts validate through the same class; the class itself is there for editor
     autocomplete.
   - Unknown keys fail validation, so a typo is caught.
+  - Save a message with `message.model_dump(mode="json", exclude_none=True)` and load it with
+    `Message.model_validate`; the reloaded message builds the same request.
 
 ## Parts
 
@@ -55,9 +57,11 @@ Parts are a fixed set, told apart by `type`. An unknown `type` fails validation.
 
 Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` accept a
 data-uri, a URL or a local path, and read, convert (HEIC to PNG) and encode the data when the part
-is created. The caller then saves exactly the bytes every later call sends (see The same-bytes
-rule). A failed download or conversion raises a typed error when the part is created, before any
-model is billed.
+is created: `Image("photo.heic")`. The caller then saves exactly the bytes every later call sends
+(see The same-bytes rule). A failed download or conversion, an `Image` that isn't an image, or a
+`File` that isn't a PDF raises `PartError` when the part is created, before any model is billed.
+Reading is synchronous; an async caller downloading a URL wraps the constructor in
+`asyncio.to_thread`.
 
 Size limits are left to the provider. For reference: Anthropic caps an image at 5 MB after
 encoding, and Gemini accepts at most 20 MB of inline data per request.
@@ -166,7 +170,8 @@ any-llm's converters expect OpenAI's chat format, so this case writes it.
 - assistant from the same model: `native` unchanged, including Gemini's signatures and
   Fireworks' `reasoning_content`.
 - tool: `{"role": "tool", "tool_call_id", "content"}`, parts renamed as for user.
-  - Gemini 3 receives image parts as `functionResponse.parts` (any-llm fork PR #17).
+  - Gemini 3 receives image and PDF parts as `functionResponse.parts` (any-llm fork PRs #17 and
+    #20). Without them it never sees the media and invents an answer (live-tested).
   - Fireworks accepts text only, so any other part raises `UnsupportedField`.
 
 ### messages → `{"messages": [...]}`
@@ -185,7 +190,10 @@ every key except role and content, and rebuilds thinking from a format we never 
   - Parts become text, image and document blocks.
   - Empty content leaves out the `content` key.
 
-### responses → `{"input": [...]}`
+### responses → `{"input_data": [...]}`
+
+`input_data` is any-llm's name for the request's `input`.
+
 
 - user: a string → `{"role": "user", "content": str}`. Parts are renamed:
   - text → `input_text`
@@ -212,7 +220,8 @@ calls only, with our ids, in the candidate's own format. No reasoning, no signat
 ids. Its tool results are sent exactly as they would be after the candidate's own calls.
 
 - completion: `{"role": "assistant", "content": <text or None>, "tool_calls": [{"id", "type":
-  "function", "function": {"name", "arguments": <json str>}}]}`.
+  "function", "function": {"name", "arguments": <json str>}}]}`, with `tool_calls` only when there are
+  calls. A message with neither text nor calls is left out.
   - Gemini: any-llm adds Google's documented `skip_thought_signature_validator` to the first call
     without a signature, so the call is accepted.
   - Fireworks: nothing more is needed. On deepseek-v4p1-flash, kimi-k3 and glm-5p3, a message
@@ -225,7 +234,7 @@ ids. Its tool results are sent exactly as they would be after the candidate's ow
   - `{"role": "assistant", "content": str}` when there is text;
   - then one `{"type": "function_call", "call_id", "name", "arguments": <json str>}` per call,
     without an item `id`. A function call with an `fc_` id but without its reasoning item
-    returns a 400.
+    returns a 400. gpt-5.5 accepts these calls, and their text needs no `phase` (live-tested).
 
 Switching models in the middle of a tool loop needs nothing extra. Claude in adaptive mode turns
 thinking off for that one request instead of failing
@@ -323,14 +332,11 @@ sum, because Gemini sends a running total on every chunk.
   - Results sent in a different order from the calls come back swapped, with a 200
     (live-tested).
   - Fork PR #18 sends ids in both directions.
-  - Until it and PR #17 (Gemini tool-result images) are released upstream, llm_master installs
-    any-llm from a fork build that includes them.
+  - Until it, PR #17 (Gemini tool-result images) and PR #20 (Gemini tool-result PDFs) are
+    released upstream, llm_master installs any-llm from a fork build that includes them.
 - Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
   and Vertex reject each other's thought signatures.
 - Still to test live during the build:
-  - a PDF in a Gemini 3 tool result;
-  - a function call from another model sent to gpt-5.5 without an item `id`, and whether its
-    text needs a `phase`;
   - a conversation saved, reloaded in a new process and continued, hitting the cache on every
     provider;
   - whether `include: reasoning.encrypted_content` is still accepted now that encryption is the

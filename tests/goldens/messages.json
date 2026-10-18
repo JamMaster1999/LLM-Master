@@ -1,0 +1,158 @@
+{
+ "messages": [
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "text",
+     "text": "Weather in Paris? And what's in these?"
+    },
+    {
+     "type": "image",
+     "source": {
+      "type": "base64",
+      "media_type": "image/png",
+      "data": "iVBORw0KGgo="
+     }
+    },
+    {
+     "type": "document",
+     "source": {
+      "type": "base64",
+      "media_type": "application/pdf",
+      "data": "JVBERi0xLjQ="
+     }
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "lm_gem1",
+     "name": "weather",
+     "input": {
+      "city": "Paris"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "lm_gem1",
+     "content": [
+      {
+       "type": "text",
+       "text": "18C, sunny"
+      },
+      {
+       "type": "image",
+       "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "iVBORw0KGgo="
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "thinking",
+     "thinking": "Two cities left.",
+     "signature": "sig"
+    },
+    {
+     "type": "text",
+     "text": "Checking two more."
+    },
+    {
+     "type": "tool_use",
+     "id": "toolu_1",
+     "name": "weather",
+     "input": {
+      "city": "Rome"
+     }
+    },
+    {
+     "type": "tool_use",
+     "id": "toolu_2",
+     "name": "weather",
+     "input": {
+      "city": "Oslo"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "toolu_1",
+     "content": "rain"
+    },
+    {
+     "type": "tool_result",
+     "tool_use_id": "toolu_2"
+    }
+   ]
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "tool_use",
+     "id": "lm_gpt1",
+     "name": "read",
+     "input": {
+      "path": "a.pdf"
+     }
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": [
+    {
+     "type": "tool_result",
+     "tool_use_id": "lm_gpt1",
+     "content": [
+      {
+       "type": "document",
+       "source": {
+        "type": "base64",
+        "media_type": "application/pdf",
+        "data": "JVBERi0xLjQ="
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "Go on."
+  },
+  {
+   "role": "assistant",
+   "content": [
+    {
+     "type": "text",
+     "text": "All four are checked."
+    }
+   ]
+  },
+  {
+   "role": "user",
+   "content": "Summarize."
+  }
+ ]
+}
