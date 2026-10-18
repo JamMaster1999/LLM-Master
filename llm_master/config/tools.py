@@ -1,9 +1,19 @@
 """tools: the definitions, reshaped per API. The call/result loop is io. See CONFIG.md."""
-from typing import Any, assert_never
+from typing import Annotated, Any, assert_never
 
 from any_llm.tools import callable_to_tool
+from pydantic import AfterValidator
 
 from llm_master.providers import API
+
+
+def _function_only(tool: Any) -> Any:
+    if isinstance(tool, dict) and tool.get("type") != "function":
+        raise ValueError(f"function tools only, got type={tool.get('type')!r}: provider-hosted tools are not supported")
+    return tool
+
+
+Tool = Annotated[Any, AfterValidator(_function_only)]  # an openai-format function dict or a python callable
 
 
 def translate(tools: list[Any], api: API) -> dict:
