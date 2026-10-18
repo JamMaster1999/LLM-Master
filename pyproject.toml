@@ -11,15 +11,19 @@ dependencies = [
     "google-genai[aiohttp]",
 ]
 
+[project.optional-dependencies]
+# agent/, the tools beside llm_master: the sandbox and web search
+agent = ["modal>=1.6.2", "exa-py>=2.25.0"]
+
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio"]
+dev = ["pytest", "pytest-asyncio", "llm-master[agent]"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["llm_master"]
+packages = ["llm_master", "agent"]
 
 [tool.uv.sources]
 # until mozilla-ai/any-llm#1513, #1514 and #1515 are released: the three Gemini fixes, merged
