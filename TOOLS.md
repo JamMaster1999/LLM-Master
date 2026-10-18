@@ -28,14 +28,20 @@ the new instruction go out together, and a small record beside each image names 
 `generate_audio` is one-shot speech through `speech()`. Both run openai first with gemini as the
 fallback.
 
-Widgets and citations are text. A result is text, an image, or a PDF; nothing else. No API takes
+Widgets and citations are text. A result is text, or text and images; nothing else. No API takes
 audio inside a tool result, so audio never comes back as one.
 
-The sandbox runs the code the model writes, and that code may follow instructions planted in a
-web page or a student's submission. So the sandbox holds no credentials, and it reaches no
-network but the package indexes. Exa, Modal and provider keys, and the user's identity for
-`mcp`, stay on the host. Every path, including the ones host tools take, names a file in the
-sandbox.
+The model may follow instructions planted in a web page or a student's submission, and the code
+it writes may too. Three rules keep the conversation's data in:
+
+- The sandbox holds no credentials and reaches no network but the package index. Exa, Modal and
+  provider keys, and the user's identity for `mcp`, stay on the host.
+- `fetch_url` reads only URLs the conversation has already seen, Anthropic's rule for its own web
+  fetch tool, so the model can't build a URL that carries data out.
+- Nothing the model writes runs on the app's origin: the caller serves files and interactive
+  scenes from a separate origin, scenes with no network at all.
+
+Every path, including the ones host tools take, names a file in the sandbox.
 
 ## Running tools
 
@@ -49,17 +55,20 @@ def lookup_grade(student: str) -> str:
     """The student's current grade in this course."""
     ...
 
-box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, llm=llm)
+box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, urls=user_urls, llm=llm)
 config = Config(tools=box.specs)  # on each candidate: Model(..., config=config)
 response = await llm.query(...)
 history.append(response.message)
 for call in response.message.calls:
-    if call["name"] == "ask_user":
-        continue  # the turn ends; the user's answers come with the next request
     result = await box.run(call["name"], call["arguments"])
+    if result.waiting:
+        continue  # the browser asks the user; the reply comes with the next request
     history.append({"role": "tool", "call_id": call["id"], "content": result.content})
 await box.aclose()
 ```
+
+On the next request, the reply finishes the waiting call before anything else joins the history:
+`result = await box.resume(call["name"], call["arguments"], reply)`.
 
 - `box.specs` lists the built-in tools, then the caller's own, as openai function dicts.
 - A custom tool is a plain Python function, sync or async. Its schema comes from its signature
@@ -68,21 +77,34 @@ await box.aclose()
   every built-in.
 - `run` returns a `Result`:
   - `content`: the tool message's content, a string or text, image and file parts (IO.md).
-  - `files`: `File(name, mime, data)` records for the user, from `deliver_file` and the
-    `generate_*` pair. The caller hosts the bytes and sends AI SDK `file` parts.
+  - `files`: `UserFile(name, mime, data)` records for the user, from `deliver_file` and the
+    `generate_*` pair. The caller hosts the bytes on a separate origin, or as downloads, and
+    sends AI SDK `file` parts.
   - `sources`: AI SDK `source-url` and `source-document` parts, ready to forward. Their
     `sourceId` is the number the model cites.
   - `error`: true when the tool failed. `content` then says why, so the model can recover, and
     the caller can mark the call failed in the UI.
+  - `waiting`: `"question"` from `ask_user`, `"approval"` from an `mcp` write. The call has no
+    result yet. The browser asks the user (AI SDK's client-side tools and tool approval
+    request), and `resume` finishes the call with the reply: the answers keyed by question, or
+    true or false for an approval. A denied write reads `User denied this call.`
 - Every failure comes back as an error result, so each call gets its answer and the history stays
   valid. A failure the model caused (a missing file, an edit that doesn't match, bad arguments)
   is a `ToolError` and reads as its message. Any other exception (Modal or Exa down, a bug) reads
-  as its type and message, and the toolbox logs it with its traceback.
+  as the tool and the exception's type only, since its message can hold what the model mustn't
+  see, and the toolbox logs it with its traceback.
+- A text result over 50 KB from any tool, a custom one included, is saved under
+  `/workspace/.agent/`, and the model gets the first 50 KB and the path to `read` the rest.
 - Calls may run in parallel. The toolbox runs the ones that change the sandbox (`write`, `edit`,
   `bash`, `run_program`) one at a time, so two edits to one file can't lose each other.
+- When the user stops a turn, the loop answers each unanswered call with `Stopped by the user.`
+  so the history stays valid. A command already running in the sandbox runs on to its timeout.
 - Source numbers continue across the conversation. The caller stores the source parts it sends
   and passes them back when it rebuilds the toolbox. A source seen before keeps its number: a
-  page by its URL, a file passage by its path and page.
+  page by its URL, a file passage by its path and page, which its part carries in
+  `providerMetadata`.
+- `urls` are the URLs in the user's messages. With the ones results bring, they are all that
+  `fetch_url` reads.
 - `llm` is llm_master's facade, for the `generate_*` pair. `mcp` and `file_search` will add the
   user's identity and file scope when they are built.
 - `aclose()` closes the toolbox's HTTP clients. The sandbox outlives it.
@@ -90,21 +112,23 @@ await box.aclose()
 ## Shapes
 
 Each tool copies a precedent the models already know, chosen once for every provider. The
-tables give each parameter; the JSON schemas in `agent/` are the exact spelling. A value the
-schema rules out, such as a timeout over 600 seconds, is an error result.
+tables give each parameter; the JSON schemas in `agent/` are the exact spelling. A value a tool
+can't take, such as a timeout over 600 seconds, is an error result.
 
 Rules every tool shares:
 
 - **Paths** are relative to `/workspace`, the conversation's folder in its sandbox, or absolute.
   Only `/workspace` survives the sandbox stopping.
 - **Long text** from `read`, `bash` and `run_program` is cut at 2000 lines or 50 KB, whichever
-  comes first, with a notice that says how to read on (pi's limits).
+  comes first, with a notice that says how to read on (pi's limits). The full output of a cut
+  command, like a long fetched page, waits under `/workspace/.agent/` for `read`.
 - **Citations** are numbers. `web_search`, `fetch_url`, `file_search` and `search_uflo_docs`
   number their sources, one count across the conversation, and the model writes `[3]` where it
   uses source 3.
 - **Images** a tool returns are at most 1568 px on the long side. That stays under the 2000 px
   Anthropic allows once a request holds more than 20 images, and a page costs Claude about 2,200
-  tokens. Photos and rendered pages go as JPEG, so a 10-page render is about 1 MB.
+  tokens. Photos and rendered pages go as JPEG, so a 10-page render is about 1 MB; an image with
+  transparency stays PNG.
 
 ### read
 
@@ -123,7 +147,7 @@ What comes back depends on the file:
 | text and code | the raw text, no line numbers. A cut ends with pi's notice, e.g. `[Showing lines 1-2000 of 5120. Use offset=2001 to continue.]` |
 | image (png, jpg, gif, webp; bmp, tiff and heic convert) | `Read image file [image/jpeg]` and the image |
 | PDF | `Rendered report.pdf [pages 1-10 of 42]` and one image per page (pdftoppm) |
-| document (docx, doc, odt, rtf, pptx, ppt, odp) | the same, after LibreOffice turns it into a PDF. This is how the model checks the files it builds |
+| document (docx, doc, odt, rtf, pptx, ppt, odp) | the same, after LibreOffice turns it into a PDF, with a profile of its own so parallel renders don't collide. This is how the model checks the files it builds |
 | spreadsheet (xlsx, xls, ods, csv, tsv) | every sheet as CSV under a `## <sheet>` heading, when it all fits in 25 KB. Larger: the first 20 rows of each sheet, its size, and a note that the full data stays in the sandbox for `bash` or `run_program`. A formula cell with no saved value, as in a workbook the model just built, shows its formula |
 | audio, video | an error: read can't return them |
 
@@ -180,11 +204,12 @@ can't wait forever.
 | command | string, required | runs with `bash -c` in `/workspace`, a fresh shell each call |
 | timeout | number | seconds, default 120, at most 600 |
 
-The result is stdout and stderr interleaved, cut from the top so the end survives. When cut, the
-full output is saved in the sandbox and the notice names it:
-`[Showing lines 3001-5000 of 5000. Full output: /tmp/bash-1f3a.log]`. Empty output reads
+The result is stdout and stderr interleaved, cut from the top so the end survives. The output
+goes to a file in the sandbox and only its tail comes back, so a command that prints gigabytes
+costs the host nothing. When cut, the notice names the file:
+`[Showing lines 3001-5000 of 5000. Full output: .agent/bash-1f3a.log]`. Empty output reads
 `(no output)`. A failure appends `Command exited with code 2` or
-`Command timed out after 120 seconds`.
+`Command timed out after 120 seconds`, and a timeout kills everything the command started.
 
 ### run_program
 
@@ -212,12 +237,13 @@ print(max(pages, key=len)[:2000])
   shell itself, so the sandbox tools stay out. So do `todo`, `ask_user` and `widget`, which draw
   UI, and `mcp`'s write tools, which need the user's approval.
 - **Failures.** A failed call raises `ToolError` in the program, so code can't mistake an error
-  for data. A program gets at most 100 calls; the next one raises.
-- **The bridge.** The runner keeps the program's original stdout for itself and points the
-  program's stdout at stderr, so neither the program nor its subprocesses can forge a call. Each
-  call is one JSON line from the runner to the host; the host runs the tool and writes the reply
-  to the runner's stdin. Calls still running when the program ends are cancelled. Keys never
-  enter the sandbox.
+  for data; `asyncio.gather(..., return_exceptions=True)` keeps the calls that worked. A program
+  gets at most 100 calls; the next one raises.
+- **The bridge.** The runner sends each call as one JSON line on its original stdout and reads
+  the reply on stdin; the program's prints go to a log. The bridge only separates calls from
+  output. The program shares the runner's process and can send any line, so the host checks
+  every call against the list above, the call cap and `mcp`'s read-only rule. Calls still running
+  when the program ends are cancelled. Keys never enter the sandbox.
 - **The result** reads like `bash`: output interleaved, cut from the top, and
   `Program exited with code 1` on failure. Files and sources from the calls inside still reach
   the user and the UI.
@@ -255,17 +281,18 @@ as Exa asks. No results reads `No search results found.` Each result adds a `sou
 
 ### fetch_url
 
-Exa's contents tool, under our roster name, with the page budget of Exa's MCP `web_fetch_exa`.
+Exa's contents tool (exa-py's `exa.tools.get_contents`), under our roster name.
 
 | parameter | type | meaning |
 |---|---|---|
 | urls | array of strings, required | absolute URLs; several are read in one call |
-| maxCharacters | integer, default 10,000 | how much of each page to return |
 
-Each page comes back numbered like a search result, with its text in place of highlights. A
-longer page ends with `[Cut at 10000 of 48213 characters. Call again with maxCharacters=48213 to
-read it all.]` A page that fails reads `Error fetching <url>: <reason>`, and the others still
-return.
+It reads only URLs the conversation has seen: the user's, earlier results', and links on pages
+it read. Anything else is an error that points at `web_search`. Each page comes back numbered
+like a search result, with its text in place of highlights, cut at 10,000 characters (exa-py's
+default). A longer page is saved whole: `[Cut at 10000 of 48213 characters. The whole page is at
+.agent/page-7.txt; read it with offset and limit.]` A page that fails reads
+`Error fetching <url>: <reason>`, and the others still return.
 
 ### generate_image
 
@@ -384,9 +411,8 @@ so the model rarely needs the listing.
 
 A tool that changes something (a regrade run, a quiz export, a grade) runs only once the user
 approves it. Submissions and web pages can carry instructions, so the model alone can't start a
-write. A server marks its read-only tools with MCP's `readOnlyHint`; every other call ends the
-turn with AI SDK's tool approval request, the way `ask_user` ends it, and runs when the approval
-comes back.
+write. A server marks its read-only tools with MCP's `readOnlyHint`; for every other call `run`
+comes back waiting for approval, and `resume` runs it once the user approves.
 
 ### widget
 
@@ -399,22 +425,28 @@ One tool for every widget. The skills teach each widget's component; the tool on
 The backend parses the code against the library. The model gets `Shown to the user.` or the
 parser's errors, so it can fix the code. The browser draws the widget from the call's arguments
 once the result succeeds, the way it draws `todo`, so no extra stream part is needed.
+
 An interactive scene is one component whose prop names an HTML file the model built in the
-sandbox; the browser shows that file in a sandboxed frame.
+sandbox. The tool snapshots that file into the result's `files`, so later edits don't change a
+scene already shown. The caller serves it from a separate origin under a policy that blocks every
+network request, since even an image URL could carry data out, and shows it in a sandboxed
+frame.
 
 ## Files
 
-Every upload lands in the sandbox under `uploads/`, and the user message names its path, so
-every tool can reach it. What else the model gets depends on the file:
+The backend hands each upload to `box.attach(name, data)`. It saves the file under `uploads/`
+(a taken name gets a number: `notes (2).pdf`) and returns the user message's parts: the path,
+so every tool can reach the file, and what else the model gets, under the same caps as `read`:
 
 | upload | in the user message | otherwise |
 |---|---|---|
-| image | the image | |
+| image | the image, at most 1568 px | |
 | PDF up to 10 pages and 5 MB | the PDF | |
 | audio up to 10 minutes | the audio | |
 | spreadsheet up to 25 KB | the sheets as CSV | |
 | larger PDF, docx, pptx, longer audio | the path only | ingestion |
 | larger spreadsheet | a preview | the data stays in the sandbox |
+| text and code | the path only | `read` pages through it |
 | video | not supported | |
 
 Ingestion indexes the file for `file_search` and writes a readable text file beside it
@@ -431,6 +463,11 @@ needs a transcription call, which SPEC.md doesn't have yet.
   `offset` and `limit` on `read` keep each render small.
 - Fireworks takes text only in tool results (IO.md), so the first image a tool returns takes
   Fireworks candidates out of the fallback chain.
+- Anthropic takes at most 100 images per request on its 200k-context models, so a long session
+  of renders can outgrow those models before it reaches the byte cap.
+- A planted instruction can still put data into a search query, which reaches Exa, not the
+  attacker. The read-only rule for `mcp` and the seen-URL rule for `fetch_url` close the direct
+  routes out, not every route.
 - A short audio upload goes into the user message as audio, which Anthropic, OpenAI's Responses
   API and Fireworks don't take (IO.md). From then on only Gemini and OpenAI's audio models can
   answer.
