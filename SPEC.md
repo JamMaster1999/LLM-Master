@@ -55,9 +55,11 @@ attempts and latency. One case per provider: gemini through `acompletion` with
 openai through the held client's own SDK calls, `images.generate`, `images.edit` and
 `audio.speech.create`. any-llm wraps no image edit and forbids every extra key on generate and
 speech, so the held client keeps the pass-through law; its errors convert to any-llm's typed ones.
-A media candidate takes only `timeout` from its config; the rest raises `UnsupportedField`.
-Everything else rides its `extra`: size, quality, `output_format`, `voice` (openai's default is
-`alloy`, since the API requires one), gemini's `image_config`. Anthropic and Fireworks make no
+A media candidate takes only `timeout` from its config; any other field set raises
+`UnsupportedField`. Everything else rides its `extra`, merged last over our own keys: size,
+quality, `output_format`, `voice` (openai's default is `alloy`, since the API requires one),
+gemini's `image_config` or `response_modalities`. openai speech's mime type is its reply's
+`Content-Type`. Anthropic and Fireworks make no
 media and raise `UnsupportedField`. A candidate that answers without the media raises typed
 `MissingMedia`, so fallback moves on.
 
@@ -86,9 +88,10 @@ discount manually.
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.
 
-**Tests.** Live-first: goldens pin request shapes, live calls prove behavior. The scripts in
-live-seeds/ grow into the suite. Two benchmark gates run before migration: conversion
-overhead at concurrency 50, and streaming time to first token.
+**Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
+exchanges in `tests/fixtures/` replay offline through a local stand-in that also pins every
+request body; `RECORD=1` re-records them live. Two benchmark gates run before migration:
+conversion overhead at concurrency 50, and streaming time to first token.
 
 ## Not rebuilt
 

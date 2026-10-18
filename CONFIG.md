@@ -138,8 +138,8 @@ save → reload → next call is lossless by construction.
   results as `function_call_output` items).
 - Scope boundary: `query()` never runs a tool. It returns the model's tool calls; executing and
   looping is the caller's job.
-- Live seeds verify the loop end to end per provider — we read their converters, but we bill
-  against what actually runs.
+- Recorded tool loops verify the loop end to end per provider (tests/test_query.py) — we read
+  their converters, but we bill against what actually runs.
 
 ## 7. `tool_choice` — `ToolChoice(mode, only, parallel) | None`, default None
 
