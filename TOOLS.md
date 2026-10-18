@@ -43,8 +43,8 @@ code it writes. Three rules keep the conversation's data in:
 
 ## Running tools
 
-The caller builds a `Toolbox` for each request of a conversation. It lists the tools for the
-config and runs the model's calls:
+The caller installs `llm-master[agent]` and builds a `Toolbox` for each request of a
+conversation. It lists the tools for the config and runs the model's calls:
 
 ```python
 box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, urls=user_urls, llm=llm)
@@ -91,6 +91,22 @@ A waiting call has no result yet. The loop ends the turn, and the browser asks t
 client-side tools). The next request brings the reply, and `box.resume(name, arguments, reply)`
 finishes the call before anything else joins the history. A request without a reply declines it
 with None.
+
+## The sandbox
+
+Each conversation gets one Modal sandbox, named after it and started on its first sandbox call.
+
+- **Files** live in `/workspace`, a Modal volume of the conversation's own. A sandbox that idled
+  out comes back with every file.
+- **Lifetime**: Modal stops a sandbox after 15 idle minutes, and after 24 hours at most.
+  `agent.sandbox.delete(conversation_id)` stops it and drops the volume, for when the
+  conversation goes.
+- **Names**: the conversation id must fit a Modal name: letters, digits, `-`, `_` and `.`, at
+  most 54 characters. A UUID fits. Each deployment uses its own Modal environment.
+- **No network**, DNS included (Keeping data in).
+- **The image** is Debian slim with Python 3.13, LibreOffice, poppler, Pillow and openpyxl.
+  Nothing installs at run time, so a skill that needs a package adds it to the image. A new image
+  reaches a conversation when its sandbox next starts.
 
 ## Shared rules
 
