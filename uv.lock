@@ -226,8 +226,8 @@ aiohttp = [
 
 [[package]]
 name = "any-llm-sdk"
-version = "1.37.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.0.0.dev0"
+source = { git = "https://github.com/JamMaster1999/any-llm?branch=llm-master#b719cd22a96ca673cd65f15ed922e6936acd02e9" }
 dependencies = [
     { name = "anthropic" },
     { name = "httpx" },
@@ -236,10 +236,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/c3/754d9eeb1fcbf24d811912d17e6a77c942843ad57dd4f38ef9a32240ca8b/any_llm_sdk-1.37.0.tar.gz", hash = "sha256:43348783adab2a6050e5803d2f396937cf9928d76c182ce1604ee579e4ecf97f", size = 281585, upload-time = "2026-10-16T17:23:38.991Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/45/b49aaacc60847c98ad3ea056472e0fe3a48617ddb86a5b1265369a7c3692/any_llm_sdk-1.37.0-py3-none-any.whl", hash = "sha256:7149338f63419a17234f59364aa42e1db5cd8321eb147c9e3da6dd9c05f1d38b", size = 345533, upload-time = "2026-10-16T17:23:37.572Z" },
 ]
 
 [package.optional-dependencies]
@@ -1070,7 +1066,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", extras = ["aiohttp"] },
-    { name = "any-llm-sdk", extras = ["gemini"], specifier = "==1.37.0" },
+    { name = "any-llm-sdk", extras = ["gemini"], git = "https://github.com/JamMaster1999/any-llm?branch=llm-master" },
     { name = "google-genai", extras = ["aiohttp"] },
     { name = "openai", extras = ["aiohttp"] },
 ]
