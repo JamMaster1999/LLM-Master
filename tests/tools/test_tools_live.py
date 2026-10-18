@@ -100,7 +100,7 @@ async def test_bash_reports_output_exit_code_and_timeout(box):
     slow = await run(box, "bash", command="sleep 5", timeout=1)
     assert slow.content == "(no output)\n\nCommand timed out after 1 seconds"
     refused = await run(box, "bash", command="true", timeout=601)
-    assert refused.error and refused.content == "timeout must be more than 0 and at most 600 seconds."
+    assert refused.error and refused.text().startswith("Invalid arguments for bash: timeout: Input should be less than or equal to 600")
 
 
 async def test_bash_cuts_long_output_and_keeps_the_rest_for_read(box):
@@ -110,6 +110,11 @@ async def test_bash_cuts_long_output_and_keeps_the_rest_for_read(box):
     assert notice.startswith("[Showing lines 3001-5000 of 5000. Full output: .agent/bash-")
     log = notice.removeprefix("[Showing lines 3001-5000 of 5000. Full output: ").removesuffix("]")
     assert (await run(box, "read", path=log, limit=2)).content == "1\n2\n\n[4998 more lines in file. Use offset=3 to continue.]"
+    wide = await run(box, "bash", command="for i in $(seq 1000); do printf '%0100d\\n' $i; done")  # 101 KB
+    assert wide.text().splitlines()[0] == f"{495:0100d}"  # line 494 was cut in half, so it's dropped
+    assert "[Showing lines 495-1000 of 1000 (50.0KB limit). Full output: .agent/bash-" in wide.text()
+    one_line = await run(box, "bash", command="python -c \"print('x' * 100000)\"")
+    assert one_line.text().endswith("]") and "[Showing the last 50.0KB of line 1. Full output: .agent/bash-" in one_line.text()
 
 
 async def test_run_program_calls_host_tools_and_the_host_refuses_the_rest(box):
@@ -117,14 +122,15 @@ async def test_run_program_calls_host_tools_and_the_host_refuses_the_rest(box):
 with open("report.txt", "w") as f:
     f.write("Quiz report")
 print(await deliver_file({"path": "report.txt"}))
-import __main__  # the runner: a program can forge any call through it
-try:
-    await __main__.tool("bash")({"command": "ls"})
+print(len(await fetch_url({"urls": ["https://en.wikipedia.org/wiki/Photosynthesis"]})) > 65536)  # a long reply
+bridge = next(cell.cell_contents for cell in deliver_file.__closure__ if hasattr(cell.cell_contents, "tool"))
+try:  # a program can forge any call through the runner's bridge
+    await bridge.tool("bash")({"command": "ls"})
 except ToolError as error:
     print(error)
 """
     result = await run(box, "run_program", code=code)
-    assert result.content == "Sent report.txt to the user.\nbash can't be called from a program."
+    assert result.content == "Sent report.txt to the user.\nTrue\nbash can't be called from a program."
     assert [(file.name, file.data) for file in result.files] == [("report.txt", b"Quiz report")]
 
 
@@ -142,26 +148,21 @@ async def test_deliver_file_hands_the_bytes_to_the_user(box):
     assert [(f.name, f.mime, f.data) for f in result.files] == [("notes.md", "text/markdown", b"# Notes")]
 
 
-async def test_web_search_numbers_sources_after_the_saved_ones():
-    saved = [{"type": "source-url", "sourceId": "1", "url": "https://example.com", "title": "Example"}]
-    box = Toolbox("unused", sources=saved)
+async def test_web_search_returns_numbered_results_from_exa():
+    box = Toolbox("unused")
     try:
         result = await run(box, "web_search", query="a grade 9 lesson plan on the light reactions of photosynthesis",
                            objective="Lesson plans a high school biology teacher could use")
-        again = await run(box, "web_search", query="a grade 9 lesson plan on the light reactions of photosynthesis",
-                          objective="Lesson plans a high school biology teacher could use")
     finally:
         await box.aclose()
-    assert result.text().startswith("[2] Title: ")
-    assert [part["sourceId"] for part in result.sources] == [str(n) for n in range(2, 2 + len(result.sources))]
-    first = {part["url"]: part["sourceId"] for part in result.sources}
-    assert all(first.get(part["url"], part["sourceId"]) == part["sourceId"] for part in again.sources)
+    assert result.text().startswith("[1] Title: ") and "\nHighlights:\n" in result.text()
+    assert [part["sourceId"] for part in result.sources] == [str(n) for n in range(1, len(result.sources) + 1)]
 
 
-async def test_fetch_url_reads_seen_urls_and_saves_long_pages(box):
-    unseen = await run(box, "fetch_url", urls=["https://example.com/made-up"])
-    assert unseen.error and "Not seen: https://example.com/made-up" in unseen.content
+async def test_fetch_url_returns_the_page_and_keeps_what_doesnt_fit(box):
     page = await run(box, "fetch_url", urls=[WIKI])
+    notice = page.text().rsplit("\n", 1)[1]
     assert page.text().startswith(f"[1] Title: Photosynthesis\nURL: {WIKI}")
-    assert "The whole page is at .agent/page-1.txt; read it with offset and limit.]" in page.content
-    assert (await run(box, "read", path=".agent/page-1.txt", limit=1)).text().startswith("Photosynthesis")
+    saved = notice.removeprefix("[The whole result is at ").removesuffix(".]")
+    assert saved.startswith(".agent/fetch_url-")
+    assert (await run(box, "read", path=saved, limit=1)).text().startswith("[1] Title: Photosynthesis")

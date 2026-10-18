@@ -1,16 +1,13 @@
 """The web tools on Exa: web_search is exa-py's own search tool, fetch_url its contents tool."""
-import re
 from collections.abc import Iterable
 from functools import cached_property
+from typing import Literal
 
 from exa_py import AsyncExa
 
 from agent.result import Result, ToolError
-from agent.sandbox import Sandbox
 
 EXA_API = "https://api.exa.ai"
-PAGE_CHARACTERS = 10_000  # exa-py's default cut for page text
-PAGES = "/workspace/.agent"  # where a longer page waits for read
 
 SEARCH = {"type": "function", "function": {
     "name": "web_search",
@@ -28,33 +25,27 @@ SEARCH = {"type": "function", "function": {
 FETCH = {"type": "function", "function": {
     "name": "fetch_url",
     "description": "Read the full contents of web pages you already have URLs for, such as pages returned by a search "
-                   "or mentioned by the user. Only those URLs, and links on pages you have read, can be fetched. "
-                   "Pages are numbered like search results; cite them as [n].",
+                   "or mentioned by the user. Only those URLs can be fetched; search for anything else. Pages are "
+                   "numbered like search results; cite them as [n].",
     "parameters": {"type": "object", "properties": {
         "urls": {"type": "array", "items": {"type": "string"}, "description": "Absolute URLs of the pages to read, "
                  "including the scheme. Pass several URLs to read them in a single call."},
     }, "required": ["urls"]}}}
 
-_URL = re.compile(r"https?://[^\s<>\"'()\[\]]+")
-
-
 class Web:
-    """Search and fetch for one conversation. Sources are numbered in the order they first appear,
-    and fetch_url reads only URLs the conversation has already seen, so model-written code can't
-    smuggle sandbox data out in a URL of its own making."""
+    """Search and fetch for one conversation. Sources are numbered in the order they first appear.
+    fetch_url reads only URLs the user wrote or Exa returned, never one the model made up, so it
+    can't carry the conversation's data out."""
 
-    def __init__(self, sandbox: Sandbox, sources: list[dict], urls: Iterable[str]) -> None:
-        self.sandbox = sandbox
+    def __init__(self, sources: list[dict], urls: Iterable[str]) -> None:
         self.sources = sources
-        self.seen = {_key(url) for url in urls} | {_key(part["url"]) for part in sources if "url" in part}
+        self.seen = set(urls) | {part["url"] for part in sources if "url" in part}
 
     @cached_property
     def exa(self) -> AsyncExa:  # made on first use, so a conversation that never searches needs no key
         return AsyncExa(api_base=EXA_API)
 
-    async def search(self, query: str, objective: str, type: str = "auto") -> Result:
-        if type not in ("auto", "deep"):
-            raise ToolError("type must be auto or deep.")
+    async def search(self, query: str, objective: str, type: Literal["auto", "deep"] = "auto") -> Result:
         data = await self._post("/search", {"query": query, "objective": objective, "type": type,
                                             "numResults": 10, "contents": {"highlights": True}})
         if not data["results"]:
@@ -70,10 +61,10 @@ class Web:
         return Result(text, sources=parts)
 
     async def fetch(self, urls: list[str]) -> Result:
-        unseen = [url for url in urls if _key(url) not in self.seen]
+        unseen = [url for url in urls if url not in self.seen]  # exact: a changed slash could carry data
         if unseen:
-            raise ToolError(f"fetch_url reads only URLs the user gave, earlier results returned, or pages you read "
-                            f"link to. Not seen: {', '.join(unseen)}. Use web_search to find pages.")
+            raise ToolError(f"fetch_url reads only URLs the user gave or earlier results returned. "
+                            f"Not seen: {', '.join(unseen)}. Use web_search to find pages.")
         data = await self._post("/contents", {"urls": urls, "text": True})
         pages = {page["id"]: page for page in data["results"]}
         errors = {status["id"]: status.get("error") or {} for status in data.get("statuses") or []}
@@ -82,16 +73,9 @@ class Web:
             if url not in pages:
                 entries.append(f"Error fetching {url}: {errors.get(url, {}).get('tag', 'no content')}")
                 continue
-            page, part = pages[url], self._number(pages[url])
+            part = self._number(pages[url])
             parts.append(part)
-            text = page.get("text") or ""
-            self.seen |= {_key(link) for link in _URL.findall(text)}
-            if len(text) > PAGE_CHARACTERS:
-                saved = f"{PAGES}/page-{part['sourceId']}.txt"
-                await self.sandbox.write(saved, text.encode())
-                text = (text[:PAGE_CHARACTERS] + f"\n\n[Cut at {PAGE_CHARACTERS} of {len(text)} characters. The whole "
-                        f"page is at {saved.removeprefix('/workspace/')}; read it with offset and limit.]")
-            entries.append(_entry(part, page) + "\n" + text)
+            entries.append(_entry(part, pages[url]) + "\n" + (pages[url].get("text") or ""))
         return Result("\n\n---\n\n".join(entries), sources=parts, error=not parts)
 
     async def aclose(self) -> None:
@@ -106,11 +90,12 @@ class Web:
 
     def _number(self, result: dict) -> dict:
         """The source part for a result: the one already numbered for its URL, or a new one."""
-        self.seen.add(_key(result["url"]))
+        self.seen.add(result["url"])
         for part in self.sources:
             if part.get("url") == result["url"]:
                 return part
-        part = {"type": "source-url", "sourceId": str(len(self.sources) + 1), "url": result["url"],
+        last = max((int(part["sourceId"]) for part in self.sources), default=0)  # numbers may have gaps
+        part = {"type": "source-url", "sourceId": str(last + 1), "url": result["url"],
                 "title": result.get("title") or result["url"]}
         self.sources.append(part)
         return part
@@ -123,8 +108,3 @@ def _entry(part: dict, result: dict) -> str:
     if result.get("author"):
         lines.append(f"Author: {result['author']}")
     return "\n".join(lines) + "\n"
-
-
-def _key(url: str) -> str:
-    """A URL as fetch_url compares it: no fragment, no trailing slash."""
-    return url.split("#")[0].rstrip("/")

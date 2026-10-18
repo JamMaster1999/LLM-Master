@@ -12,6 +12,7 @@ from modal.types import FileInfo
 
 APP = "llm-master-agent"
 WORKSPACE = "/workspace"
+SCRATCH = f"{WORKSPACE}/.agent"  # where long output waits for read
 IMAGE = (modal.Image.debian_slim(python_version="3.13")
          .apt_install("libreoffice-nogui", "poppler-utils", "fonts-liberation", "fonts-dejavu", "procps")
          .uv_pip_install("pillow", "pillow-heif", "openpyxl"))
@@ -49,6 +50,7 @@ class Sandbox:
     async def exec(self, *args: str, timeout: float) -> tuple[int, bytes, bytes]:
         """Runs args with stdin closed; returns the exit code, stdout and stderr. Every byte comes
         back into memory, so callers bound the output. Raises TimeoutError past `timeout` seconds."""
+        await self.running()  # the clock starts once the sandbox has
         start = time.monotonic()
         process = await self.start(*args, timeout=timeout)
         process.stdin.write_eof()
