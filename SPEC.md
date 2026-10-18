@@ -13,7 +13,7 @@ Each step builds on the previous ones and borrows their tests. Steps 3 onward st
 spec doc — signatures, response types, stream events — implemented only after review.
 
 1. **Providers** — the registry data page. Done.
-2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. PR #4, in review.
+2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
