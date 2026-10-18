@@ -1,0 +1,29 @@
+[
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3-pro-image:generateContent",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "A small red circle on a white background, flat."
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "generationConfig": {
+     "responseModalities": [
+      "IMAGE"
+     ]
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json; charset=UTF-8",
+   "body": "{\n  \"candidates\": [\n    {\n      \"content\": {},\n      \"finishReason\": \"IMAGE_RECITATION\",\n      \"index\": 0,\n      \"finishMessage\": \"Unable to show the generated image. The model could not generate the image based on the prompt provided. You will not be charged for this request. Try rephrasing the prompt. If you think this was an error, [send feedback](https://ai.google.dev/gemini-api/docs/troubleshooting).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 12,\n    \"totalTokenCount\": 12,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 12\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3-pro-image\",\n  \"responseId\": \"MyXVaoPICqCVmtkPx8XS-A8\"\n}\n"
+  }
+ }
+]
