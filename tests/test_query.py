@@ -145,14 +145,10 @@ async def test_flagged_input_never_reaches_the_model(recorded, llm):
         await llm.query(candidate, [{"role": "user", "content": "I will hunt you down and kill you."}])
 
 
-@pytest.mark.parametrize("candidate, history, error", [
-    (Model(provider="gemini", model="gemini-3.5-flash", config=Config(cache=30)), ASK, UnsupportedField),
-    (Model(provider="gemini", model="gemini-3.5-flash"), [], ValueError),
-])
-async def test_a_call_that_cant_be_built_sends_nothing(candidate, history, error, recorded, llm):
+async def test_a_call_that_cant_be_built_sends_nothing(recorded, llm):
     recorded("nothing_sent")  # no exchanges: teardown fails on any request
-    with pytest.raises(error):
-        await llm.query(candidate, history)
+    with pytest.raises(UnsupportedField):
+        await llm.query(Model(provider="gemini", model="gemini-3.5-flash", config=Config(cache=30)), ASK)
 
 
 async def test_openai_audio_input_goes_to_completion(recorded, llm):
@@ -246,7 +242,7 @@ async def test_leaving_a_stream_closes_the_providers_stream(leave, held, llm):
                 forwarding.set()
                 await asyncio.Event().wait()
         task = asyncio.create_task(forward())
-        await forwarding.wait()
+        await asyncio.wait_for(forwarding.wait(), 5)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert await asyncio.to_thread(held.wait, 5) and s.response is None

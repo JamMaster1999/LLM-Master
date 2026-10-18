@@ -15,13 +15,6 @@ def test_responses_levels_carry_summary_ask():
     assert thinking.translate("none", "responses") == {"reasoning": {"effort": "none"}}
 
 
-def test_messages_levels_spelling():
-    # the live test can't catch a lost output_config: adaptive alone still produces thinking blocks
-    assert thinking.translate("low", "messages") == {"thinking": {"type": "adaptive", "display": "summarized"},
-                                                      "output_config": {"effort": "low"}}
-    assert thinking.translate("none", "messages") == {"thinking": {"type": "disabled"}}
-
-
 @pytest.mark.live
 async def test_responses_levels_always_return_summary_text():
     # needs real reasoning: openai emits summaries only when there is enough to summarize

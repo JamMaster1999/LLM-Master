@@ -10,6 +10,7 @@ from openai.types.responses import Response as OpenAIResponse, ResponseStreamEve
 
 from llm_master.io.messages import new_id
 from llm_master.io.response import Response, arguments
+from llm_master.pipeline import Result
 from llm_master.providers import API
 
 
@@ -21,7 +22,7 @@ class Stream:
     belongs to the iterating side.
     """
 
-    def __init__(self, events: AsyncGenerator[dict | Response, None]):
+    def __init__(self, events: AsyncGenerator[dict | Result[Response], None]):
         self._events = events
         self.response: Response | None = None
 
@@ -29,8 +30,8 @@ class Stream:
         # a loop that dies early drops this generator, and its finalizer closes the events
         async with aclosing(self._events) as events:
             async for event in events:
-                if isinstance(event, Response):
-                    self.response = event
+                if isinstance(event, Result):
+                    self.response = event.value
                 else:
                     yield event
 
@@ -203,11 +204,8 @@ class _Responses:
             return self.blocks.feed("text", e.delta)
         if e.type in ("response.reasoning_summary_part.done", "response.content_part.done"):
             return self.blocks.close()
-        if e.type == "response.completed" or e.type == "response.incomplete":
-            self.final = e.response
-        if e.type == "response.failed":
-            raise ProviderError(e.response.error.message if e.response.error else "the response failed",
-                                provider_name="openai")
+        if e.type == "response.completed" or e.type == "response.incomplete" or e.type == "response.failed":
+            self.final = e.response  # read() raises for a failed one, as for a plain call
         if e.type == "error":
             raise ProviderError(e.message, provider_name="openai")
         return []

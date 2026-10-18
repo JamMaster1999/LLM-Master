@@ -38,7 +38,8 @@ async def llm():
 
 @pytest.fixture
 def provider_server(monkeypatch, request):
-    """Points every provider at a local server; answer(handler, provider, path, body) writes each reply."""
+    """Points every provider at a local server; answer(handler, provider, path, body) writes each reply.
+    The keys are fake unless RECORD=1, which forwards each request to the real provider."""
     def start(answer: Callable[[BaseHTTPRequestHandler, str, str, bytes], None]) -> None:
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -54,11 +55,13 @@ def provider_server(monkeypatch, request):
         request.addfinalizer(server.shutdown)
         for provider, (var, _) in UPSTREAM.items():
             monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_address[1]}/{provider}")
+        for key in KEYS if os.environ.get("RECORD") != "1" else ():
+            monkeypatch.setenv(key, "test")
     return start
 
 
 @pytest.fixture
-def recorded(provider_server, monkeypatch, request):
+def recorded(provider_server, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
     that each request body matches the recorded one: the goldens of the same-bytes rule.
     RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys)."""
@@ -83,9 +86,6 @@ def recorded(provider_server, monkeypatch, request):
             handler.wfile.write(reply["body"].encode())
 
         provider_server(answer)
-        for key in KEYS:
-            if not live:
-                monkeypatch.setenv(key, "test")
 
         def check():
             if live:
