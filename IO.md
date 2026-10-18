@@ -1,204 +1,341 @@
-# The message structure
+# Messages, responses and streams
 
-One conversation, one shape. The caller writes openai's chat shape once; assembly re-spells it
-into each candidate's dialect on every call, fallback hops included. This page is the law for
-what a message may hold and how each dialect spells it. Config fields live in CONFIG.md; code
-shape in GRAMMAR.md. The response type and stream events get their own round; this page pins
-only what they must append back into the history.
+This page defines the message format llm_master accepts, how each provider API receives it, the
+response a call returns, and the chunks a stream yields. Config fields are in CONFIG.md, code
+conventions in GRAMMAR.md, and tools in TOOLS.md.
 
-## The three roles
+The caller keeps a conversation as a list of messages in llm_master's format. On every call,
+llm_master converts that list into the format of the API it calls: Anthropic Messages, OpenAI
+Responses, or chat completions for Gemini, Vertex AI and Fireworks.
+
+llm_master uses its own format instead of OpenAI's chat format for two reasons:
+
+- A chat tool message holds only text, so there's nowhere to put an image or PDF a tool returns.
+- An assistant message needs fields the chat format lacks: the reasoning text, which model wrote
+  it, and the provider's raw output for replay.
+
+Two terms come up throughout:
+
+- **candidate** — a provider and model a call can go to. A call lists its candidates in order:
+  the first is the primary, the rest are fallbacks, tried one by one if the ones before fail.
+- **native** — a provider's raw output for one assistant message, stored so it can be sent back
+  to the same model unchanged.
+
+## Roles
 
 | role | fields | meaning |
 |---|---|---|
 | `user` | `content` | what you send |
-| `assistant` | `content`, `tool_calls`, `reasoning`, `origin`, `native` | what a model said |
-| `tool` | `tool_call_id`, `content` | one tool call's result |
+| `assistant` | `content`, `calls`, `reasoning`, `origin`, `native` | what a model said |
+| `tool` | `call_id`, `content` | one tool call's result |
 
-- `system` is not a role. The `system` config field is the only system prompt; a system-role
-  entry fails validation (CONFIG.md field 1).
-- `content`: user takes a string or a list of parts; assistant holds `str | None`; tool holds a
-  string — the portable subset every dialect can spell. Anthropic's image tool-results and
-  `is_error` flag wait until a consumer needs them.
-- One `Message` class: `role` is the enum, the other fields are optional, one validator holds
-  every cross-field rule. Plain openai-shaped dicts validate through it; the class exists for
-  autocomplete. Same schema either way. The schema is closed — a typo fails loud, and the
-  wrapper-owned keys (`reasoning`, `origin`, `native`) stay ours.
+- There's no system role. The system prompt is the `system` config field (CONFIG.md field 1), and
+  a message with role `system` fails validation.
+- `content` per role:
+  - user: a string or a list of parts (text, image, file, audio).
+  - tool: a string or a list of parts (text, image, file).
+  - assistant: a string, empty (`""`) when the message only calls tools.
+- `calls`: a list of tool calls, each `{"id": str, "name": str, "arguments": dict, "wire_id":
+  str}`.
+  - `id` is ours; `wire_id` is the id the provider gave the call (see Ids).
+- One `Message` class covers all three roles.
+  - `role` decides which fields apply, and one validator checks the rules between fields.
+  - Plain dicts validate through the same class; the class itself is there for editor
+    autocomplete.
+  - Unknown keys fail validation, so a typo is caught.
 
 ## Parts
 
-Wire spellings are openai chat's. The set is closed — a discriminated union on `type`, unknown
-types fail validation. Keys inside a part ride through each rename and the provider judges them.
+Parts are a fixed set, told apart by `type`. An unknown `type` fails validation.
 
 - text — `{"type": "text", "text": str}`
-- image — `{"type": "image_url", "image_url": {"url": <base64 data-uri>}}`
-- file (pdf) — `{"type": "file", "file": {"file_data": <base64 data-uri>, "filename": str}}`
-- audio — `{"type": "input_audio", "input_audio": {"data": <base64>, "format": str}}`
+- image — `{"type": "image", "data": <base64>, "mime": str}`
+- file (PDF) — `{"type": "file", "data": <base64>, "mime": "application/pdf", "filename": str}`
+- audio — `{"type": "audio", "data": <base64>, "format": str}`, user messages only
 
-Authoring: `Image` and `Audio` accept a data-uri, a URL, or a local file path. One pre-pass at
-call time converts everything to base64 — downloading and converting (HEIC→PNG) as needed, the
-audio format read off the MIME type — before candidate iteration, so a fallback hop never
-re-downloads and no provider is ever handed a URL. Validation itself does no I/O; a failed download or conversion raises typed before any
-model is billed. Size stays the provider's judgment; for the record: anthropic caps images at
-5MB post-encoding, gemini inlines at most 20MB per request.
+Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` accept a
+data-uri, a URL or a local path, and read, convert (HEIC to PNG) and encode the data when the part
+is created. The caller then saves exactly the bytes every later call sends (see The same-bytes
+rule). A failed download or conversion raises a typed error when the part is created, before any
+model is billed.
 
-## Assistant turns: readable plus native
+Size limits are left to the provider. For reference: Anthropic caps an image at 5 MB after
+encoding, and Gemini accepts at most 20 MB of inline data per request.
 
-Two views, one message.
+## Assistant messages: readable fields and native
 
-The readable fields — `content`, `reasoning`, `tool_calls` — are what every consumer reads, what
-a frontend renders after save → reload, and what a foreign candidate translates. `reasoning` is
-the provider-exposed thought text (anthropic's thinking, openai's summaries, gemini's thoughts —
-not equivalent disclosures, one display surface). It is a view: never a wire field, never a
-translation source.
+An assistant message holds two views of the same answer.
 
-Provider-minted turns carry two more fields:
+The readable fields are `content`, `calls` and `reasoning`. Our code reads these, a frontend
+renders them after a reload, and they are all another model ever sees of the message.
+`reasoning` is the thought text the provider exposes: Anthropic's thinking, OpenAI's summaries,
+Gemini's thoughts. They differ in how much they reveal but display the same way. `reasoning` is
+never sent to a provider.
 
-- `origin` — `{"provider": ..., "model": ...}`: the candidate that minted the turn. Stamped on
-  every response, from the candidate, not from the response's model field (gemini's says
-  `google/genai`).
-- `native` — the provider's verbatim output, opaque:
-  - anthropic: the response's `content` list — thinking (signed), redacted_thinking, text,
-    tool_use, server_tool_use, web_search_tool_result, and whatever the API grows next. Stored
-    as wire JSON, never re-validated against a block roster.
-  - openai: the response's `output` list — reasoning (with encrypted_content), message,
-    function_call, web_search_call, ...
-  - gemini, vertexai, fireworks: no `native`. The chat shape is the completion dialect's
-    history-ready form; gemini's thought signatures ride any-llm's inline `extra_content`
-    pouches on the message and on each tool call, untouched.
+A message a provider produced has two more fields:
 
-**The echo law.** Assembling for a candidate: a turn whose `origin` equals the candidate —
-provider and model both — replays `native` verbatim and its readable fields are ignored;
-gemini's inline pouches ride under the same condition. Any other candidate gets `native` and
-pouches deleted and the readable fields translated. Signed and encrypted reasoning is
-model-bound: a gpt → gpt-mini or opus → sonnet hop must degrade, or it 400s. Deleting is the
-only correct move — translating another model's reasoning is the LiteLLM bug. Deletion happens
-per assembly; stored history is never mutated, so a later hop back to the origin replays in
-full.
+- `origin` — `{"provider": ..., "model": ...}`, the candidate that produced it. It's set from the
+  candidate, not from the model name in the response, because Gemini's response says `google/genai`.
+- `native` — the provider's raw output, stored as JSON exactly as received and never
+  re-validated:
+  - Anthropic: the response's `content` list (signed thinking, redacted thinking, text,
+    tool_use, and any block type added later).
+  - OpenAI: the response's `output` list (reasoning with `encrypted_content`, message,
+    function_call, and so on).
+  - Gemini, Vertex AI, Fireworks: the assistant message as any-llm returned it, including
+    Gemini's thought signatures in `extra_content` and Fireworks' `reasoning_content`.
 
-## Tool calls and results
+An assistant message the caller wrote has no `origin` and no `native`.
 
-One spelling both directions, openai's:
+**The replay rule.** When a candidate matches a message's `origin` (same provider and same
+model), llm_master sends `native` unchanged and ignores the readable fields. Every other candidate
+gets only `content` and `calls` (see Messages from other models). Reasoning never goes to a
+different model. Within one provider, the servers silently drop reasoning a sibling model can't read, so a hop such as gpt → gpt-mini or opus → sonnet loses the reasoning without an error. Stored history is never
+changed, so a later call back to the original model replays it in full.
 
-- call: `{"id": str, "type": "function", "function": {"name": str, "arguments": <json str>}}`,
-  plus gemini's inline `extra_content` pouch.
-- result: `{"role": "tool", "tool_call_id": str, "content": str}`.
+## Ids
 
-Ids ride across providers untouched — anthropic's `tool_use.id` and openai's `call_id` land in
-`id`, and results match back up on whatever candidate runs next. One exception at ingest:
-any-llm mints gemini ids as `call_{hash(name)}_{index}`, which collide across turns, so gemini
-turns get fresh unique ids before entering history. Gemini itself matches results by name and
-never reads ids back. `query()` never runs a tool; the loop is the caller's (CONFIG.md field 8).
+Each tool call gets our own id when its message enters history: `lm_` plus 24 hex characters.
+The id is stored and never regenerated. The provider's own id is kept as `wire_id`. It's used
+only when sending `native` back to the model that made the call; in that case the tool result
+points at `wire_id`, and everywhere else at `id`.
+
+Why our own id: Anthropic accepts only letters, digits, `_` and `-`; OpenAI Responses caps
+`call_id` at 64 characters; Gemini 3 matches results to calls by id. One id that meets all three,
+created once, never depends on what another provider generated. Ids in caller-written calls must
+match `^[A-Za-z0-9_-]{1,64}$`.
+
+`query()` never runs a tool; the caller runs them (CONFIG.md field 6).
+
+## The same-bytes rule
+
+Building a request from history depends only on the history and the candidate. It does no I/O
+and uses no clock and no randomness.
+
+The reason is prompt caching. Every provider's cache only hits when the start of a request is
+byte-for-byte the same as an earlier one. If one earlier byte changes (a re-encoded image, a
+regenerated id, a reordered field), the cache misses from that point on, and every later call
+pays full price for the whole conversation.
+
+So ids are created once, parts hold base64 from the moment they're created, `native` stays raw
+JSON, and golden tests (saved expected requests) pin every request shape below. Changing one
+busts the cache for every saved conversation.
 
 ## Validation
 
-One validator, every cross-field rule:
+One validator checks every rule, before anything is sent:
 
-- Roles: user / assistant / tool. System-role entries rejected. The list must not be empty.
-- `tool_call_id` required on tool turns, forbidden elsewhere. `tool_calls`, `reasoning`,
-  `origin`, `native` are assistant-only. `native` requires `origin`.
-- `reasoning` accepts any-llm's `{"content": str}` object form and stores the plain string.
-- Every tool call's `arguments` must parse as JSON — anthropic and gemini need the object, and a
-  broken history should fail here, not on the wire.
-- The tool loop must be whole: tool turns immediately follow their assistant turn, every
-  `tool_call_id` matches one of that turn's calls, no duplicates, every call answered before the
-  next turn. Anthropic, openai, and gemini each 400 on a different violation; we reject once,
-  before any wire.
-- An assistant turn carrying nothing — no content, no tool_calls, no native — is rejected.
-- A trailing text-only assistant turn is allowed and rides as-is: anthropic treats it as
-  prefill, the others as context. Provider judges.
+- **The list**
+  - It can't be empty.
+  - Roles are user, assistant and tool. A system-role message fails.
+  - It can't end on an assistant message: Claude 5.5 treats that as a prefill and returns a 400.
+- **Fields per role**
+  - `call_id` is required on tool messages and forbidden on the others.
+  - `calls`, `reasoning`, `origin` and `native` belong to assistant messages only.
+  - `native` requires `origin`.
+  - `reasoning` also accepts any-llm's `{"content": str}` form and stores the plain string.
+- **Content**
+  - Audio parts appear only in user messages.
+  - Tool messages hold text, image and file parts.
+  - An assistant message with nothing in it (empty content, no calls, no native) fails.
+- **Calls**
+  - Every call's `arguments` is a JSON object.
+  - Call ids are unique across the conversation.
+- **Tool loops** — one assistant message can make several calls at once (parallel calls).
+  - Each call gets its own tool message, and they all come right after the assistant message.
+  - Each `call_id` matches one of that message's calls, and none repeats.
+  - Every call is answered before the next user or assistant message.
+  - Anthropic, OpenAI and Gemini each return a 400 on a different one of these mistakes; we
+    reject all of them up front.
 
-## Translation per dialect
+## Building the request, per API
 
-io/messages.py follows the grammar: one case per API, every answer out of a case.
-`translate(messages, api, provider, model, system)` returns the dialect's message fragment.
-Provider and model drive the echo law; system rides in because completion has no parameter for
-it.
+io/messages.py has one case per API, following GRAMMAR.md. The candidate's provider and model
+decide which messages replay `native`. The system prompt is passed in because the completion API
+has no separate parameter for it.
 
 ### completion → `{"messages": [...]}`
 
-Handed over as-is — each provider's any-llm converter consumes this shape.
+any-llm's converters expect OpenAI's chat format, so this case writes it.
 
-- `system` set → one system-role message prepended.
-- user, tool → verbatim, audio parts included: gemini's converter and openai's audio models both
-  take the `input_audio` spelling. An openai candidate carrying audio runs this dialect
-  (CONFIG.md field 4).
-- assistant → `reasoning`, `origin`, `native` dropped (views and carries, never wire — fireworks
-  sends unknown keys straight to theirs); `extra_content` pouches kept when `origin` matches the
-  candidate, stripped otherwise. Gemini's converter seeds the first parallel call with Google's
-  skip sentinel when signatures are gone.
+- `system` set: one system-role message goes first.
+- user: string content as is. Parts are renamed:
+  - image → `image_url` with a data-uri
+  - file → `file` with `file_data`
+  - audio → `input_audio`. An OpenAI candidate with audio uses this API (CONFIG.md field 2).
+- assistant from the same model: `native` unchanged, including Gemini's signatures and
+  Fireworks' `reasoning_content`.
+- tool: `{"role": "tool", "tool_call_id", "content"}`, parts renamed as for user.
+  - Gemini 3 receives image parts as `functionResponse.parts` (any-llm fork PR #17).
+  - Fireworks accepts text only, so any other part raises `UnsupportedField`.
 
 ### messages → `{"messages": [...]}`
 
-Anthropic-native messages, our own walk. any-llm's openai→anthropic converter reconstructs
-thinking from a completion-bridge spelling we never produce, keeps only the last signature, and
-strips every key but role and content — reuse would import a signature-verification failure.
+Anthropic's Messages format, built by our own code. any-llm's converter is not reused: it drops
+every key except role and content, and rebuilds thinking from a format we never produce.
 
-- user string → verbatim; parts: text rides, image → `{"type": "image", "source": {"type":
-  "base64", "media_type", "data"}}`, file → the same shape as `document`, audio →
-  `UnsupportedField` (anthropic has no audio input).
-- assistant, origin match → `{"role": "assistant", "content": <native verbatim>}`.
-- assistant, foreign → a text block (only when non-empty) plus one
-  `{"type": "tool_use", "id", "name", "input": <arguments decoded>}` per call. Never an empty
-  text block; a turn that degrades to nothing is omitted entirely. No thinking block is ever
-  reconstructed.
-- tool → `{"type": "tool_result", "tool_use_id", "content"}` in a user turn, consecutive results
-  in one user message; empty content omits the key.
-- The thinking trap: with a thinking level set, anthropic requires the final assistant turn
-  before trailing tool results to start with its own signed thinking block. A foreign turn there
-  cannot comply, and fabricating is forbidden, so assembly raises `UnsupportedField` naming the
-  fix — a per-candidate `thinking` override. Plain-text foreign history is unaffected.
+- user: a string unchanged. Parts become blocks:
+  - text → as is
+  - image → `{"type": "image", "source": {"type": "base64", "media_type", "data"}}`
+  - file → the same shape as a `document` block
+  - audio → `UnsupportedField` (Anthropic has no audio input)
+- assistant from the same model: `{"role": "assistant", "content": <native unchanged>}`.
+- tool: `{"type": "tool_result", "tool_use_id", "content"}` inside a user message.
+  - Consecutive results go in one user message.
+  - Parts become text, image and document blocks.
+  - Empty content leaves out the `content` key.
 
 ### responses → `{"input": [...]}`
 
-- user string → `{"role": "user", "content": str}`; parts rename: text → `input_text`, image →
-  `{"type": "input_image", "image_url": <data-uri str>}`, file → `{"type": "input_file",
-  "file_data", "filename"}`. audio → `UnsupportedField`: responses takes no audio input, so an
-  openai candidate carrying audio runs the completion dialect instead (CONFIG.md field 4).
-- assistant, origin match → the native items spliced verbatim, minus any reasoning item whose
-  required follow-up item is missing — a truncated history 400s otherwise.
-- assistant, foreign → `{"role": "assistant", "content": str}` when text exists; one
-  `{"type": "function_call", "call_id", "name", "arguments"}` per call.
-- tool → `{"type": "function_call_output", "call_id", "output"}`.
-- Statelessness is assembly's law, not a message spelling: every responses call carries
-  `store: False` and `include: ["reasoning.encrypted_content"]`, so saved history is the only
-  conversation state and reasoning replays with no server dependency. Candidate `extra` merges
-  last and can override — flipping `store` on is a retention choice, not a correctness one, and
-  a caller-added `include` concatenates rather than replaces (merge's list law).
+- user: a string → `{"role": "user", "content": str}`. Parts are renamed:
+  - text → `input_text`
+  - image → `{"type": "input_image", "image_url": <data-uri>}`
+  - file → `{"type": "input_file", "file_data", "filename"}`
+  - audio → `UnsupportedField`. Responses takes no audio input, so an OpenAI candidate with
+    audio uses the completion API instead (CONFIG.md field 2).
+- assistant from the same model: the `native` items inserted unchanged.
+  - Except a reasoning item whose required next item is missing: that one is dropped, because a
+    truncated history returns a 400 otherwise.
+- tool: `{"type": "function_call_output", "call_id", "output"}`, where output is a string or a
+  list of `input_text`, `input_image` and `input_file`.
+- Every Responses call sends `store: False` and `include: ["reasoning.encrypted_content"]`.
+  - Saved history is then the only conversation state, and reasoning replays without depending
+    on OpenAI's servers.
+  - A candidate's `extra` is merged last and can override these. Turning `store` on is a
+    data-retention choice, not a correctness one.
+  - An `include` the caller adds is appended to ours, not swapped in.
 
-## The round trip
+## Messages from other models
 
-The response exposes `message`: the history-ready assistant turn.
+An assistant message from another model, or one the caller wrote, is sent as its text and its
+calls only, with our ids, in the candidate's own format. No reasoning, no signatures, no provider
+ids. Its tool results are sent exactly as they would be after the candidate's own calls.
 
-- completion: the readable fields as any-llm returns them, plus inline pouches, plus `origin`;
-  gemini tool-call ids re-minted unique.
-- messages: readable distilled from the blocks — text concat, thinking concat, tool_use →
-  tool_calls — plus `origin` and `native` = the content list.
-- responses: readable distilled from the items — output_text concat, summary concat,
-  function_call → tool_calls (by `call_id`) — plus `origin` and `native` = the output list.
+- completion: `{"role": "assistant", "content": <text or None>, "tool_calls": [{"id", "type":
+  "function", "function": {"name", "arguments": <json str>}}]}`.
+  - Gemini: any-llm adds Google's documented `skip_thought_signature_validator` to the first call
+    without a signature, so the call is accepted.
+  - Fireworks: nothing more is needed. On deepseek-v4p1-flash, kimi-k3 and glm-5p3, a message
+    without `reasoning_content` was accepted and answered (live-tested).
+- messages:
+  - a text block, only when the text isn't blank (Anthropic returns a 400 on a blank one);
+  - then one `{"type": "tool_use", "id", "name", "input": <arguments>}` per call;
+  - a message that ends up empty is left out.
+- responses:
+  - `{"role": "assistant", "content": str}` when there is text;
+  - then one `{"type": "function_call", "call_id", "name", "arguments": <json str>}` per call,
+    without an item `id`. A function call with an `fc_` id but without its reasoning item
+    returns a 400.
 
-`messages + [response.message] + [tool results]` is the next call's history. Save → reload →
-next call is lossless by construction: `native` stores wire-equivalent JSON, never SDK objects,
-and a golden pins the save → load → send identity. `thinking_summaries` filters only the
-response's readable view; `message` keeps `reasoning` regardless, or the saved view could never
-be rebuilt (CONFIG.md field 7). Streams must end in this same `message` — accumulation rules
-land with the stream-event spec.
+Switching models in the middle of a tool loop needs nothing extra. Claude in adaptive mode turns
+thinking off for that one request instead of failing
+([thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)). Gemini accepts the
+skip value, and Fireworks accepts the plain message.
 
-## Honest limits, pinned at build
+## The response
 
-- Gemini's chat shape is any-llm's normalization, not Google's Part list: parallel text parts
-  merge, and only the last signed non-call part keeps its signature. The tool + thinking loop is
-  live-verified; if a seed ever shows the collapse breaking replay, the fix lands in the any-llm
-  fork's converter, not in a second history format here.
-- gemini ↔ vertexai serve the same models but count as different origins until a live seed
-  proves signatures replay across both directions; until then that hop degrades like any foreign
-  one.
-- openai's web_search_call items replay the call, not its results — the results live in the
-  following message item's text. A same-provider fidelity limit, not a bug.
-- Build seeds: `include: reasoning.encrypted_content` on non-reasoning openai models (if gated,
-  the include becomes conditional); verbatim item replay under `store: False`, ids included; the
-  anthropic thinking trap's exact trigger; gemini's skip sentinel on foreign parallel calls.
-- Refusals and citations are readable-view material: they ride `native` for same-origin replay
-  and surface in the response-type round.
-- Inline base64 is the only transport for parts. Files past the inline caps need a provider Files
-  API; any-llm exposes anthropic's (upload / list / retrieve / download / delete), and no part
-  references an uploaded file yet. Added when a consumer needs it.
+A call returns a `Response`. Its `message` is the assistant message, ready to append to history:
+readable fields extracted from the provider's output, our ids created, `origin` set, `native`
+attached.
+
+- completion: content, tool calls and reasoning as any-llm returns them; `native` is that
+  message.
+- messages: text joined, thinking joined, each tool_use becomes a call; `native` is the content
+  list.
+- responses: output_text joined, summaries joined, each function_call becomes a call (matched by
+  `call_id`); `native` is the output list.
+
+`messages + [response.message] + [tool results]` is the next call's history. Saving, reloading
+and calling again loses nothing, because `native` is stored as raw JSON rather than SDK objects;
+a golden test pins save → load → send.
+
+Text, calls and reasoning live only on `message`; nothing is copied to the top level. Whether a
+user sees `reasoning` is the caller's choice when rendering. The other fields describe this one
+call and never go into history:
+
+- `parsed` — the `response_format` object, or None.
+- `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
+  any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
+- `usage` — input, output, reasoning, cache-read and cache-write tokens.
+- `cost` — dollars (SPEC.md step 4).
+- `attempts` — every candidate tried, in order, with the one that answered last. One entry when
+  the first candidate answers. Each attempt holds:
+  - provider, model and latency;
+  - `errors`: one typed exception per failed try, in order, empty when the first try worked.
+    Each carries any-llm's `message`, `status_code`, `code` and `error_type`, plus the SDK's
+    original exception with the provider's request id. The answering attempt can have errors
+    too, when a retry succeeded.
+- `latency` — wall time of the whole call, including waits between retries and for the rate
+  limiter, so it can exceed the sum of the attempts.
+
+Timestamps, message ids and user feedback describe the conversation, not the call. The caller
+stores them next to the message, never inside it.
+
+Generated images and audio never appear on a `query()` response; they come from `image()` and
+`speech()` (SPEC.md, Media).
+
+## Streams
+
+A stream yields chunks in the AI SDK UI message stream protocol, in exactly the shape the
+browser's `useChat` reads ([stream protocol](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol)).
+The caller can forward them unchanged. When the loop ends, `stream.response` holds the same
+`Response` a normal call returns. The stream itself never yields it, so `native` can't reach the
+browser by mistake.
+
+```python
+stream = await llm.query(..., stream=True)
+async for chunk in stream:
+    await sse.send(chunk)
+history.append(stream.response.message)
+```
+
+For each model call, llm_master yields:
+
+- `start-step` when an attempt starts, `finish-step` when it ends.
+- `reasoning-start` / `-delta` / `-end`: the thought text, always. The caller forwards or drops
+  it.
+- `text-start` / `-delta` / `-end`: the answer.
+- `tool-input-start` / `-delta` / `-available`: each call's name, then its arguments as they
+  arrive, then the complete arguments. `toolCallId` is our `lm_` id, created when the call starts
+  streaming, so it matches `response.message.calls`.
+- `reset-step` when an attempt fails mid-stream. The browser removes that attempt's output, and
+  the next attempt (a retry or the next candidate) streams from the start under a new
+  `start-step`. Earlier steps stay.
+
+The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
+and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
+call raises; llm_master never sends an `error` chunk. A half-streamed tool call can't be run:
+tools run from `response.message.calls` after the loop ends.
+
+The final `message` is built from the stream with the same extraction as a normal call, and
+`native` from the provider's own stream events. Usage comes from the last usage event, never a
+sum, because Gemini sends a running total on every chunk.
+
+## Known limits
+
+- Gemini's `native` is any-llm's simplified message, not Google's original list of parts.
+  - Text before and after a call is joined, and only the last text signature is kept.
+  - No error: Google requires signatures only on calls, and those are kept.
+  - The cost may be slightly weaker reasoning on later turns about the in-between progress text.
+  - Gemini's implicit cache is unaffected (live-tested: a follow-up read 22.6k of 24.7k prompt
+    tokens from cache across the rebuilt messages, the same as an identical repeat).
+- any-llm 1.37.0 drops Gemini's call ids, and Gemini then matches results to calls by position.
+  - Results sent in a different order from the calls come back swapped, with a 200
+    (live-tested).
+  - Fork PR #18 sends ids in both directions.
+  - Until it and PR #17 (Gemini tool-result images) are released upstream, llm_master installs
+    any-llm from a fork build that includes them.
+- Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
+  and Vertex reject each other's thought signatures.
+- Still to test live during the build:
+  - a PDF in a Gemini 3 tool result;
+  - a function call from another model sent to gpt-5.5 without an item `id`, and whether its
+    text needs a `phase`;
+  - a conversation saved, reloaded in a new process and continued, hitting the cache on every
+    provider;
+  - whether `include: reasoning.encrypted_content` is still accepted now that encryption is the
+    default.
+- Parts travel only as inline base64. Files above the inline limits would need a provider's Files
+  API. any-llm exposes Anthropic's and OpenAI's (upload, list, retrieve, download, delete) and
+  Gemini's (no download), but no part can reference an uploaded file yet. That gets added when
+  someone needs it.

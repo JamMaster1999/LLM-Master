@@ -13,8 +13,8 @@ Each step builds on the previous ones and borrows their tests. Steps 3 onward st
 spec doc — signatures, response types, stream events — implemented only after review.
 
 1. **Providers** — the registry data page. Done.
-2. **Facade + persistent clients** — one held `AnyLLM.create(provider)` per provider. Everything sits on it.
-3. **Call paths** — completion / messages / responses / image / speech as thin passthroughs, streaming included. The live seeds become tests here, and their captured responses become golden fixtures.
+2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. PR #4, in review.
+3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
@@ -23,6 +23,10 @@ spec doc — signatures, response types, stream events — implemented only afte
 9. **Telemetry** — PostHog events over the finished pipeline.
 
 ## Decisions
+
+**Models.** Recent models only: the Claude 5.5 series, GPT-5.5 and later, Gemini 3 and later.
+On fireworks: GLM, DeepSeek and Kimi, at lower priority. Rules that only older models need are
+not written.
 
 **Providers (built).** providers.py is pure data: name-keyed rows, one field per line, no
 code. The rosters (`API`, `ProviderName`, `SearchStance`) sit at its top, and every type in
@@ -33,18 +37,40 @@ the provider default, so new models work day one. Unknown providers raise. verte
 any-llm's first-class provider with full GCP login; v1's express mode is gone.
 
 **Calls.** The caller states provider and model; there is no model-name routing. Fallbacks
-are explicit candidate lists on the call. One canonical history format (openai shape) goes
-in, and assembly re-shapes it per dialect on every call. Reasoning blocks never translate
-across dialects; foreign ones are stripped. Unset config always means the provider default.
+are explicit candidate lists on the call. One history format, our own (IO.md), goes in, and
+assembly spells it per dialect on every call. A model's own turns replay to it verbatim;
+every other model sees their text and tool calls, never their reasoning. Unset config always
+means the provider default.
 A field with no spelling on an API raises typed `UnsupportedField`. The facade holds one
 client per provider, so every call reuses its connection pool. Streams always report usage
 and can abort. `query()` never runs a tool: it returns the model's tool calls, and the loop
 belongs to the caller.
 
-**Failures.** SDK transport retries are forced to 0; the wrapper owns all retries. Each
-candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any
-typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
+**Media.** `query()` is conversation only: text and tool calls, no media out. Images and
+speech get their own calls, `image(candidates, prompt, images)` and `speech(candidates, text)`,
+on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns
+the file's bytes, its mime type, the candidate that made it, usage and cost. One case per
+provider: gemini through `acompletion` with response modalities, openai through its Images API
+(generate, and edit on the held client, since any-llm doesn't wrap it) and `aspeech`. A
+candidate that answers without the media raises typed, so fallback moves on.
+
+An edit is lineage, not a conversation: the parent image plus the new instruction, one
+request, no history and no server state. Any provider can edit any provider's image.
+
+Live-checked 2026-10-18: 
+* openai doubles the nucleus and keeps the rest; a gemini-made image edits cleanly on openai; gemini edits keep the image but understate the change. 
+* The media tools own the files and the lineage record (TOOLS.md). 
+* OpenAI speech returns bytes with no usage, so its `cost` is None, never zero.
+
+**Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
+providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
 timeout expiry is a typed `ProviderError`, retryable like the rest.
+
+Known limit: gemini and vertexai keep google-genai's aiohttp transport for async throughput,
+and that transport retries a connection error once on its own, after 1–10 seconds, ignoring
+`max_retries`. HTTP errors are unaffected. A drop after the server received the request can
+bill one generation twice
+([googleapis/python-genai#3160](https://github.com/googleapis/python-genai/issues/3160)).
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
@@ -59,14 +85,13 @@ overhead at concurrency 50, and streaming time to first token.
 
 ## Not rebuilt
 
-any-llm covers these natively, and the wrapper passes them through: tool calling,
-thinking-block replay, structured outputs, PDF and audio inputs, image and audio outputs,
-cache-token usage, web search, typed errors (`ANY_LLM_UNIFIED_EXCEPTIONS=1`), provider-native
-batch.
+any-llm covers these natively, and the wrapper passes them through: tool schemas,
+structured outputs, PDF and audio inputs, cache-token usage, typed errors
+(`unified_exceptions=True` at create), provider-native batch.
 
 ## Deferred
 
-- Code interpreter and agentic escalation get their own design round. A harness (Claude
-  Agent SDK / Codex) would sit beside llm_master, not under it.
+- Provider-hosted tools are not supported. Every tool is ours (TOOLS.md) and runs beside
+  llm_master, not under it. Coding gets its own design round.
 - Consumer migration is a later phase. Old main stays frozen until the last consumer moves.
 - A v2 README.

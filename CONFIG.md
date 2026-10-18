@@ -4,7 +4,8 @@ One request, one config. The caller writes each field once; for every fallback c
 wrapper translates the fields into that candidate's dialect:
 
 - **completion** — any-llm's `acompletion`, the openai-chat shape. Our route for gemini, vertexai,
-  fireworks.
+  fireworks. Gemini also serves responses, but only a single string input with no tools or
+  history, so completion stays its route.
 - **messages** — any-llm's `amessages`, anthropic's native shape. Anthropic only.
 - **responses** — any-llm's `aresponses`, openai's newer API. Openai only.
 
@@ -15,18 +16,15 @@ candidates are typed the same way. Field order below is the authoring order.
 1. `system` — how the model should behave
 2. `messages` — what you're sending
 3. `stream` — deliver as a stream
-4. `modalities` — output kinds: text / image / audio
-5. `temperature` — randomness
-6. `thinking` — none / low / medium / high / xhigh
-7. `thinking_summaries` — surface the reasoning text or not
-8. `tools` — what it may call
-9. `tool_choice` — auto / none / forced / parallel on-off
-10. `web_search` — provider-native search
-11. `response_format` — structured output schema
-12. `max_tokens` — output cap
-13. `timeout` — per-request seconds
-14. `cache` — auto / none / minutes
-15. `moderation` — pre-send openai moderation
+4. `temperature` — randomness
+5. `thinking` — none / low / medium / high / xhigh
+6. `tools` — what it may call
+7. `tool_choice` — auto / none / forced / parallel on-off
+8. `response_format` — structured output schema
+9. `max_tokens` — output cap
+10. `timeout` — per-request seconds
+11. `cache` — auto / none / minutes
+12. `moderation` — pre-send openai moderation
 
 Each fallback candidate additionally carries `extra: dict` — a raw pass-through door merged last
 into that candidate's dialect params. Unvalidated, no autocomplete, per candidate so it can never
@@ -49,39 +47,26 @@ decision fails the type check instead of silently passing something through.
 
 ## 2. `messages` — the conversation, one shape only
 
-The shape is openai's: each message is a role plus content.
+The shape is llm_master's own; IO.md is its law and holds every per-dialect spelling.
 
 - Roles: `user`, `assistant`, `tool`. System-role entries are rejected (field 1's rule).
-- Content: a string, or a list of `text` / `image_url` / `file` (pdf) / `input_audio` parts.
-  Nothing else; unknown part types fail validation. v1's five alternate message shapes are gone.
-- Typed both ways: plain openai-shaped dicts validate through pydantic, and typed part classes
-  exist for autocomplete. Same schema either way.
-- Images: we accept a data-uri, a URL, or a local file path — and always convert to a base64
-  data-uri before sending, downloading and converting (HEIC→PNG) as needed. One code path for all
-  providers; no provider is ever handed a URL.
-- PDFs: the `file` part with a base64 data-uri, live-verified on anthropic, openai, and gemini.
-- Audio: the `input_audio` part, openai's spelling — base64 data plus a format name. gemini takes
-  every format it lists (wav, mp3, aac, ogg, flac, m4a, opus, webm, ...); openai's audio models
-  take wav and mp3 on the completion dialect only, so an openai candidate carrying audio input
-  routes to completion, the same rule as audio output (field 4). anthropic and the responses
-  dialect have no audio input: typed unsupported. Live-verified on gemini and gpt-audio — a
-  spoken sentence transcribes word for word on both. Video input has no part; no consumer needs
-  it.
-- Tool results: openai shape (`{"role": "tool", "tool_call_id": ..., "content": ...}`), per
-  field 8.
-
-Assistant turns — the two rules that make history work:
-
-- An assistant turn may carry its provider's native blocks: anthropic's signed thinking, openai's
-  reasoning items, gemini's signature pouch. We store them untouched and echo them untouched to
-  the same provider. This one rule buys both reasoning replay and cache stability.
-- On fallback to a different provider, foreign native blocks are deleted, never translated.
-  Translating another model's reasoning is the LiteLLM bug; deleting is the only correct move.
-
-Translation per dialect: completion — handed over as-is, each provider's converter consumes this
-shape. messages — our own walk into anthropic's blocks (IO.md); any-llm's openai→anthropic
-converter is not reused, since it keeps only the last thinking signature. responses — our rename
-(`text`→`input_text` and friends); native items pass verbatim.
+- Content: a string, or a list of text / image / file (pdf) / audio parts. Nothing else; unknown
+  part types fail validation. v1's five alternate message shapes are gone.
+- Typed both ways: plain dicts validate through pydantic, and typed part classes exist for
+  autocomplete. Same schema either way.
+- Images, PDFs, audio: a part accepts a data-uri, a URL, or a local file path and encodes it to
+  base64 when it is built, downloading and converting (HEIC→PNG) as needed. History never holds a
+  URL, so every call sends the same bytes and no provider is ever handed a URL.
+- PDFs: live-verified on anthropic, openai, and gemini.
+- Audio: base64 data plus a format name. gemini takes every format it lists (wav, mp3, aac, ogg,
+  flac, m4a, opus, webm, ...); openai's audio models take wav and mp3 on the completion dialect
+  only, so an openai candidate carrying audio input routes to completion. anthropic and the responses dialect have no audio input: typed unsupported.
+  Live-verified on gemini and gpt-audio — a spoken sentence transcribes word for word on both.
+  Video input has no part; no consumer needs it.
+- Tool results: the `tool` role, carrying text, image and file parts (field 6). Fireworks takes
+  text only.
+- Assistant turns: a model's own turns replay to it verbatim; every other model sees their text
+  and calls, never their reasoning (IO.md, the echo law).
 
 The round trip: the response's history-ready form appends straight onto this list, so
 save → reload → next call is lossless by construction.
@@ -93,40 +78,12 @@ save → reload → next call is lossless by construction.
   regardless).
 - messages: anthropic's native event stream; usage arrives in its closing events.
 - responses: `stream=True` on the event stream.
-- Return type changes: off → one response object; on → an async iterator of stream events. The
-  exact event shape gets specced together with the response type.
+- Return type changes: off → one `Response`; on → a stream of AI SDK protocol chunks whose
+  `response` holds the same `Response` once it ends (IO.md, Streams).
 - Known limit: a stream the caller kills mid-flight records zero usage, so that one generation
   logs no cost.
 
-## 4. `modalities` — `list["text" | "image" | "audio"] | None`, None = text
-
-Per dialect:
-
-- completion, gemini: `response_modalities=["TEXT", "IMAGE"]` or `["AUDIO"]` rides the request.
-  any-llm returns the media on the message — images as `message.images` (base64 data URLs), audio
-  as `message.audio` (raw PCM wrapped as WAV, sample rate from the MIME) — and on `delta.images` /
-  `delta.audio` when streaming. Live-verified on gemini-2.5-flash-image and
-  gemini-2.5-flash-preview-tts, plain and streamed; an image message replays as history.
-- completion, fireworks: no such capability exists. Typed unsupported.
-- messages, anthropic: no output modalities at all. Permanent.
-- responses, openai: neither modality lives here. Audio lives on openai's chat dialect
-  (`modalities=["text", "audio"]` plus a required `audio={"voice", "format"}`), so an openai
-  candidate asking for audio routes to completion; live-verified on gpt-audio-mini, plain and
-  streamed, `message.audio` a valid WAV. Image generation on openai is a Responses built-in tool
-  (`image_generation`), not a modality — a separate decision.
-
-Open decision before the audio arms build: both providers need a voice, and openai needs an
-output format. `modalities` is an enum list today; either it grows into branches
-(`Audio(voice=..., format=...)`, GRAMMAR.md) or voice and format ride the candidate's `extra`.
-
-The modality comes from picking the right model, not just setting the field. Once an arm is open,
-we translate and send — a model that rejects the ask fails typed (live: gemini-2.5-flash 400s
-"This model only supports text output"); a model that silently ignores it returns what it returns
-(live: gemini-3.5-flash ignores IMAGE and answers in text). No error means no error: no warnings,
-no response inspection, no model list. A candidate that raises hands off to the next candidate
-like any other typed error.
-
-## 5. `temperature` — `float | None`, default None
+## 4. `temperature` — `float | None`, default None
 
 - All three dialects: passed through untouched. None → omitted, provider default applies.
 - Ranges differ (anthropic tops at 1.0, the others at 2.0) and reasoning models reject the
@@ -137,7 +94,7 @@ like any other typed error.
 - Our tests prove the translation, not consumer values; a chain whose candidates always fail
   shows up as error events in telemetry.
 
-## 6. `thinking` — `"none" | "low" | "medium" | "high" | "xhigh" | None`, None = provider default
+## 5. `thinking` — `"none" | "low" | "medium" | "high" | "xhigh" | None`, None = provider default
 
 - completion: `reasoning_effort=` passed through; any-llm owns the per-provider mapping. `none`
   genuinely disables where the model has an off setting (gemini sends `thinking_budget=0`);
@@ -146,38 +103,32 @@ like any other typed error.
 - messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive"}`
   plus `output_config: {"effort": level}`. Anthropic's named tiers map 1:1, no budget table.
   Live-verified on claude-sonnet-5: adaptive levels produce thinking blocks, disabled produces
-  none.
+  none. Most of the 5.5 generation can't turn thinking off: Opus 5.5 and Fable 5.1 reject
+  `disabled`, Sonnet 5.5 too (its floor is `between_tools`, via `extra`), Haiku 5.5 takes it at
+  effort `high` or below. Their 400 surfaces typed and fallback moves on — the provider's call,
+  as with temperature.
 - responses: `reasoning={"effort": ...}` passed through, plus `summary: "auto"` on every level —
-  summaries are always fetched (openai's thought text is opt-in), with the view governed by
-  thinking_summaries. Tiers a model doesn't take come back as openai's rejection, typed.
+  openai's thought text is opt-in, so summaries are always fetched. Tiers a model doesn't take
+  come back as openai's rejection, typed.
+- Thought text is always fetched when thinking is on: gemini via any-llm's hardwired
+  `include_thoughts=True`, anthropic's full blocks by its own design, openai via `summary:
+  "auto"`. It lands on `message.reasoning`; whether a user sees it is the caller's choice at
+  render time. Cost is the same either way — thought tokens are billed whether or not anyone
+  reads them. Live note, openai: a summary only materializes when there's enough reasoning to
+  summarize; an empty summary list is not an error.
 - No capability list: providers that map a tier clamp to nearest, providers that reject fail
   typed, and consumer smoke runs catch config rot in CI. Adoption note: any-llm sometimes
   silently drops `none` (xai does), so "does none really disable" is a one-time check when
   adopting a provider — our six are verified honest.
 
-## 7. `thinking_summaries` — `bool`, default False
+## 6. `tools` — list of python callables or openai-format dicts, default None
 
-- A pure view flag — no request-side translation on any API. Thought text is always fetched when
-  thinking is on: gemini via any-llm's hardwired `include_thoughts=True`, anthropic's full blocks
-  by its own design, openai via `summary: "auto"` riding thinking's responses arm. io filters
-  what the readable view exposes, uniformly. Cost is unchanged everywhere — thought tokens are
-  billed whether or not you look at them.
-- Live note, openai: a summary only materializes when there's enough reasoning to summarize; an
-  empty summary list is not an error.
-- The flag governs only the readable view. Native blocks, signatures included, always survive in
-  the conversation history — the tool loop echoes them back and anthropic verifies the signature
-  server-side; a stripped block 400s the conversation mid-loop.
-- Two-view rule, which lands in the response type and in `messages`: the response exposes a
-  history-ready native form for server-side saving — full fidelity, replayable — and readable
-  fields for forwarding to the frontend. Saved history round-trips through `messages` unchanged;
-  cross-provider fallback does its history hygiene at candidate translation.
-- On with thinking off: quiet no-op.
-
-## 8. `tools` — list of python callables or openai-format dicts, default None
-
-- One standard, both directions: write tools in openai's function format or as bare callables;
-  append results in openai shape. Callables normalize through any-llm's own `callable_to_tool()`
-  — schema built from the signature and docstring. Mixing dicts and callables is fine.
+- Write tools in openai's function format or as bare callables; append results as `tool`
+  turns (IO.md). Callables normalize through any-llm's own `callable_to_tool()` — schema built
+  from the signature and docstring. Mixing dicts and callables is fine.
+- Function tools only. Every tool is ours and the caller runs it (TOOLS.md). Provider-hosted
+  tools — search, code execution, image generation, openai's custom tools, and the rest — fail
+  validation, typed. Freeform input is a function tool with one string parameter.
 - completion: openai format is the native input; each provider's any-llm converter handles the
   whole loop.
 - messages: tool schemas are our own one-rename translation (`parameters` → `input_schema`);
@@ -190,7 +141,7 @@ like any other typed error.
 - Live seeds verify the loop end to end per provider — we read their converters, but we bill
   against what actually runs.
 
-## 9. `tool_choice` — `ToolChoice(mode, only, parallel) | None`, default None
+## 7. `tool_choice` — `ToolChoice(mode, only, parallel) | None`, default None
 
 - One flat object, every field optional and mixable; unset = provider default. `mode`: `auto` /
   `none` / `required`. `only`: one name or a list — restrict the menu. `parallel`: False = one
@@ -212,29 +163,7 @@ like any other typed error.
 - Live note, anthropic: a required tool is guaranteed called, not called alone — it may add
   parallel calls of other tools. Exclusivity = `parallel=False` on top.
 
-## 10. `web_search` — `Search(max_searches=...) | None`, default None
-
-- Flat object: `None` = off, `Search()` = on, `Search(max_searches=n)` = capped.
-- Every provider row in providers.py declares a required `SearchStance` — `"tool"` (has a search
-  tool we ask for) or `"none"` (raises typed before any spelling). A provider cannot be added
-  without this decision.
-- completion, gemini/vertexai: the plain dict `{"google_search": {}}` rides the standard tools
-  list. No cap parameter; gemini grounding runs at most one search round, so any cap trivially
-  holds. Grounded answer text comes back; the citation metadata currently dies in any-llm's
-  normalization.
-- messages: anthropic's `web_search_20260318` server tool with `max_uses` (version live-verified)
-  — full result blocks, citations, and a search count in usage. The richest return of the three.
-- responses: openai's `web_search` tool, capped via `max_tool_calls`. Caveat: that caps all
-  built-in tool calls collectively — the equivalence holds only while search is the only built-in
-  tool we inject.
-- Citations are not standardized by any-llm — two native styles (anthropic citation objects,
-  openai `url_citation` annotations), gemini none. Our response type folds all three into one
-  canonical citation shape. Wrapper-side normalization covers everyone except gemini, whose data
-  dies inside any-llm.
-- Search fees: genai-prices already prices anthropic ($10/1k, extractor included). openai reports
-  no count in usage: we count the search calls in the response trace times the published fee.
-
-## 11. `response_format` — `Format(type, schema) | None`, default None
+## 8. `response_format` — `Format(type, schema) | None`, default None
 
 - Flat object: `type` says the mode (`"text"` / `"json"` / `"schema"`), `schema` carries the
   shape (pydantic class or json-schema dict). A validator keeps them honest — `type="schema"`
@@ -256,7 +185,7 @@ like any other typed error.
   any-llm's parse paths may not stream at all. We pass through, rejections surface typed, and
   live seeds pin the working combinations at build.
 
-## 12. `max_tokens` — `int | None`, default None
+## 9. `max_tokens` — `int | None`, default None
 
 - Caller set it → passes through untouched: `max_tokens` on completion and messages,
   `max_output_tokens` on responses.
@@ -273,7 +202,7 @@ like any other typed error.
   `stop_reason="max_tokens"` (messages), `status="incomplete"` + reason max_output_tokens
   (responses).
 
-## 13. `timeout` — `float` seconds `| None`, default None
+## 10. `timeout` — `float` seconds `| None`, default None
 
 - All three dialects take any-llm's `timeout` param. Enforcement live-verified on all three: a
   1ms timeout raises the typed error (test_trivials).
@@ -282,7 +211,7 @@ like any other typed error.
 - An expiry surfaces as the typed timeout error, a retryable failure — the retry and fallback
   layers decide what happens next, not this field.
 
-## 14. `cache` — `"auto" | "none" | int` minutes (validated 5–60), default "auto"
+## 11. `cache` — `"auto" | "none" | int` minutes (validated 5–60), default "auto"
 
 - `"auto"`: provider behavior, no breakpoints from us — anthropic doesn't cache, openai and
   gemini auto-cache. On openai 5.6+, auto-caching bills writes at 1.25x by default; that's their
@@ -294,7 +223,9 @@ like any other typed error.
   `60` → `"1h"`, anything between goes literally and their API rejects unknown tiers. Openai:
   explicit mode plus ttl — only `"30m"` exists today (live-verified: other values 400 naming the
   supported set) — with one breakpoint placed at the end of the prompt, since explicit mode
-  caches nothing without one. Gemini: no lifetime control exists → typed unsupported.
+  caches nothing without one. Gemini: implicit caching only, so minutes raise typed. any-llm
+  can turn a `cache_control` breakpoint into an explicit gemini context cache; this field never
+  emits one.
 - Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on
   one-shot prompts, which is why `"none"` exists. Anthropic writes 1.25x at 5m and 2x at 1h;
   reads 0.1x everywhere. any-llm's usage reports reads as `cached_tokens` and writes as
@@ -304,7 +235,7 @@ like any other typed error.
 - Build seed: whether pre-5.6 openai models accept `prompt_cache_options` gracefully.
 - Lifetime exotics beyond the field ride the candidate's `extra`.
 
-## 15. `moderation` — `bool`, default False
+## 12. `moderation` — `bool`, default False
 
 - Not a translation but a pre-step: when on, the input text runs through openai's
   `omni-moderation-latest` before dispatch. A flagged input raises our typed refusal before any
