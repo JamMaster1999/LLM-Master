@@ -1,5 +1,6 @@
 """response_format: Json goldens, live structured output on all three APIs."""
 import json
+from collections.abc import AsyncIterator
 from typing import Literal
 
 import pytest
@@ -15,14 +16,24 @@ class Verdict(BaseModel):
     confidence: Literal["low", "high"]
 
 
-PROMPT = [{"role": "user", "content": "What is 2+2? Give your confidence."}]
+PROMPT: list = [{"role": "user", "content": "What is 2+2? Give your confidence."}]
 
 
-def test_schema_is_one_rename():
-    schema = {"type": "object", "properties": {"answer": {"type": "integer"}}}
+def test_a_schema_class_is_one_rename():
     assert response_format.translate(Format(type="schema", schema=Verdict), "completion") == {"response_format": Verdict}
-    assert response_format.translate(Format(type="schema", schema=schema), "responses") == {"response_format": schema}
+    assert response_format.translate(Format(type="schema", schema=Verdict), "responses") == {"response_format": Verdict}
     assert response_format.translate(Format(type="schema", schema=Verdict), "messages") == {"output_format": Verdict}
+
+
+def test_a_schema_dict_goes_in_each_apis_format_object():
+    schema = {"type": "object", "properties": {"answer": {"type": "integer"}}}
+    fmt = Format(type="schema", schema=schema)
+    assert response_format.translate(fmt, "completion") == {
+        "response_format": {"type": "json_schema", "json_schema": {"name": "response", "schema": schema}}}
+    assert response_format.translate(fmt, "messages") == {
+        "output_config": {"format": {"type": "json_schema", "schema": schema}}}
+    assert response_format.translate(fmt, "responses") == {
+        "response_format": {"type": "json_schema", "name": "response", "schema": schema}}
 
 
 def test_bare_json_mode():
@@ -41,7 +52,7 @@ def test_text_emits_nothing_and_contradictions_raise():
         Format(type="json", schema=Verdict)  # schema only goes with type="schema"
 
 
-JSON_PROMPT = [{"role": "user", "content": "List the first two primes as JSON with a single key 'primes'."}]
+JSON_PROMPT: list = [{"role": "user", "content": "List the first two primes as JSON with a single key 'primes'."}]
 
 
 @pytest.mark.live
@@ -87,6 +98,7 @@ async def test_messages_structured():
     r = await llm.amessages("claude-sonnet-5", PROMPT, 500,
                             **thinking.translate("none", "messages"),
                             **response_format.translate(Format(type="schema", schema=Verdict), "messages"))
+    assert not isinstance(r, AsyncIterator)
     v = _as_verdict(getattr(r, "parsed", None) or "".join(b.text for b in r.content if b.type == "text"))
     assert v.answer == 4
 

@@ -1,5 +1,6 @@
 """query() at its entry point, against recorded provider exchanges (RECORD=1 re-records them live)."""
 import json
+import pathlib
 from typing import Literal
 
 import pytest
@@ -11,13 +12,16 @@ from llm_master.config.moderation import Flagged
 from llm_master.config.response_format import Format
 from llm_master.config.tool_choice import ToolChoice
 from llm_master.facade import LLM
-from llm_master.io.messages import Message, validate
-from llm_master.io.parts import Audio
-from llm_master.query import build
+from llm_master.io.messages import validate
+from llm_master.io.parts import Audio, Text
 from llm_master.types import Config, Model
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 WEATHER = {"type": "function", "function": {"name": "get_weather", "description": "Current weather for a city",
            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}
+WRITE = {"type": "function", "function": {"name": "write_file", "description": "Write a file",
+         "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}}}
 ASK = [{"role": "user", "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as "
                                    "many as remain and sells a third of the flock. How many sheep now? Then call "
                                    "get_weather for Toronto and for Paris, in parallel."}]
@@ -28,13 +32,6 @@ LOOPS = {
     "fireworks": Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash",
                        config=Config(tools=[WEATHER])),
 }
-
-
-@pytest.fixture
-async def llm():
-    llm = LLM()
-    yield llm
-    await llm.aclose()
 
 
 async def ask(llm: LLM, candidate: Model, history: list, stream: bool):
@@ -105,6 +102,8 @@ CONFIGURED = {  # each field placed per API; the recorded request body pins the 
     "gemini": Model(provider="gemini", model="gemini-3.5-flash", config=Config(
         system="Answer in French.", thinking="low", max_tokens=2000, cache="none", temperature=0.5, tools=[WEATHER],
         tool_choice=ToolChoice(mode="none"))),
+    "openai-none": Model(provider="openai", model="gpt-5.6-luna", config=Config(system="Answer in French.",
+                                                                                 cache="none")),
 }
 
 
@@ -120,14 +119,19 @@ class Verdict(BaseModel):
     confidence: Literal["low", "high"]
 
 
+VERDICT = {**Verdict.model_json_schema(), "additionalProperties": False}
+
+
+@pytest.mark.parametrize("schema", [Verdict, VERDICT], ids=["class", "dict"])
 @pytest.mark.parametrize("candidate", [Model(provider="anthropic", model="claude-haiku-5-5"),
                                        Model(provider="openai", model="gpt-5.6-luna"),
                                        Model(provider="gemini", model="gemini-3.5-flash")], ids=lambda m: m.provider)
-async def test_parsed_holds_the_schema_object(candidate, recorded, llm):
-    recorded(f"{candidate.provider}_parsed")
-    candidate = candidate.model_copy(update={"config": Config(response_format=Format(type="schema", schema=Verdict))})
+async def test_parsed_holds_the_schema_object(candidate, schema, recorded, llm):
+    recorded(f"{candidate.provider}_parsed" + ("" if schema is Verdict else "_dict"))
+    candidate = candidate.model_copy(update={"config": Config(response_format=Format(type="schema", schema=schema))})
     r = await llm.query(candidate, [{"role": "user", "content": "What is 2+2? Give your confidence."}])
-    assert isinstance(r.parsed, Verdict) and r.parsed.answer == 4
+    parsed = r.parsed if schema is Verdict else Verdict.model_validate(r.parsed)
+    assert isinstance(parsed, Verdict) and parsed.answer == 4
 
 
 async def test_flagged_input_never_reaches_the_model(recorded, llm):
@@ -147,17 +151,40 @@ async def test_a_call_that_cant_be_built_sends_nothing(candidate, history, error
         await llm.query(candidate, history)
 
 
-def test_anthropic_gets_its_required_max_tokens_and_the_timeout_it_needs():
-    hi = validate([{"role": "user", "content": "hi"}])
-    _, request = build(Model(provider="anthropic", model="claude-haiku-5-5"), hi, stream=False)
-    assert (request["max_tokens"], request["timeout"]) == (64000, 600)
-    _, request = build(Model(provider="anthropic", model="m", config=Config(timeout=30)), hi, stream=False)
-    assert request["timeout"] == 30  # the caller's value wins
+async def test_openai_audio_input_goes_to_completion(recorded, llm):
+    recorded("openai_audio")  # the recorded path is /chat/completions: responses takes no audio
+    spoken = Audio(str(FIXTURES / "spoken.mp3"))  # "The code is seven."
+    r = await llm.query(Model(provider="openai", model="gpt-audio-mini"),
+                        [{"role": "user", "content": [Text(text="Transcribe this audio."), spoken]}])
+    assert "seven" in r.message.content.lower() or "7" in r.message.content
 
 
-def test_openai_audio_input_goes_to_completion():
-    history = [Message(role="user", content=[Audio(data="UklGRg==", format="wav")])]
-    assert build(Model(provider="openai", model="gpt-audio"), history, stream=False)[0] == "completion"
+async def test_a_completion_stream_without_its_closing_usage_is_cut(recorded, llm):
+    recorded("fireworks_stream_without_usage")  # fireworks_loop_stream's first reply, its usage chunk removed
+    s = await llm.query(LOOPS["fireworks"], ASK, stream=True)
+    chunks = []
+    with pytest.raises(ProviderError, match="ended before"):
+        async for c in s:
+            chunks.append(c)
+    assert chunks[-1] == {"type": "reset-step"} and s.response is None
+
+
+async def test_a_tool_call_cut_by_max_tokens_raises_typed(recorded, llm):
+    recorded("openai_cut_call")
+    candidate = Model(provider="openai", model="gpt-5.6-luna",
+                      config=Config(tools=[WRITE], thinking="none", max_tokens=16))
+    with pytest.raises(ProviderError, match="aren't complete JSON"):
+        await llm.query(candidate, [{"role": "user", "content": "Call write_file with a 300-word poem as content."}])
+
+
+async def test_leaving_a_stream_early_and_closing_it_is_quiet(recorded, llm):
+    recorded("anthropic_cut_stream")
+    s = await llm.query(LOOPS["anthropic"], ASK, stream=True)
+    async for c in s:
+        if c["type"] != "start-step":
+            break
+    await s.aclose()
+    assert s.response is None
 
 
 # --- live: behaviour no recording can show ---

@@ -16,9 +16,14 @@ def test_temperature_same_everywhere():
         assert temperature.translate(0.7, api) == {"temperature": 0.7}
 
 
-def test_timeout_same_everywhere():
+def test_timeout_same_everywhere_when_set():
     for api in APIS:
         assert timeout.translate(30.0, api) == {"timeout": 30.0}
+
+
+def test_unset_timeout_is_anthropics_ceiling_said_aloud():
+    assert timeout.translate(None, "messages") == {"timeout": 600}
+    assert timeout.translate(None, "completion") == timeout.translate(None, "responses") == {}
 
 
 def test_max_tokens_renames_on_responses():

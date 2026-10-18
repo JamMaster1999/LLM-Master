@@ -198,6 +198,9 @@ every key except role and content, and rebuilds thinking from a format we never 
     truncated history returns a 400 otherwise.
 - tool: `{"type": "function_call_output", "call_id", "output"}`, where output is a string or a
   list of `input_text`, `input_image` and `input_file`.
+- `cache` minutes (CONFIG.md field 11) put `prompt_cache_breakpoint: {"mode": "explicit"}` on the
+  last block of the last item, turning a string into one `input_text` block first. OpenAI's explicit
+  cache mode caches nothing without a breakpoint.
 - Every Responses call sends `store: False` and `include: ["reasoning.encrypted_content"]`.
   - Saved history is then the only conversation state, and reasoning replays without depending
     on OpenAI's servers.
@@ -246,6 +249,10 @@ attached.
 - responses: output_text joined, summaries joined, each function_call becomes a call (matched by
   `call_id`); `native` is the output list.
 
+A tool call whose arguments aren't complete JSON, as when `max_tokens` cuts it off, can't run, so
+the call raises a typed `ProviderError` instead of returning it. So does an OpenAI response whose
+status is `failed`.
+
 `messages + [response.message] + [tool results]` is the next call's history. Saving, reloading
 and calling again loses nothing, because `native` is stored as raw JSON rather than SDK objects;
 a golden test pins save → load → send.
@@ -257,11 +264,13 @@ call and never go into history:
 - `parsed` — the `response_format` object, or None. llm_master reads it from `message.content`
   when the model stopped normally: a schema class validates into its instance, a schema dict or
   `type="json"` gives the parsed JSON, and `type="text"` or any other `finish` gives None. Streams
-  parse the same way.
+  parse the same way, where the API streams the schema: any-llm refuses `stream=True` with a schema
+  class on the responses API, typed and before sending, while a schema dict streams.
 - `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
   any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
 - `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
-  prompt token, cache reads and writes included; `output` counts reasoning.
+  prompt token, cache reads and writes included; `output` counts reasoning. None when the provider
+  reported no usage: unknown, never zero.
 - `cost` — dollars (SPEC.md step 4).
 - `attempts` — every candidate tried, in order, with the one that answered last. One entry when
   the first candidate answers. Each attempt holds:
@@ -296,10 +305,11 @@ history.append(stream.response.message)
 
 For each model call, llm_master yields:
 
-- `start-step` when an attempt's request opens, `finish-step` when it ends.
+- `start-step` when the attempt's first event arrives, `finish-step` once its `Response` is built:
+  a request the provider rejects yields neither.
 - `reasoning-start` / `-delta` / `-end`: the thought text, always. The caller forwards or drops
   it.
-- `text-start` / `-delta` / `-end`: the answer.
+- `text-start` / `-delta` / `-end`: the answer, a refusal's text included.
 - `tool-input-start` / `-delta` / `-available`: each call's name, then its arguments as they
   arrive, then the complete arguments. `toolCallId` is our `lm_` id, created when the call starts
   streaming, so it matches `response.message.calls`.
@@ -310,9 +320,13 @@ For each model call, llm_master yields:
 The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
 and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
 call raises; llm_master never sends an `error` chunk. A stream that ends before the provider's
-final event raises a typed `ProviderError` after its `reset-step`. A half-streamed tool call can't
-be run: tools run from `response.message.calls` after the loop ends. `await stream.aclose()`
-aborts: it closes the provider's stream.
+final event, or a completion stream that ends without its closing usage, raises a typed
+`ProviderError` after its `reset-step`, as does any failure before the `Response` is built. A
+half-streamed tool call can't be run: tools run from `response.message.calls` after the loop ends.
+
+To abort, leave the loop and `await stream.aclose()`, or cancel the task that iterates the stream;
+either way the provider's stream closes. Python can't close a generator another task is inside,
+so `aclose()` belongs to the iterating side.
 
 The final `message` is built from the stream with the same extraction as a normal call, and
 `native` from the provider's own stream events: Anthropic's SDK hands over the whole message at

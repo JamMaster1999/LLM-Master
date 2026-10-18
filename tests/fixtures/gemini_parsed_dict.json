@@ -1,0 +1,50 @@
+[
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:generateContent",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "What is 2+2? Give your confidence."
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "generationConfig": {
+     "responseMimeType": "application/json",
+     "responseJsonSchema": {
+      "properties": {
+       "answer": {
+        "title": "Answer",
+        "type": "integer"
+       },
+       "confidence": {
+        "enum": [
+         "low",
+         "high"
+        ],
+        "title": "Confidence",
+        "type": "string"
+       }
+      },
+      "required": [
+       "answer",
+       "confidence"
+      ],
+      "title": "Verdict",
+      "type": "object",
+      "additionalProperties": false
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json; charset=UTF-8",
+   "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\\"answer\\\":4,\\\"confidence\\\":\\\"high\\\"}\",\n            \"thoughtSignature\": \"EtwDCtkDAWkUfROG8QmMmTqO4fwbLJriNbhhbvV1GZBoYL8M1FCaKp1undNHw3DuEAZhXGI+iUO5227aCCgDMIhUIqL2c6mCkahWe3jeOD4KNn7bLpUviUZaJ1rvFhG23U0gwYXvKwMPsFFDKRFI6aoI/iIQdDtljRxRn6fMt2zkPfUWcWYUnY/SbMpduHaOLdMYDiXBnTQQL7leChKPmqJMS4gbxlpKzRSpNKjKsh0i+QYzywtZNUIAAI5IeGu07Bg0pJi+5I4CsGnDjfeQYBG1A+9EbnA76Xbjzcx+I4cKjevZqZiDHHfsVq0ktxu5VFQm3Tu2+EWvEJ9thdkrnd7hX95/2v4tDSB88Wrv7sBNp31lkpKeH1U50xwOp83oMyFoc9gvKEZyUR9C6d2i2i4nHM20xrViqHE0Kk7dMPlMbg2imGBIBfV3FlU9VrUASezyC2veF6hzeD5lOCl+vz8LCuGVVZMaNmKYNGazJiMC4JSQvfQtiKYUORlsS1Vxx+Ld8NOJ4Cxfl5lR3A9eDC9S6Jut7V+ifjHNoPDVJHQgfxHW2Pigyz/i+I7nNmHYF70huWkMu95Dxe87p98SgtGjctaHp+pknddxWMPp0qi6EDQWHwTSMUUmlGFNY4M=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 12,\n    \"candidatesTokenCount\": 9,\n    \"totalTokenCount\": 119,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 12\n      }\n    ],\n    \"thoughtsTokenCount\": 98,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.6-flash\",\n  \"responseId\": \"OinVau7rCIqkqtsPhLSxwQQ\"\n}\n"
+  }
+ }
+]

@@ -28,6 +28,14 @@ KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_
 
 
 @pytest.fixture
+async def llm():
+    from llm_master.facade import LLM
+    llm = LLM()
+    yield llm
+    await llm.aclose()
+
+
+@pytest.fixture
 def recorded(monkeypatch, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
     that each request body matches the recorded one: the goldens of the same-bytes rule.
