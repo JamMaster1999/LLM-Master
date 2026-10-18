@@ -3,7 +3,13 @@ name = "llm-master"
 version = "2.0.0a0"
 description = "Lite multi-provider LLM wrapper on any-llm"
 requires-python = ">=3.11"
-dependencies = ["any-llm-sdk[gemini]==1.37.0"]
+dependencies = [
+    "any-llm-sdk[gemini]==1.37.0",
+    # aiohttp transports for the SDKs any-llm drives
+    "openai[aiohttp]",
+    "anthropic[aiohttp]",
+    "google-genai[aiohttp]",
+]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio"]

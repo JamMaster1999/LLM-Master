@@ -1,6 +1,7 @@
 """The facade's held clients, driven against a local server standing in for each provider."""
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingTCPServer
 from typing import get_args
 
 import pytest
@@ -25,14 +26,18 @@ def credentials(monkeypatch):
 
 @pytest.fixture
 def serve(monkeypatch, request):
-    """Points every provider at a local server that answers each request with `status`; returns its hit log."""
-    def start(status: int) -> list[str]:
+    """Points every provider at a local server that answers each request with `status`; returns its hit log.
+
+    A None status reads the request and hangs up without answering."""
+    def start(status: int | None) -> list[str]:
         hits: list[str] = []
 
         class Answer(BaseHTTPRequestHandler):
             def do_POST(self):
                 hits.append(self.path)
                 self.rfile.read(int(self.headers["Content-Length"]))
+                if status is None:
+                    return
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -41,12 +46,12 @@ def serve(monkeypatch, request):
             def log_message(self, format, *args):
                 pass
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Answer)
+        server = ThreadingTCPServer(("127.0.0.1", 0), Answer)  # HTTPServer would reverse-DNS the host
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         request.addfinalizer(server.server_close)
         request.addfinalizer(server.shutdown)
         for var in BASE_URL_VARS.values():
-            monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_port}")
+            monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_address[1]}")
         return hits
     return start
 
@@ -85,3 +90,16 @@ async def test_errors_come_back_typed(provider, serve, monkeypatch):
     serve(401)
     with pytest.raises(AuthenticationError):
         await ask(provider)
+
+
+GENAI_RETRIES_DROPS = pytest.mark.xfail(strict=True, raises=AssertionError,
+                                        reason="googleapis/python-genai#3160: genai on aiohttp retries a drop by itself")
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "fireworks",
+                                      pytest.param("gemini", marks=GENAI_RETRIES_DROPS)])
+async def test_dropped_connection_is_not_retried(provider, serve):
+    hits = serve(None)
+    with pytest.raises(ProviderError):
+        await ask(provider)
+    assert len(hits) == 1, hits
