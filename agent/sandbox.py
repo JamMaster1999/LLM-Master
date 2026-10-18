@@ -6,7 +6,9 @@ import posixpath
 import time
 
 import modal
+from modal.container_process import ContainerProcess
 from modal.exception import AlreadyExistsError, NotFoundError
+from modal.types import FileInfo
 
 APP = "llm-master-agent"
 WORKSPACE = "/workspace"
@@ -36,16 +38,22 @@ class Sandbox:
             self._box = await _find(self.conversation_id) or await _create(self.conversation_id)
             return self._box
 
-    async def exec(self, *args: str, timeout: float) -> tuple[int, bytes, bytes]:
-        """Runs args in /workspace with stdin closed; returns the exit code, stdout and stderr. Past
-        `timeout` seconds the command and everything it started are killed, and TimeoutError is
-        raised. Past MAX_OUTPUT bytes of output the sandbox is stopped, and OverflowError is raised."""
+    async def start(self, *args: str, timeout: float) -> ContainerProcess:
+        """Starts args in /workspace. Past `timeout` seconds the command and everything it started
+        are killed, and it exits 124 (137 if it ignored the first signal)."""
         box = await self.running()
-        start = time.monotonic()
         # coreutils timeout kills the command's whole process group; Modal's deadline, the backstop,
         # kills only the process it started, which ends its output
-        process = await box.exec.aio("timeout", "-k", "5", f"{timeout:g}", *args,
-                                     timeout=math.ceil(timeout) + 30, text=False)
+        return await box.exec.aio("timeout", "-k", "5", f"{timeout:g}", *args,
+                                  timeout=math.ceil(timeout) + 30, text=False)
+
+    async def exec(self, *args: str, timeout: float) -> tuple[int, bytes, bytes]:
+        """Runs args with stdin closed; returns the exit code, stdout and stderr. Raises TimeoutError
+        past `timeout` seconds. Past MAX_OUTPUT bytes of output the sandbox is stopped, and
+        OverflowError is raised."""
+        box = await self.running()
+        start = time.monotonic()
+        process = await self.start(*args, timeout=timeout)
         process.stdin.write_eof()
         await process.stdin.drain.aio()
         room = MAX_OUTPUT
@@ -70,6 +78,9 @@ class Sandbox:
         if code and time.monotonic() - start >= timeout:  # 124, 137 or Modal's -1, depending on who killed it
             raise TimeoutError(f"{args[0]} ran past {timeout:g} seconds")
         return code, stdout, stderr
+
+    async def stat(self, path: str) -> FileInfo:
+        return await (await self.running()).filesystem.stat.aio(resolve(path))
 
     async def read(self, path: str) -> bytes:
         return await (await self.running()).filesystem.read_bytes.aio(resolve(path))
