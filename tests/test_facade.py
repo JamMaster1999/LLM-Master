@@ -1,5 +1,7 @@
 """The facade's held clients, driven against a local server standing in for each provider."""
+import gc
 import threading
+import warnings
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 from typing import get_args
@@ -56,8 +58,16 @@ def serve(monkeypatch, request):
     return start
 
 
-async def ask(provider):
-    await LLM().client(provider).acompletion(model="m", messages=[{"role": "user", "content": "hi"}])
+@pytest.fixture
+async def llm():
+    """A facade closed at teardown, as an app closes its own at shutdown."""
+    llm = LLM()
+    yield llm
+    await llm.aclose()
+
+
+async def ask(llm, provider):
+    await llm.client(provider).acompletion(model="m", messages=[{"role": "user", "content": "hi"}])
 
 
 def test_same_provider_reuses_its_client():
@@ -77,19 +87,19 @@ def test_unknown_provider_raises():
 
 
 @pytest.mark.parametrize("provider", BASE_URL_VARS)
-async def test_sdk_retries_are_off(provider, serve):
+async def test_sdk_retries_are_off(provider, serve, llm):
     hits = serve(500)  # the openai and anthropic SDKs retry a 500 by default
     with pytest.raises(ProviderError):
-        await ask(provider)
+        await ask(llm, provider)
     assert len(hits) == 1, hits
 
 
 @pytest.mark.parametrize("provider", BASE_URL_VARS)
-async def test_errors_come_back_typed(provider, serve, monkeypatch):
+async def test_errors_come_back_typed(provider, serve, llm, monkeypatch):
     monkeypatch.delenv("ANY_LLM_UNIFIED_EXCEPTIONS")  # conftest's global switch would hide a missing flag
     serve(401)
     with pytest.raises(AuthenticationError):
-        await ask(provider)
+        await ask(llm, provider)
 
 
 GENAI_RETRIES_DROPS = pytest.mark.xfail(strict=True, raises=AssertionError,
@@ -98,8 +108,26 @@ GENAI_RETRIES_DROPS = pytest.mark.xfail(strict=True, raises=AssertionError,
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "fireworks",
                                       pytest.param("gemini", marks=GENAI_RETRIES_DROPS)])
-async def test_dropped_connection_is_not_retried(provider, serve):
+async def test_dropped_connection_is_not_retried(provider, serve, llm):
     hits = serve(None)
     with pytest.raises(ProviderError):
-        await ask(provider)
+        await ask(llm, provider)
     assert len(hits) == 1, hits
+
+
+async def test_aclose_closes_every_client_and_the_next_call_reopens(serve):
+    hits = serve(500)
+    llm = LLM()
+    for provider in BASE_URL_VARS:
+        with pytest.raises(ProviderError):
+            await ask(llm, provider)
+    await llm.aclose()
+    with pytest.raises(ProviderError):
+        await ask(llm, "openai")  # a closed client would never reach the server
+    assert len(hits) == len(BASE_URL_VARS) + 1, hits
+    await llm.aclose()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        del llm
+        gc.collect()
+    assert not [w for w in caught if "Unclosed" in str(w.message)], caught
