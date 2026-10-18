@@ -1,14 +1,14 @@
 """llm_master's message format, its validator, and its spelling per API. See IO.md."""
 import json
 import secrets
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, assert_never
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, JsonValue, field_validator, model_validator
 
 from llm_master.config import UnsupportedField
 from llm_master.io.parts import Audio, File, Image, Part, Text, uri
-from llm_master.providers import API, ProviderName
+from llm_master.providers import API, PROVIDERS, ProviderName
 
 
 def new_id() -> str:
@@ -18,7 +18,7 @@ def new_id() -> str:
 class Call(BaseModel, extra="forbid"):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")  # ours, see IO.md Ids
     name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, JsonValue]
     wire_id: str | None = None  # the provider's id, sent only when native replays
 
 
@@ -41,29 +41,31 @@ class Message(BaseModel, extra="forbid"):
     @field_validator("reasoning", mode="before")
     @classmethod
     def _reasoning_text(cls, v):
-        return v["content"] if isinstance(v, dict) else v  # any-llm's {"content": str}
+        return v["content"] if isinstance(v, dict) and "content" in v else v  # any-llm's {"content": str}
 
     @model_validator(mode="after")
     def _fields_fit_role(self):
-        assistant_only = {"calls": self.calls, "reasoning": self.reasoning, "origin": self.origin, "native": self.native}
+        assistant_only = {"calls": self.calls, "reasoning": self.reasoning, "origin": self.origin,
+                          "native": self.native}
         if self.role != "assistant" and (misplaced := [k for k, v in assistant_only.items() if v is not None]):
             raise ValueError(f"{self.role} messages can't carry {', '.join(misplaced)}")
         if (self.role == "tool") != (self.call_id is not None):
             raise ValueError("call_id is required on tool messages and forbidden on the others")
-        parts = self.content if isinstance(self.content, list) else []
         match self.role:
             case "user":
                 pass
             case "tool":
-                if any(isinstance(p, Audio) for p in parts):
+                if isinstance(self.content, list) and any(isinstance(p, Audio) for p in self.content):
                     raise ValueError("tool results hold text, image and file parts; audio is user-only")
             case "assistant":
-                if parts:
+                if isinstance(self.content, list):
                     raise ValueError("assistant content is a string")
                 if self.native is not None and self.origin is None:
                     raise ValueError("native requires origin")
                 if not self.content and not self.calls and self.native is None:
                     raise ValueError("an assistant message needs content, calls or native")
+            case _:
+                assert_never(self.role)
         return self
 
 
@@ -95,14 +97,21 @@ def validate(messages: Sequence[Message | dict]) -> list[Message]:
 
 
 def assemble(messages: list[Message], provider: ProviderName, model: str, api: API, system: str | None) -> dict:
-    """The history spelled for one candidate. Pure: same history and candidate, same bytes."""
-    replays = [m.native is not None and m.origin == Origin(provider=provider, model=model) for m in messages]
-    wire = {c.id: c.wire_id for m, r in zip(messages, replays) if r for c in m.calls or [] if c.wire_id}
+    """The history spelled for one candidate. Pure: same history and candidate, same bytes.
+
+    system rides here because completion has no parameter for it.
+    """
+    me = Origin(provider=provider, model=model)
+    replays = [m.native is not None and m.origin == me for m in messages]
+    wire = {}  # our call id → the provider's, for the calls that replay natively
+    for m, replay in zip(messages, replays):
+        if replay:
+            wire |= {c.id: c.wire_id for c in m.calls or [] if c.wire_id}
     match api:
         case "completion":
-            return {"messages": _completion(messages, replays, wire, provider, system)}
+            return {"messages": _completion(messages, replays, wire, PROVIDERS[provider]["tool_media"], system)}
         case "messages":
-            return {"messages": _anthropic(messages, replays, wire)}
+            return {"messages": _messages(messages, replays, wire)}
         case "responses":
             # saved history is the only conversation state, and reasoning replays without openai's servers
             return {"input_data": _responses(messages, replays, wire), "store": False,
@@ -111,13 +120,13 @@ def assemble(messages: list[Message], provider: ProviderName, model: str, api: A
             assert_never(api)
 
 
-def _completion(messages: list[Message], replays: list[bool], wire: dict, provider: ProviderName,
+def _completion(messages: list[Message], replays: list[bool], wire: dict, tool_media: bool,
                 system: str | None) -> list[dict]:
     out: list[dict] = [{"role": "system", "content": system}] if system is not None else []
     for m, replay in zip(messages, replays):
         match m.role:
             case "user":
-                out.append({"role": "user", "content": _each(m.content, _chat_part)})
+                out.append({"role": "user", "content": _each(m.content, _completion_part)})
             case "assistant" if replay:
                 out.append(m.native)
             case "assistant" if not m.content and not m.calls:
@@ -130,36 +139,40 @@ def _completion(messages: list[Message], replays: list[bool], wire: dict, provid
                                              for c in m.calls]
                 out.append(message)
             case "tool":
-                if provider == "fireworks" and isinstance(m.content, list) and any(
-                        not isinstance(p, Text) for p in m.content):
-                    raise UnsupportedField("completion", "messages", "fireworks takes text-only tool results")
+                if not tool_media and isinstance(m.content, list) and any(not isinstance(p, Text) for p in m.content):
+                    raise UnsupportedField("completion", "messages", "this provider takes text-only tool results")
                 out.append({"role": "tool", "tool_call_id": wire.get(m.call_id, m.call_id),
-                            "content": _each(m.content, _chat_part)})
+                            "content": _each(m.content, _completion_part)})
+            case _:
+                assert_never(m.role)
     return out
 
 
-def _anthropic(messages: list[Message], replays: list[bool], wire: dict) -> list[dict]:
+def _messages(messages: list[Message], replays: list[bool], wire: dict) -> list[dict]:
     out: list[dict] = []
     for i, (m, replay) in enumerate(zip(messages, replays)):
         match m.role:
             case "user":
-                out.append({"role": "user", "content": _each(m.content, _anthropic_part)})
+                out.append({"role": "user", "content": _each(m.content, _messages_part)})
             case "assistant" if replay:
                 out.append({"role": "assistant", "content": m.native})
             case "assistant":
                 blank = not isinstance(m.content, str) or not m.content.strip()
                 blocks = [] if blank else [{"type": "text", "text": m.content}]  # a blank text block 400s
-                blocks += [{"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments} for c in m.calls or []]
+                blocks += [{"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
+                           for c in m.calls or []]
                 if blocks:
                     out.append({"role": "assistant", "content": blocks})
             case "tool":
                 result: dict = {"type": "tool_result", "tool_use_id": wire.get(m.call_id, m.call_id)}
                 if m.content:
-                    result["content"] = _each(m.content, _anthropic_part)
+                    result["content"] = _each(m.content, _messages_part)
                 if i and messages[i - 1].role == "tool":  # consecutive results share one user message
                     out[-1]["content"].append(result)
                 else:
                     out.append({"role": "user", "content": [result]})
+            case _:
+                assert_never(m.role)
     return out
 
 
@@ -183,14 +196,16 @@ def _responses(messages: list[Message], replays: list[bool], wire: dict) -> list
             case "tool":
                 out.append({"type": "function_call_output", "call_id": wire.get(m.call_id, m.call_id),
                             "output": _each(m.content, _responses_part)})
+            case _:
+                assert_never(m.role)
     return out
 
 
-def _each(content: str | list, spell) -> str | list[dict]:
+def _each(content: str | list[Part], spell: Callable[[Part], dict]) -> str | list[dict]:
     return content if isinstance(content, str) else [spell(p) for p in content]
 
 
-def _chat_part(p: Text | Image | File | Audio) -> dict:
+def _completion_part(p: Part) -> dict:
     match p:
         case Text():
             return {"type": "text", "text": p.text}
@@ -204,7 +219,7 @@ def _chat_part(p: Text | Image | File | Audio) -> dict:
             assert_never(p)
 
 
-def _anthropic_part(p: Text | Image | File | Audio) -> dict:
+def _messages_part(p: Part) -> dict:
     match p:
         case Text():
             return {"type": "text", "text": p.text}
@@ -218,7 +233,7 @@ def _anthropic_part(p: Text | Image | File | Audio) -> dict:
             assert_never(p)
 
 
-def _responses_part(p: Text | Image | File | Audio) -> dict:
+def _responses_part(p: Part) -> dict:
     match p:
         case Text():
             return {"type": "input_text", "text": p.text}
@@ -227,6 +242,7 @@ def _responses_part(p: Text | Image | File | Audio) -> dict:
         case File():
             return {"type": "input_file", "file_data": uri(p.mime, p.data), "filename": p.filename}
         case Audio():
-            raise UnsupportedField("responses", "messages", "responses takes no audio input: openai audio uses completion")
+            raise UnsupportedField("responses", "messages",
+                                   "responses takes no audio input; openai audio uses completion")
         case _:
             assert_never(p)

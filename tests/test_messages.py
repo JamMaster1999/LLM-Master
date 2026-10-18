@@ -1,19 +1,20 @@
 """The message format: validation rules, per-API request goldens, and live acceptance of caller-written history."""
 import base64
+import datetime
 import io
 import json
 import os
 import pathlib
 
 import pytest
-from any_llm import AnyLLM
 from any_llm.types.completion import ChatCompletion
 from any_llm.types.messages import MessageResponse
 from PIL import Image as Pillow, ImageDraw, ImageFont
 
-from llm_master.config import UnsupportedField
+from llm_master.config import UnsupportedField, max_tokens, tools
+from llm_master.facade import LLM
 from llm_master.io.messages import Message, assemble, validate
-from llm_master.io.parts import File, Image, Text
+from llm_master.io.parts import File, Image, Text, uri
 from llm_master.providers import API, ProviderName
 
 GOLDENS = pathlib.Path(__file__).parent / "goldens"
@@ -70,26 +71,32 @@ def reloaded(history) -> list[Message]:
 
 @pytest.mark.parametrize("candidate, api, system", [(GEMINI, "completion", "Be brief."), (CLAUDE, "messages", None),
                                                     (GPT, "responses", None)])
-def test_request_shape_survives_save_and_reload(candidate, api, system):
+def test_request_bytes_survive_save_and_reload(candidate, api, system):
     provider, model = candidate
-    expected = assemble(validate(HISTORY), provider, model, api, system)
-    assert assemble(reloaded(HISTORY), provider, model, api, system) == expected
+    sent = json.dumps(assemble(validate(HISTORY), provider, model, api, system), indent=1) + "\n"
+    assert json.dumps(assemble(reloaded(HISTORY), provider, model, api, system), indent=1) + "\n" == sent
     golden = GOLDENS / f"{api}.json"
     if os.environ.get("GOLDEN_UPDATE"):
-        golden.write_text(json.dumps(expected, indent=1) + "\n")
-    assert expected == json.loads(golden.read_text()), f"{api} request changed: every saved conversation's cache busts"
+        golden.write_text(sent)
+    assert sent == golden.read_text(), f"{api} request changed: every saved conversation's cache busts"
 
 
-def test_formats_without_a_spelling_raise():
-    audio = [{"role": "user", "content": [{"type": "audio", "data": "UklGRg==", "format": "wav"}]}]
-    assert assemble(validate(audio), "openai", "gpt-audio", "completion", None)["messages"][0]["content"] == [
+AUDIO = [{"role": "user", "content": [{"type": "audio", "data": "UklGRg==", "format": "wav"}]}]
+
+
+def test_completion_spells_audio():
+    assert assemble(validate(AUDIO), "openai", "gpt-audio", "completion", None)["messages"][0]["content"] == [
         {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}]
-    with pytest.raises(UnsupportedField):
-        assemble(validate(audio), *CLAUDE, "messages", None)
-    with pytest.raises(UnsupportedField):
-        assemble(validate(audio), *GPT, "responses", None)
-    with pytest.raises(UnsupportedField, match="text-only"):
-        assemble(validate(HISTORY[:3] + [{"role": "user", "content": "x"}]), "fireworks", "kimi-k3", "completion", None)
+
+
+@pytest.mark.parametrize("history, provider, model, api, error", [
+    (AUDIO, *CLAUDE, "messages", "no audio input"),
+    (AUDIO, *GPT, "responses", "no audio input"),
+    (HISTORY[:3] + [{"role": "user", "content": "x"}], "fireworks", "kimi-k3", "completion", "text-only"),
+], ids=["audio-messages", "audio-responses", "fireworks-tool-image"])
+def test_content_without_a_spelling_raises(history, provider, model, api, error):
+    with pytest.raises(UnsupportedField, match=error):
+        assemble(validate(history), provider, model, api, None)
 
 
 def test_reasoning_accepts_any_llms_object_form():
@@ -103,21 +110,24 @@ ASKS = {"role": "assistant", "calls": [CALL]}
 ANSWER = {"role": "tool", "call_id": "lm_1", "content": "ok"}
 
 
-@pytest.mark.parametrize("history, error", [
+@pytest.mark.parametrize("history, error", [  # our rules match our words, pydantic's its error type
     ([], "can't be empty"),
-    ([{"role": "system", "content": "x"}, U], "'user', 'assistant' or 'tool'"),
+    ([{"role": "system", "content": "x"}, U], "literal_error"),
     ([U, {"role": "assistant", "content": "x"}], "end on an assistant"),
     ([{"role": "tool", "content": "x"}], "call_id is required"),
     ([{**U, "call_id": "lm_1"}], "call_id is required"),
     ([{**U, "reasoning": "r"}], "can't carry reasoning"),
+    ([U, {"role": "assistant", "content": "x", "reasoning": {}}, U], "string_type"),
     ([U, {"role": "assistant", "content": "x", "native": {}}, U], "native requires origin"),
     ([U, {"role": "assistant"}, U], "needs content, calls or native"),
-    ([U, {"role": "assistant", "content": [{"type": "text", "text": "x"}]}, U], "assistant content is a string"),
+    ([U, {"role": "assistant", "content": []}, U], "assistant content is a string"),
     ([U, ASKS, {**ANSWER, "content": [{"type": "audio", "data": "x", "format": "wav"}]}], "audio is user-only"),
-    ([{**U, "contnet": "typo"}], "Extra inputs"),
-    ([{"role": "user", "content": [{"type": "video", "data": "x"}]}], "does not match any of the expected tags"),
-    ([U, {"role": "assistant", "calls": [{**CALL, "arguments": "{}"}]}], "valid dictionary"),
-    ([U, {"role": "assistant", "calls": [{**CALL, "id": "has space"}]}], "should match pattern"),
+    ([{**U, "contnet": "typo"}], "extra_forbidden"),
+    ([{"role": "user", "content": [{"type": "video", "data": "x"}]}], "union_tag_invalid"),
+    ([U, {"role": "assistant", "calls": [{**CALL, "arguments": "{}"}]}], "dict_type"),
+    ([U, {"role": "assistant", "calls": [{**CALL, "arguments": {"on": datetime.date(2026, 1, 1)}}]}],
+     "invalid-json-value"),
+    ([U, {"role": "assistant", "calls": [{**CALL, "id": "has space"}]}], "string_pattern_mismatch"),
     ([U, ASKS, ANSWER, U, ASKS, ANSWER], "'lm_1' repeats"),
     ([U, ASKS, {**ANSWER, "call_id": "lm_2"}], "answers no open call"),
     ([U, ASKS, U], "unanswered before the next user"),
@@ -130,45 +140,52 @@ def test_rule_breaks_fail_before_sending(history, error):
 
 # --- live: a caller-written tool loop with media, sent through each API's spelling ---
 
-def page(text: str, fmt: str) -> str:
+def page(text: str, fmt: str, mime: str) -> str:
     img = Pillow.new("RGB", (520, 160), "white")
     ImageDraw.Draw(img).text((30, 50), text, fill="black", font=ImageFont.load_default(size=28))
     out = io.BytesIO()
     img.save(out, fmt)
-    return f"data:{'image/png' if fmt == 'PNG' else 'application/pdf'};base64,{base64.b64encode(out.getvalue()).decode()}"
+    return uri(mime, base64.b64encode(out.getvalue()).decode())
 
 
-LOOKUP = {"name": "lookup", "description": "Look up a code",
-          "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}
+LOOKUP = [{"type": "function", "function": {"name": "lookup", "description": "Look up a code", "parameters": {
+    "type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}}}]
 
 
-def media_loop(tool_result) -> list[Message]:
-    """Calls from 'another model'; the result carries the first code, the user's PDF the second."""
+def media_loop(tool_result, ask) -> list[Message]:
+    """Calls from 'another model'; the result carries the first code, the last user message the ask."""
     return validate([
         {"role": "user", "content": "Use lookup twice in parallel: q='first' and q='other'."},
         {"role": "assistant", "content": "Looking both up.", "calls": [
             {"id": "lm_aaaaaaaaaaaaaaaaaaaaaaaa", "name": "lookup", "arguments": {"q": "first"}},
             {"id": "lm_bbbbbbbbbbbbbbbbbbbbbbbb", "name": "lookup", "arguments": {"q": "other"}}]},
-        {"role": "tool", "call_id": "lm_aaaaaaaaaaaaaaaaaaaaaaaa", "content": [Text(text="Result attached."), tool_result]},
+        {"role": "tool", "call_id": "lm_aaaaaaaaaaaaaaaaaaaaaaaa", "content": [Text(text="Result attached."),
+                                                                             tool_result]},
         {"role": "tool", "call_id": "lm_bbbbbbbbbbbbbbbbbbbbbbbb", "content": "nothing found"},
-        {"role": "user", "content": [Text(text="Reply with the looked-up code, then the code in this PDF."),
-                                     File(page("PDF CODE: OTTER-3302", "PDF"), filename="code.pdf")]},
+        {"role": "user", "content": ask},
     ])
 
 
-async def answer(provider: ProviderName, model: str, api: API, history: list[Message]) -> str:
-    client = AnyLLM.create(provider, unified_exceptions=True, max_retries=0)
+@pytest.fixture
+async def llm():
+    llm = LLM()
+    yield llm
+    await llm.aclose()
+
+
+async def answer(llm: LLM, provider: ProviderName, model: str, api: API, history: list[Message]) -> str:
+    client = llm.client(provider)
     request = assemble(history, provider, model, api, None)
+    request |= tools.translate(LOOKUP, api) | max_tokens.translate(500, api)
     if api == "completion":
-        r = await client.acompletion(model=model, tools=[{"type": "function", "function": LOOKUP}], **request)
+        r = await client.acompletion(model=model, **request)
         assert isinstance(r, ChatCompletion)
         return r.choices[0].message.content or ""
     if api == "messages":
-        r = await client.amessages(model=model, max_tokens=500, **request, tools=[
-            {"name": "lookup", "description": LOOKUP["description"], "input_schema": LOOKUP["parameters"]}])
+        r = await client.amessages(model=model, **request)
         assert isinstance(r, MessageResponse)
         return "".join(b.text for b in r.content if b.type == "text")
-    r = await client.aresponses(model=model, tools=[{"type": "function", **LOOKUP}], **request)
+    r = await client.aresponses(model=model, **request)
     return "".join(p.text for i in r.output if i.type == "message" for p in i.content if p.type == "output_text")
 
 
@@ -176,16 +193,18 @@ async def answer(provider: ProviderName, model: str, api: API, history: list[Mes
 @pytest.mark.parametrize("provider, model, api", [("anthropic", "claude-haiku-5-5", "messages"),
                                                   ("openai", "gpt-5.5", "responses"),
                                                   ("gemini", "gemini-3.5-flash", "completion")])
-@pytest.mark.parametrize("fmt", ["PNG", "PDF"])
-async def test_media_in_tool_results_is_read(provider, model, api, fmt):
-    result = Image(page("TOOL CODE: ZEBRA-7741", fmt)) if fmt == "PNG" else File(page("TOOL CODE: ZEBRA-7741", fmt))
-    text = await answer(provider, model, api, media_loop(result))
+@pytest.mark.parametrize("make, fmt, mime", [(Image, "PNG", "image/png"), (File, "PDF", "application/pdf")],
+                         ids=["image", "pdf"])
+async def test_media_in_tool_results_is_read(provider, model, api, make, fmt, mime, llm):
+    ask = [Text(text="Reply with the looked-up code, then the code in this PDF."),
+           File(page("PDF CODE: OTTER-3302", "PDF", "application/pdf"), filename="code.pdf")]
+    history = media_loop(make(page("TOOL CODE: ZEBRA-7741", fmt, mime)), ask)
+    text = await answer(llm, provider, model, api, history)
     assert "ZEBRA-7741" in text and "OTTER-3302" in text, text
 
 
 @pytest.mark.live
-async def test_fireworks_reads_text_results_of_other_models_calls():
-    history = media_loop(Text(text="TOOL CODE: ZEBRA-7741"))
-    history[-1] = Message(role="user", content="Reply with the looked-up code only.")
-    text = await answer("fireworks", "accounts/fireworks/models/kimi-k3", "completion", history)
+async def test_fireworks_reads_text_results_of_other_models_calls(llm):
+    history = media_loop(Text(text="TOOL CODE: ZEBRA-7741"), "Reply with the looked-up code only.")
+    text = await answer(llm, "fireworks", "accounts/fireworks/models/kimi-k3", "completion", history)
     assert "ZEBRA-7741" in text, text

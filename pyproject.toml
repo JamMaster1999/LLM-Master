@@ -25,5 +25,5 @@ build-backend = "hatchling.build"
 packages = ["llm_master"]
 
 [tool.uv.sources]
-# until mozilla-ai/any-llm#1513, #1514 and #1515 and fork PR #20 are released: the Gemini fixes, merged
+# the Gemini fixes, until released: fork PRs #17, #18 and #19 (mozilla-ai/any-llm#1513-1515) and #20
 any-llm-sdk = { git = "https://github.com/JamMaster1999/any-llm", branch = "llm-master" }

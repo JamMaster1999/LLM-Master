@@ -36,7 +36,7 @@ Two terms come up throughout:
   - tool: a string or a list of parts (text, image, file).
   - assistant: a string, empty (`""`) when the message only calls tools.
 - `calls`: a list of tool calls, each `{"id": str, "name": str, "arguments": dict, "wire_id":
-  str}`.
+  str}`. `arguments` holds JSON values only; a caller-written call has no `wire_id`.
   - `id` is ours; `wire_id` is the id the provider gave the call (see Ids).
 - One `Message` class covers all three roles.
   - `role` decides which fields apply, and one validator checks the rules between fields.
@@ -57,14 +57,17 @@ Parts are a fixed set, told apart by `type`. An unknown `type` fails validation.
 
 Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` accept a
 data-uri, a URL or a local path, and read, convert (HEIC to PNG) and encode the data when the part
-is created: `Image("photo.heic")`. The caller then saves exactly the bytes every later call sends
-(see The same-bytes rule). A failed download or conversion, an `Image` that isn't an image, or a
+is created: `Image("photo.heic")`. HEIC becomes JPEG (quality 90): a 12-megapixel phone photo as
+PNG runs about 18 MB, past Claude's limit. The bytes decide what an image is, not its name or
+`Content-Type`. The caller then saves exactly the bytes every later call sends (see The same-bytes
+rule). A failed download or conversion, an `Image` that isn't an image, or a
 `File` that isn't a PDF raises `PartError` when the part is created, before any model is billed.
 Reading is synchronous; an async caller downloading a URL wraps the constructor in
-`asyncio.to_thread`.
+`asyncio.to_thread`. A source is read as whatever it names, a local path or any URL, with no size
+cap, so never pass a user's input as one: that reads server files or fetches internal addresses.
 
-Size limits are left to the provider. For reference: Anthropic caps an image at 5 MB after
-encoding, and Gemini accepts at most 20 MB of inline data per request.
+Size limits are left to the provider. For reference: Anthropic rejects an image over 10 MB
+(live-tested), and Gemini accepts at most 20 MB of inline data per request.
 
 ## Assistant messages: readable fields and native
 
@@ -172,7 +175,8 @@ any-llm's converters expect OpenAI's chat format, so this case writes it.
 - tool: `{"role": "tool", "tool_call_id", "content"}`, parts renamed as for user.
   - Gemini 3 receives image and PDF parts as `functionResponse.parts` (any-llm fork PRs #17 and
     #20). Without them it never sees the media and invents an answer (live-tested).
-  - Fireworks accepts text only, so any other part raises `UnsupportedField`.
+  - Fireworks accepts text only, so any other part raises `UnsupportedField`. The provider row's
+    `tool_media` holds that fact.
 
 ### messages → `{"messages": [...]}`
 
@@ -193,7 +197,6 @@ every key except role and content, and rebuilds thinking from a format we never 
 ### responses → `{"input_data": [...]}`
 
 `input_data` is any-llm's name for the request's `input`.
-
 
 - user: a string → `{"role": "user", "content": str}`. Parts are renamed:
   - text → `input_text`
