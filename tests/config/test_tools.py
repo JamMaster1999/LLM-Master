@@ -45,8 +45,9 @@ def test_unknown_keys_ride_through():
 
 def test_provider_hosted_tools_fail_validation():
     Config(tools=[get_time, *OPENAI_TOOLS])
-    with pytest.raises(ValidationError, match="function tools only"):
-        Config(tools=[get_time, {"type": "web_search"}])
+    for hosted in ({"type": "web_search"}, {"type": "function"}, "web_search", object()):
+        with pytest.raises(ValidationError, match="function tools only"):
+            Config(tools=[get_time, hosted])
 
 
 @pytest.mark.live
