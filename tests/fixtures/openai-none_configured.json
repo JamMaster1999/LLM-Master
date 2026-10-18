@@ -1,0 +1,29 @@
+[
+ {
+  "request": {
+   "path": "/responses",
+   "body": {
+    "include": [
+     "reasoning.encrypted_content"
+    ],
+    "input": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "instructions": "Answer in French.",
+    "model": "gpt-5.6-luna",
+    "store": false,
+    "prompt_cache_options": {
+     "mode": "explicit"
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\n  \"id\": \"resp_04ab272d4d906b5c016ad52935ee5087d0b0a8fa87ed55b354\",\n  \"object\": \"response\",\n  \"created_at\": 1792354613,\n  \"status\": \"completed\",\n  \"access_programs\": null,\n  \"background\": false,\n  \"billing\": {\n    \"payer\": \"developer\"\n  },\n  \"completed_at\": 1792354615,\n  \"error\": null,\n  \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\": \"Answer in French.\",\n  \"max_output_tokens\": null,\n  \"max_tool_calls\": null,\n  \"model\": \"gpt-5.6-luna\",\n  \"moderation\": null,\n  \"output\": [\n    {\n      \"id\": \"msg_04ab272d4d906b5c016ad52937939c87d096812c01af80c0b0\",\n      \"type\": \"message\",\n      \"status\": \"completed\",\n      \"content\": [\n        {\n          \"type\": \"output_text\",\n          \"annotations\": [],\n          \"logprobs\": [],\n          \"text\": \"Bonjour, Toronto ! Je vous souhaite une excellente matin\\u00e9e !\"\n        }\n      ],\n      \"phase\": \"final_answer\",\n      \"role\": \"assistant\"\n    }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_options\": {\n    \"mode\": \"explicit\",\n    \"ttl\": \"30m\"\n  },\n  \"prompt_cache_retention\": \"24h\",\n  \"reasoning\": {\n    \"context\": \"all_turns\",\n    \"effort\": \"medium\",\n    \"mode\": \"standard\",\n    \"summary\": null\n  },\n  \"safety_identifier\": null,\n  \"service_tier\": \"default\",\n  \"store\": false,\n  \"temperature\": 1.0,\n  \"text\": {\n    \"format\": {\n      \"type\": \"text\"\n    },\n    \"verbosity\": \"medium\"\n  },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\": {\n    \"image_gen\": {\n      \"input_tokens\": 0,\n      \"input_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\": 0,\n      \"output_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"total_tokens\": 0\n    },\n    \"web_search\": {\n      \"num_requests\": 0\n    }\n  },\n  \"tools\": [],\n  \"top_logprobs\": 0,\n  \"top_p\": 0.98,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\": 20,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n      \"cached_tokens\": 0\n    },\n    \"output_tokens\": 16,\n    \"output_tokens_details\": {\n      \"reasoning_tokens\": 0\n    },\n    \"total_tokens\": 36\n  },\n  \"user\": null,\n  \"metadata\": {}\n}"
+  }
+ }
+]

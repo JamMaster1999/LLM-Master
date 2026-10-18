@@ -175,15 +175,19 @@ save → reload → next call is lossless by construction.
   guarantees syntax only — gemini returns numbers as strings about a third of runs, so live tests
   assert parseability and key presence, never value types.
 - The schema arm stays one pydantic model, zero per-provider schemas: completion and responses
-  take `response_format`, messages takes the identical `output_format` — our entire translation
-  is that rename.
+  take `response_format`, messages takes the identical `output_format` — for a schema class our
+  entire translation is that rename. A schema dict goes in each API's own format object:
+  `{"type": "json_schema", "json_schema": {"name": "response", "schema": ...}}` on completion,
+  `{"type": "json_schema", "name": "response", "schema": ...}` on responses, and
+  `output_config.format` on messages, where it merges with thinking's `output_config.effort`.
 - completion: each provider's converter does the rest (gemini rides `response_json_schema`).
   messages: anthropic's parse path via the beta client. responses: openai's native parse.
 - The parsed object is `response.parsed`, read by llm_master from `message.content` (IO.md, The
   response), so a stream and a plain call parse the same way.
 - Honest unknown: `stream=True` with `response_format` behaves differently per provider, and
-  any-llm's parse paths may not stream at all. We pass through, rejections surface typed, and
-  live seeds pin the working combinations at build.
+  any-llm's parse paths may not stream at all: on responses, a schema class with `stream=True`
+  raises typed before sending, while a schema dict streams. We pass through and rejections surface
+  typed.
 
 ## 9. `max_tokens` — `int | None`, default None
 
@@ -193,9 +197,9 @@ save → reload → next call is lossless by construction.
   applies. anthropic requires the field, so its candidates get `64000` — the sonnet-line output
   ceiling, big enough that the default never clips. Models with smaller ceilings reject it with a
   typed 400; fallback moves on.
-- 64k trips any-llm's long-request guard on plain non-streaming calls, so when `timeout` is also
-  unset the pair ships together: `max_tokens=64000, timeout=600` — anthropic's own 10-minute
-  request ceiling. Caller-set values always win. Live-verified both ways.
+- 64k trips the anthropic SDK's long-request guard on plain non-streaming calls unless a timeout is
+  passed, so an unset `timeout` on messages sends `600`, anthropic's own 10-minute request ceiling
+  (field 10). Caller-set values always win. Live-verified both ways.
 - Net meaning of None: "model's max" everywhere — by absence where the API allows it, by
   anthropic's own maxima where it demands a number.
 - Truncation live-verified on all three: `finish_reason="length"` (completion),
@@ -206,8 +210,9 @@ save → reload → next call is lossless by construction.
 
 - All three dialects take any-llm's `timeout` param. Enforcement live-verified on all three: a
   1ms timeout raises the typed error (test_trivials).
-- None → the SDK's own default applies. One exception: anthropic with max_tokens also unset gets
-  `timeout=600` (see `max_tokens`).
+- None → the SDK's own default applies. One exception: messages sends `timeout=600`, anthropic's
+  own 10-minute ceiling said aloud, so the SDK's long-request guard accepts the 64k `max_tokens`
+  default (field 9).
 - An expiry surfaces as the typed timeout error, a retryable failure — the retry and fallback
   layers decide what happens next, not this field.
 

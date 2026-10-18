@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Any, assert_never
 
 from any_llm import AnyLLM
 
+from llm_master import pipeline
 from llm_master.config import (cache, max_tokens, merge, moderation, response_format, stream as streaming, system,
                                temperature, thinking, timeout, tool_choice, tools)
 from llm_master.io.messages import Message, Origin, assemble, validate
 from llm_master.io.parts import Audio, Text
 from llm_master.io.response import Attempt, Response, parse, read
-from llm_master.io.stream import Stream, chunks
+from llm_master.io.stream import Stream, adapter
 from llm_master.providers import API, PROVIDERS
 from llm_master.types import Model
 
@@ -23,8 +24,10 @@ def build(candidate: Model, history: list[Message], stream: bool) -> tuple[API, 
     """The API and kwargs one candidate gets. Pure, like assembly: same input, same request."""
     api = _api(candidate, history)
     c = candidate.config
-    fragments = [assemble(history, candidate.provider, candidate.model, api, c.system, breakpoint=isinstance(c.cache, int)),
-                 streaming.translate(stream, api), max_tokens.translate(c.max_tokens, api), cache.translate(c.cache, api)]
+    fragments = [assemble(history, candidate.provider, candidate.model, api, c.system,
+                          cache_breakpoint=isinstance(c.cache, int)),
+                 streaming.translate(stream, api), max_tokens.translate(c.max_tokens, api),
+                 timeout.translate(c.timeout, api), cache.translate(c.cache, api)]
     if c.system is not None:
         fragments.append(system.translate(c.system, api))
     if c.temperature is not None:
@@ -37,54 +40,63 @@ def build(candidate: Model, history: list[Message], stream: bool) -> tuple[API, 
         fragments.append(tool_choice.translate(c.tool_choice, api))
     if c.response_format is not None:
         fragments.append(response_format.translate(c.response_format, api))
-    if c.timeout is not None:  # after max_tokens, so it beats anthropic's default 600
-        fragments.append(timeout.translate(c.timeout, api))
     return api, merge(*fragments, candidate.extra)
 
 
 async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequence[Message | dict],
               stream: bool) -> Response | Stream:
-    candidate = candidates if isinstance(candidates, Model) else candidates[0]  # fallback: SPEC.md step 7
     history = validate(messages)
-    if candidate.config.moderation:
+    chain = pipeline.chain(candidates)
+    if any(c.config.moderation for c in chain):  # once per call: the input is the same for every candidate
         await moderation.check(llm.client("openai"), _last_user_text(history))
-    started = time.monotonic()
-    api, request = build(candidate, history, stream)
     if stream:
-        return Stream(_streamed(llm, candidate, api, request, started))
-    raw = await _send(llm.client(candidate.provider), api, candidate.model, request)
-    message, finish, usage = read(api, raw, _origin(candidate), {})
-    return _response(candidate, message, finish, usage, started)
+        api, request = build(chain[0], history, stream=True)  # a field with no spelling raises before the stream
+        return Stream(_streamed(llm, chain[0], api, request))
+
+    async def once(candidate: Model):
+        api, request = build(candidate, history, stream=False)
+        message, finish, usage = read(api, await _send(llm, candidate, api, request), _origin(candidate), {})
+        return message, finish, usage, parse(candidate.config.response_format, message, finish)
+
+    (message, finish, usage, parsed), _, attempts, latency = await pipeline.run(chain, once)
+    return Response(message=message, parsed=parsed, finish=finish, usage=usage, attempts=attempts, latency=latency)
 
 
-async def _streamed(llm: "LLM", candidate: Model, api: API, request: dict,
-                    started: float) -> AsyncGenerator[dict | Response, None]:
-    ids: dict[str, str] = {}
-    final = None
-    async with aclosing(await _send(llm.client(candidate.provider), api, candidate.model, request)) as events:
-        yield {"type": "start-step"}
+async def _streamed(llm: "LLM", candidate: Model, api: API, request: dict) -> AsyncGenerator[dict | Response, None]:
+    started, ids, opened = time.monotonic(), {}, False
+    convert = adapter(api, ids)
+    async with aclosing(await _send(llm, candidate, api, request)) as events:
         try:
-            async for item in chunks(api, events, ids):
-                if isinstance(item, dict):
-                    yield item
-                else:
-                    final = item
+            async for event in events:
+                if not opened:  # the request opened: the provider's first event arrived
+                    opened = True
+                    yield {"type": "start-step"}
+                for chunk in convert.feed(event):
+                    yield chunk
+            tail, raw = convert.finish()
+            for chunk in tail:
+                yield chunk
+            message, finish, usage = read(api, raw, _origin(candidate), ids)
+            parsed = parse(candidate.config.response_format, message, finish)
         except Exception:
-            yield {"type": "reset-step"}  # the browser drops this attempt's output
+            if opened:
+                yield {"type": "reset-step"}  # the browser drops this attempt's output
             raise
     yield {"type": "finish-step"}
-    message, finish, usage = read(api, final, _origin(candidate), ids)
-    yield _response(candidate, message, finish, usage, started)
+    latency = time.monotonic() - started
+    yield Response(message=message, parsed=parsed, finish=finish, usage=usage, latency=latency,
+                   attempts=[Attempt(candidate.provider, candidate.model, latency)])
 
 
-async def _send(client: AnyLLM, api: API, model: str, request: dict) -> Any:
+async def _send(llm: "LLM", candidate: Model, api: API, request: dict) -> Any:
+    client: AnyLLM = llm.client(candidate.provider)
     match api:
         case "completion":
-            return await client.acompletion(model=model, **request)
+            return await client.acompletion(model=candidate.model, **request)
         case "messages":
-            return await client.amessages(model=model, **request)
+            return await client.amessages(model=candidate.model, **request)
         case "responses":
-            return await client.aresponses(model=model, **request)
+            return await client.aresponses(model=candidate.model, **request)
         case _:
             assert_never(api)
 
@@ -94,12 +106,6 @@ def _api(candidate: Model, history: list[Message]) -> API:
     row = PROVIDERS[candidate.provider]
     audio = any(isinstance(p, Audio) for m in history if isinstance(m.content, list) for p in m.content)
     return row.get("audio_api", row["api"]) if audio else row["api"]
-
-
-def _response(candidate: Model, message: Message, finish, usage, started: float) -> Response:
-    latency = time.monotonic() - started
-    return Response(message=message, parsed=parse(candidate.config.response_format, message, finish), finish=finish,
-                    usage=usage, attempts=[Attempt(candidate.provider, candidate.model, latency)], latency=latency)
 
 
 def _origin(candidate: Model) -> Origin:

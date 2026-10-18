@@ -90,11 +90,11 @@ def validate(messages: Sequence[Message | dict]) -> list[Message]:
 
 
 def assemble(messages: list[Message], provider: ProviderName, model: str, api: API, system: str | None,
-             breakpoint: bool = False) -> dict:
+             cache_breakpoint: bool = False) -> dict:
     """The history spelled for one candidate. Pure: same history and candidate, same bytes.
 
-    system rides here because completion has no parameter for it; breakpoint because openai's explicit
-    cache mode caches nothing without one at the end of the prompt.
+    system rides here because completion has no parameter for it; cache_breakpoint because openai's
+    explicit cache mode caches nothing without one at the end of the prompt.
     """
     me = Origin(provider=provider, model=model)
     replays = [m.native is not None and m.origin == me for m in messages]
@@ -110,7 +110,7 @@ def assemble(messages: list[Message], provider: ProviderName, model: str, api: A
         case "responses":
             # saved history is the only conversation state, and reasoning replays without openai's servers
             items = _responses(messages, replays, wire)
-            return {"input_data": _breakpoint(items) if breakpoint else items, "store": False,
+            return {"input_data": _breakpoint(items) if cache_breakpoint else items, "store": False,
                     "include": ["reasoning.encrypted_content"]}
         case _:
             assert_never(api)
@@ -198,7 +198,8 @@ def _breakpoint(items: list[dict]) -> list[dict]:
     """The last block of the last item, a user message or a tool result, marks the end of the prompt."""
     last = dict(items[-1])
     key = "output" if last.get("type") == "function_call_output" else "content"
-    blocks = [{"type": "input_text", "text": last[key]}] if isinstance(last[key], str) else last[key]
+    blocks = last[key] or [{"type": "input_text", "text": ""}]  # an empty result still marks the end
+    blocks = [{"type": "input_text", "text": blocks}] if isinstance(blocks, str) else blocks
     last[key] = [*blocks[:-1], {**blocks[-1], "prompt_cache_breakpoint": {"mode": "explicit"}}]
     return [*items[:-1], last]
 

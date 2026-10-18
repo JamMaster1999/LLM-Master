@@ -1,0 +1,50 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "What is 2+2? Give your confidence."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "output_config": {
+     "format": {
+      "type": "json_schema",
+      "schema": {
+       "properties": {
+        "answer": {
+         "title": "Answer",
+         "type": "integer"
+        },
+        "confidence": {
+         "enum": [
+          "low",
+          "high"
+         ],
+         "title": "Confidence",
+         "type": "string"
+        }
+       },
+       "required": [
+        "answer",
+        "confidence"
+       ],
+       "title": "Verdict",
+       "type": "object",
+       "additionalProperties": false
+      }
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\"model\":\"claude-haiku-5-5\",\"id\":\"msg_011CgAKS3EMrzTStUpfFkUkW\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\": 4, \\\"confidence\\\": \\\"high\\\"}\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":288,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":19,\"output_tokens_details\":{\"thinking_tokens\":0},\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}"
+  }
+ }
+]

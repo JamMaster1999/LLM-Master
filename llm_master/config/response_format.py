@@ -15,7 +15,7 @@ from llm_master.providers import API
 
 class Format(BaseModel, extra="forbid", populate_by_name=True):
     type: Literal["text", "json", "schema"]
-    schema_: type | dict[str, Any] | None = Field(None, alias="schema")  # "schema" shadows a BaseModel attr
+    schema_: type | dict[str, Any] | None = Field(default=None, alias="schema")  # "schema" shadows a BaseModel attr
 
     @model_validator(mode="after")
     def _schema_matches_type(self):
@@ -34,8 +34,11 @@ def translate(fmt: Format, api: API) -> dict:
                     return {}  # the provider default everywhere; messages has no explicit spelling at all
                 case "json":
                     return {"response_format": {"type": "json_object"}}
-                case "schema":
+                case "schema" if isinstance(fmt.schema_, type):  # a class rides any-llm's parse path
                     return {"response_format": fmt.schema_}
+                case "schema":  # a bare json schema dict goes in the API's own format object
+                    return {"response_format": {"type": "json_schema",
+                                                "json_schema": {"name": "response", "schema": fmt.schema_}}}
                 case _:
                     assert_never(fmt.type)
         case "messages":
@@ -45,8 +48,10 @@ def translate(fmt: Format, api: API) -> dict:
                 case "json":
                     raise UnsupportedField(api, "response_format",
                                            "anthropic has no schema-less JSON mode — pass a schema instead")
-                case "schema":
+                case "schema" if isinstance(fmt.schema_, type):
                     return {"output_format": fmt.schema_}
+                case "schema":  # output_config, so it merges with thinking's effort instead of colliding
+                    return {"output_config": {"format": {"type": "json_schema", "schema": fmt.schema_}}}
                 case _:
                     assert_never(fmt.type)
         case "responses":
@@ -55,8 +60,10 @@ def translate(fmt: Format, api: API) -> dict:
                     return {}
                 case "json":
                     return {"response_format": {"type": "json_object"}}
-                case "schema":
+                case "schema" if isinstance(fmt.schema_, type):
                     return {"response_format": fmt.schema_}
+                case "schema":
+                    return {"response_format": {"type": "json_schema", "name": "response", "schema": fmt.schema_}}
                 case _:
                     assert_never(fmt.type)
         case _:
