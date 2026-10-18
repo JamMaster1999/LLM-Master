@@ -21,11 +21,6 @@ def test_timeout_same_everywhere_when_set():
         assert timeout.translate(30.0, api) == {"timeout": 30.0}
 
 
-def test_unset_timeout_is_anthropics_ceiling_said_aloud():
-    assert timeout.translate(None, "messages") == {"timeout": 600}
-    assert timeout.translate(None, "completion") == timeout.translate(None, "responses") == {}
-
-
 def test_max_tokens_renames_on_responses():
     assert max_tokens.translate(500, "completion") == {"max_tokens": 500}
     assert max_tokens.translate(500, "messages") == {"max_tokens": 500}

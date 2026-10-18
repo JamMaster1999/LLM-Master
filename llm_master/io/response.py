@@ -39,7 +39,7 @@ class Attempt:
 
     provider: ProviderName
     model: str
-    latency: float = 0.0
+    latency: float
     errors: list[Exception] = field(default_factory=list)
 
 
@@ -51,27 +51,17 @@ class Response:
     parsed: Any
     finish: Finish
     usage: Usage | None  # None when the provider reported none: unknown, never zero
-    attempts: list[Attempt]
-    latency: float
+    attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these two
+    latency: float = 0.0
     cost: float | None = None  # SPEC.md step 4
-
-
-@dataclass
-class Answer:
-    """One try's reading of the provider's output: what a Response is made of."""
-
-    message: Message
-    finish: Finish
-    usage: Usage | None
-    parsed: Any
 
 
 class CutCall(ProviderError):
     """A tool call the model didn't finish, cut off by max_tokens or a refusal: it can't run."""
 
 
-def read(api: API, raw: Any, origin: Origin, ids: dict[str, str], fmt: Format | None) -> Answer:
-    """One API's output as an Answer. ids holds the wire ids a stream already gave our ids."""
+def read(api: API, raw: Any, origin: Origin, ids: dict[str, str], fmt: Format | None) -> Response:
+    """One API's output as a Response. ids holds the wire ids a stream already gave our ids."""
     match api:
         case "completion":
             message, finish, usage = _completion(raw, origin, ids)
@@ -83,7 +73,7 @@ def read(api: API, raw: Any, origin: Origin, ids: dict[str, str], fmt: Format | 
             assert_never(api)
     if message.calls and finish in ("length", "refusal"):  # the last call stopped mid-arguments
         raise CutCall(f"the answer stopped ({finish}) inside its tool calls, so they can't run")
-    return Answer(message, finish, usage, _parse(fmt, message, finish))
+    return Response(message=message, parsed=_parse(fmt, message, finish), finish=finish, usage=usage)
 
 
 def arguments(text: str) -> dict:
@@ -107,12 +97,15 @@ def completion_usage(u: CompletionUsage | None) -> Usage | None:
 
 
 def _completion(raw: ChatCompletion, origin: Origin, ids: dict[str, str]) -> tuple[Message, Finish, Usage | None]:
+    if not raw.choices:  # gemini's MALFORMED_FUNCTION_CALL and UNEXPECTED_TOOL_CALL leave no choice at all
+        raise ProviderError("the model answered with no choice", provider_name=origin.provider)
     choice = raw.choices[0]
     native = choice.message.model_dump(mode="json", exclude_none=True)
     calls = [_call(ids, tc["id"], tc["function"]["name"], arguments(tc["function"]["arguments"]))
              for tc in native.get("tool_calls", [])]
     text = native.get("content") or native.get("refusal") or ""
-    finish = _CHAT_FINISH[choice.finish_reason]
+    # openai reports a refusal as a normal stop; only the refusal field tells
+    finish: Finish = "refusal" if native.get("refusal") else _CHAT_FINISH[choice.finish_reason]
     return _message(text, calls, native.get("reasoning"), origin, native), finish, completion_usage(raw.usage)
 
 

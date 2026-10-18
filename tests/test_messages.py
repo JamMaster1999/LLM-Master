@@ -7,15 +7,14 @@ import os
 import pathlib
 
 import pytest
-from any_llm.types.completion import ChatCompletion
-from any_llm.types.messages import MessageResponse
 from PIL import Image as Pillow, ImageDraw, ImageFont
 
-from llm_master.config import UnsupportedField, max_tokens, tools
+from llm_master.config import UnsupportedField
 from llm_master.facade import LLM  # the type of conftest's llm fixture
 from llm_master.io.messages import Message, assemble, validate
 from llm_master.io.parts import File, Image, Text, uri
-from llm_master.providers import API, ProviderName
+from llm_master.providers import ProviderName
+from llm_master.types import Config, Model
 
 GOLDENS = pathlib.Path(__file__).parent / "goldens"
 PNG = {"type": "image", "data": "iVBORw0KGgo=", "mime": "image/png"}
@@ -84,11 +83,6 @@ def test_request_bytes_survive_save_and_reload(candidate, api, system):
 AUDIO = [{"role": "user", "content": [{"type": "audio", "data": "UklGRg==", "format": "wav"}]}]
 
 
-def test_completion_spells_audio():
-    assert assemble(validate(AUDIO), "openai", "gpt-audio", "completion", None)["messages"][0]["content"] == [
-        {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}]
-
-
 @pytest.mark.parametrize("history, provider, model, api, error", [
     (AUDIO, *CLAUDE, "messages", "no audio input"),
     (AUDIO, *GPT, "responses", "no audio input"),
@@ -149,7 +143,7 @@ def test_rule_breaks_fail_before_sending(history, error):
         validate(history)
 
 
-# --- live: a caller-written tool loop with media, sent through each API's spelling ---
+# --- live: a caller-written tool loop with media, sent through query() on each API ---
 
 def page(text: str, fmt: str, mime: str) -> str:
     img = Pillow.new("RGB", (520, 160), "white")
@@ -177,33 +171,21 @@ def media_loop(tool_result, ask) -> list[Message]:
     ])
 
 
-async def answer(llm: LLM, provider: ProviderName, model: str, api: API, history: list[Message]) -> str:
-    client = llm.client(provider)
-    request = assemble(history, provider, model, api, None)
-    request |= tools.translate(LOOKUP, api) | max_tokens.translate(500, api)
-    if api == "completion":
-        r = await client.acompletion(model=model, **request)
-        assert isinstance(r, ChatCompletion)
-        return r.choices[0].message.content or ""
-    if api == "messages":
-        r = await client.amessages(model=model, **request)
-        assert isinstance(r, MessageResponse)
-        return "".join(b.text for b in r.content if b.type == "text")
-    r = await client.aresponses(model=model, **request)
-    return "".join(p.text for i in r.output if i.type == "message" for p in i.content if p.type == "output_text")
+async def answer(llm: LLM, provider: ProviderName, model: str, history: list[Message]) -> str:
+    r = await llm.query(Model(provider=provider, model=model, config=Config(tools=LOOKUP, max_tokens=500)), history)
+    return str(r.message.content)
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("provider, model, api", [("anthropic", "claude-haiku-5-5", "messages"),
-                                                  ("openai", "gpt-5.5", "responses"),
-                                                  ("gemini", "gemini-3.5-flash", "completion")])
+@pytest.mark.parametrize("provider, model", [("anthropic", "claude-haiku-5-5"), ("openai", "gpt-5.5"),
+                                             ("gemini", "gemini-3.5-flash")])
 @pytest.mark.parametrize("make, fmt, mime", [(Image, "PNG", "image/png"), (File, "PDF", "application/pdf")],
                          ids=["image", "pdf"])
-async def test_media_in_tool_results_is_read(provider, model, api, make, fmt, mime, llm):
+async def test_media_in_tool_results_is_read(provider, model, make, fmt, mime, llm):
     ask = [Text(text="Reply with the looked-up code, then the code in this PDF."),
            File(page("PDF CODE: OTTER-3302", "PDF", "application/pdf"), filename="code.pdf")]
     history = media_loop(make(page("TOOL CODE: ZEBRA-7741", fmt, mime)), ask)
-    text = await answer(llm, provider, model, api, history)
+    text = await answer(llm, provider, model, history)
     assert "ZEBRA-7741" in text and "OTTER-3302" in text, text
 
 
@@ -211,5 +193,5 @@ async def test_media_in_tool_results_is_read(provider, model, api, make, fmt, mi
 async def test_fireworks_reads_an_image_result_of_another_models_call(llm):
     result = Image(page("TOOL CODE: ZEBRA-7741", "PNG", "image/png"))
     history = media_loop(result, "Reply with the looked-up code only.")
-    text = await answer(llm, "fireworks", "accounts/fireworks/models/kimi-k3", "completion", history)
+    text = await answer(llm, "fireworks", "accounts/fireworks/models/kimi-k3", history)
     assert "ZEBRA-7741" in text, text

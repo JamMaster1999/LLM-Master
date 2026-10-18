@@ -10,7 +10,7 @@ from llm_master.config import (cache, max_tokens, merge, moderation, response_fo
                                temperature, thinking, timeout, tool_choice, tools)
 from llm_master.io.messages import Message, Origin, assemble, validate
 from llm_master.io.parts import Audio
-from llm_master.io.response import Answer, Response, read
+from llm_master.io.response import Response, read
 from llm_master.io.stream import Stream, adapter
 from llm_master.providers import API, PROVIDERS
 from llm_master.types import Model
@@ -49,46 +49,39 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequenc
     if any(c.config.moderation for c in chain):  # once per call: the input is the same for every candidate
         await moderation.check(llm.client("openai"), history)
     if stream:
-        return Stream(_events(llm, chain, history))
+        return Stream(pipeline.stream(chain, lambda c: _streamed(llm, c, history)))
 
-    async def once(candidate: Model) -> Answer:
+    async def once(candidate: Model) -> Response:
         api, request = build(candidate, history, stream=False)
         raw = await _send(llm, candidate, api, request)
         return read(api, raw, _origin(candidate), {}, candidate.config.response_format)
 
-    return _response(await pipeline.run(chain, once))
+    return await pipeline.run(chain, once)
 
 
-async def _events(llm: "LLM", chain: list[Model], history: list[Message]) -> AsyncGenerator[dict | Response, None]:
-    """The pipeline's chunks, then the Response."""
-    async with aclosing(pipeline.stream(chain, lambda c: _streamed(llm, c, history))) as items:
-        async for item in items:
-            yield _response(item) if isinstance(item, pipeline.Done) else item
-
-
-async def _streamed(llm: "LLM", candidate: Model, history: list[Message]) -> AsyncGenerator[dict | Answer, None]:
-    """One streamed try: its chunks, then its answer."""
+async def _streamed(llm: "LLM", candidate: Model, history: list[Message]
+                    ) -> AsyncGenerator[dict | pipeline.Result[Response], None]:
+    """One streamed try: start-step, its chunks, finish-step, then its Response. Each try marks its own steps."""
     api, request = build(candidate, history, stream=True)
     convert, opened = adapter(api), False
-    async with aclosing(await _send(llm, candidate, api, request)) as events:
-        async for event in events:
-            if not opened:  # the request opened: the provider's first event arrived
-                opened = True
-                yield {"type": "start-step"}
-            for chunk in convert.feed(event):
-                yield chunk
-    tail, raw = convert.finish()
-    for chunk in tail:
-        yield chunk
-    answer = read(api, raw, _origin(candidate), convert.tools.ids, candidate.config.response_format)
+    try:
+        async with aclosing(await _send(llm, candidate, api, request)) as events:
+            async for event in events:
+                if not opened:  # the request opened: the provider's first event arrived
+                    opened = True
+                    yield {"type": "start-step"}
+                for chunk in convert.feed(event):
+                    yield chunk
+        tail, raw = convert.finish()
+        for chunk in tail:
+            yield chunk
+        response = read(api, raw, _origin(candidate), convert.tools.ids, candidate.config.response_format)
+    except Exception:
+        if opened:
+            yield {"type": "reset-step"}  # the browser drops this try's output
+        raise
     yield {"type": "finish-step"}
-    yield answer
-
-
-def _response(done: "pipeline.Done[Answer]") -> Response:
-    a = done.result
-    return Response(message=a.message, parsed=a.parsed, finish=a.finish, usage=a.usage, attempts=done.attempts,
-                    latency=done.latency)
+    yield pipeline.Result(response)
 
 
 async def _send(llm: "LLM", candidate: Model, api: API, request: dict) -> Any:
