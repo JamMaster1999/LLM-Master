@@ -1,0 +1,194 @@
+"""query() at its entry point, against recorded provider exchanges (RECORD=1 re-records them live)."""
+import json
+from typing import Literal
+
+import pytest
+from any_llm.exceptions import ProviderError
+from pydantic import BaseModel
+
+from llm_master.config import UnsupportedField
+from llm_master.config.moderation import Flagged
+from llm_master.config.response_format import Format
+from llm_master.config.tool_choice import ToolChoice
+from llm_master.facade import LLM
+from llm_master.io.messages import Message, validate
+from llm_master.io.parts import Audio
+from llm_master.query import build
+from llm_master.types import Config, Model
+
+WEATHER = {"type": "function", "function": {"name": "get_weather", "description": "Current weather for a city",
+           "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}
+ASK = [{"role": "user", "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as "
+                                   "many as remain and sells a third of the flock. How many sheep now? Then call "
+                                   "get_weather for Toronto and for Paris, in parallel."}]
+LOOPS = {
+    "anthropic": Model(provider="anthropic", model="claude-sonnet-5-5", config=Config(tools=[WEATHER], thinking="high")),
+    "openai": Model(provider="openai", model="gpt-5.6-luna", config=Config(tools=[WEATHER], thinking="high")),
+    "gemini": Model(provider="gemini", model="gemini-3.5-flash", config=Config(tools=[WEATHER], thinking="low")),
+    "fireworks": Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash",
+                       config=Config(tools=[WEATHER])),
+}
+
+
+@pytest.fixture
+async def llm():
+    llm = LLM()
+    yield llm
+    await llm.aclose()
+
+
+async def ask(llm: LLM, candidate: Model, history: list, stream: bool):
+    if not stream:
+        return await llm.query(candidate, history), []
+    s = await llm.query(candidate, history, stream=True)
+    chunks = [c async for c in s]
+    assert s.response is not None
+    return s.response, chunks
+
+
+def saved(history: list) -> list[dict]:
+    """Through JSON and back, as a caller's database would."""
+    return json.loads(json.dumps([m.model_dump(mode="json", exclude_none=True) for m in validate(history)]))
+
+
+def check_stream(chunks: list[dict], response) -> None:
+    """The chunks tell the same answer as stream.response, under the same call ids."""
+    assert chunks[0] == {"type": "start-step"} and chunks[-1] == {"type": "finish-step"}
+    assert "".join(c["delta"] for c in chunks if c["type"] == "text-delta") == response.message.content
+    for block in {c["id"] for c in chunks if c["type"] == "reasoning-start"}:
+        assert "".join(c["delta"] for c in chunks if c.get("id") == block and c["type"] == "reasoning-delta") \
+            in (response.message.reasoning or "")
+    calls = response.message.calls or []
+    assert [c["toolCallId"] for c in chunks if c["type"] == "tool-input-start"] == [c.id for c in calls]
+    assert {c["toolCallId"]: c["input"] for c in chunks if c["type"] == "tool-input-available"} == \
+        {c.id: c.arguments for c in calls}
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["plain", "stream"])
+@pytest.mark.parametrize("provider", LOOPS)
+async def test_tool_loop_replays_the_models_own_turn(provider, stream, recorded, llm):
+    recorded(f"{provider}_loop" + ("_stream" if stream else ""))
+    candidate = LOOPS[provider]
+    first, chunks = await ask(llm, candidate, ASK, stream)
+    calls = first.message.calls or []
+    assert first.finish == "calls" and sorted(str(c.arguments["city"]) for c in calls) == ["Paris", "Toronto"]
+    assert all(c.id.startswith("lm_") and c.wire_id for c in calls)
+    assert first.message.origin and first.message.origin.model == candidate.model and first.message.native
+    assert first.message.reasoning and first.usage.reasoning > 0
+    assert first.usage.input > 0 and first.usage.output > 0 and len(first.attempts) == 1
+    if stream:
+        check_stream(chunks, first)
+    results = [{"role": "tool", "call_id": c.id, "content": f"{c.arguments['city']}: 20C, sunny"} for c in calls]
+    second, chunks = await ask(llm, candidate, saved(ASK + [first.message] + results), stream)
+    assert second.finish == "stop" and "20" in second.message.content and not second.message.calls
+    if stream:
+        check_stream(chunks, second)
+
+
+async def test_a_stream_cut_mid_answer_resets_its_step(recorded, llm):
+    recorded("anthropic_cut_stream")  # anthropic_loop_stream's first reply, cut before message_stop
+    s = await llm.query(LOOPS["anthropic"], ASK, stream=True)
+    chunks = []
+    with pytest.raises(ProviderError, match="ended before"):
+        async for c in s:
+            chunks.append(c)
+    assert chunks[0] == {"type": "start-step"} and chunks[-1] == {"type": "reset-step"} and s.response is None
+
+
+CONFIGURED = {  # each field placed per API; the recorded request body pins the spelling
+    "anthropic": Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
+        system="Answer in French.", thinking="low", max_tokens=2000, cache=5, tools=[WEATHER],
+        tool_choice=ToolChoice(mode="none"))),
+    "openai": Model(provider="openai", model="gpt-5.6-luna", config=Config(
+        system="Answer in French.", thinking="low", max_tokens=2000, cache=30, tools=[WEATHER],
+        tool_choice=ToolChoice(mode="none"))),
+    "gemini": Model(provider="gemini", model="gemini-3.5-flash", config=Config(
+        system="Answer in French.", thinking="low", max_tokens=2000, cache="none", temperature=0.5, tools=[WEATHER],
+        tool_choice=ToolChoice(mode="none"))),
+}
+
+
+@pytest.mark.parametrize("provider", CONFIGURED)
+async def test_config_fields_reach_the_request(provider, recorded, llm):
+    recorded(f"{provider}_configured")
+    r = await llm.query(CONFIGURED[provider], [{"role": "user", "content": "Say good morning to Toronto."}])
+    assert r.finish == "stop" and "bonjour" in r.message.content.lower() and not r.message.calls
+
+
+class Verdict(BaseModel):
+    answer: int
+    confidence: Literal["low", "high"]
+
+
+@pytest.mark.parametrize("candidate", [Model(provider="anthropic", model="claude-haiku-5-5"),
+                                       Model(provider="openai", model="gpt-5.6-luna"),
+                                       Model(provider="gemini", model="gemini-3.5-flash")], ids=lambda m: m.provider)
+async def test_parsed_holds_the_schema_object(candidate, recorded, llm):
+    recorded(f"{candidate.provider}_parsed")
+    candidate = candidate.model_copy(update={"config": Config(response_format=Format(type="schema", schema=Verdict))})
+    r = await llm.query(candidate, [{"role": "user", "content": "What is 2+2? Give your confidence."}])
+    assert isinstance(r.parsed, Verdict) and r.parsed.answer == 4
+
+
+async def test_flagged_input_never_reaches_the_model(recorded, llm):
+    recorded("moderation_flagged")  # one exchange: the moderation call; teardown fails on a second
+    candidate = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(moderation=True))
+    with pytest.raises(Flagged):
+        await llm.query(candidate, [{"role": "user", "content": "I will hunt you down and kill you."}])
+
+
+@pytest.mark.parametrize("candidate, history, error", [
+    (Model(provider="gemini", model="gemini-3.5-flash", config=Config(cache=30)), ASK, UnsupportedField),
+    (Model(provider="gemini", model="gemini-3.5-flash"), [], ValueError),
+])
+async def test_a_call_that_cant_be_built_sends_nothing(candidate, history, error, recorded, llm):
+    recorded("nothing_sent")  # no exchanges: teardown fails on any request
+    with pytest.raises(error):
+        await llm.query(candidate, history)
+
+
+def test_anthropic_gets_its_required_max_tokens_and_the_timeout_it_needs():
+    hi = validate([{"role": "user", "content": "hi"}])
+    _, request = build(Model(provider="anthropic", model="claude-haiku-5-5"), hi, stream=False)
+    assert (request["max_tokens"], request["timeout"]) == (64000, 600)
+    _, request = build(Model(provider="anthropic", model="m", config=Config(timeout=30)), hi, stream=False)
+    assert request["timeout"] == 30  # the caller's value wins
+
+
+def test_openai_audio_input_goes_to_completion():
+    history = [Message(role="user", content=[Audio(data="UklGRg==", format="wav")])]
+    assert build(Model(provider="openai", model="gpt-audio"), history, stream=False)[0] == "completion"
+
+
+# --- live: behaviour no recording can show ---
+
+@pytest.mark.live
+async def test_switching_models_mid_tool_loop(llm):
+    history: list = list(ASK)
+    for provider in ("gemini", "anthropic", "openai", "fireworks"):
+        r = await llm.query(LOOPS[provider], history)
+        history.append(r.message)
+        for call in r.message.calls or []:
+            history.append({"role": "tool", "call_id": call.id, "content": f"{call.arguments.get('city')}: 20C"})
+        if not r.message.calls:
+            history.append({"role": "user", "content": "Now check Rome too."})
+    assert any(m.role == "tool" for m in validate(history)), "no model called the tool"
+
+
+LONG = "Remember these facts. " + " ".join(f"Fact {i}: the code for item {i} is {i * 7919 % 10007}." for i in range(700))
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("candidate", [
+    Model(provider="anthropic", model="claude-haiku-5-5", config=Config(cache=5)),
+    Model(provider="openai", model="gpt-5.6-luna"),
+    Model(provider="openai", model="gpt-5.6-luna", config=Config(cache=30)),
+    Model(provider="gemini", model="gemini-3.5-flash"),
+    Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash"),
+], ids=["anthropic-5m", "openai-auto", "openai-30m", "gemini-auto", "fireworks-auto"])
+async def test_a_saved_conversation_reads_the_cache(candidate, llm):
+    history = [{"role": "user", "content": LONG + "\n\nWhat is the code for item 3?"}]
+    first = await llm.query(candidate, history)
+    later = saved(history + [first.message, {"role": "user", "content": "And for item 5?"}])
+    second = await llm.query(candidate, later)
+    assert second.usage.cache_read > 0, second.usage

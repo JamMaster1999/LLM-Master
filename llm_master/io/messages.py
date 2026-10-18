@@ -89,10 +89,12 @@ def validate(messages: Sequence[Message | dict]) -> list[Message]:
     return history
 
 
-def assemble(messages: list[Message], provider: ProviderName, model: str, api: API, system: str | None) -> dict:
+def assemble(messages: list[Message], provider: ProviderName, model: str, api: API, system: str | None,
+             breakpoint: bool = False) -> dict:
     """The history spelled for one candidate. Pure: same history and candidate, same bytes.
 
-    system rides here because completion has no parameter for it.
+    system rides here because completion has no parameter for it; breakpoint because openai's explicit
+    cache mode caches nothing without one at the end of the prompt.
     """
     me = Origin(provider=provider, model=model)
     replays = [m.native is not None and m.origin == me for m in messages]
@@ -107,7 +109,8 @@ def assemble(messages: list[Message], provider: ProviderName, model: str, api: A
             return {"messages": _messages(messages, replays, wire)}
         case "responses":
             # saved history is the only conversation state, and reasoning replays without openai's servers
-            return {"input_data": _responses(messages, replays, wire), "store": False,
+            items = _responses(messages, replays, wire)
+            return {"input_data": _breakpoint(items) if breakpoint else items, "store": False,
                     "include": ["reasoning.encrypted_content"]}
         case _:
             assert_never(api)
@@ -189,6 +192,15 @@ def _responses(messages: list[Message], replays: list[bool], wire: dict) -> list
             case _:
                 assert_never(m.role)
     return out
+
+
+def _breakpoint(items: list[dict]) -> list[dict]:
+    """The last block of the last item, a user message or a tool result, marks the end of the prompt."""
+    last = dict(items[-1])
+    key = "output" if last.get("type") == "function_call_output" else "content"
+    blocks = [{"type": "input_text", "text": last[key]}] if isinstance(last[key], str) else last[key]
+    last[key] = [*blocks[:-1], {**blocks[-1], "prompt_cache_breakpoint": {"mode": "explicit"}}]
+    return [*items[:-1], last]
 
 
 def _each(content: str | list[Part], spell: Callable[[Part], dict]) -> str | list[dict]:

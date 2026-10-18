@@ -17,4 +17,5 @@ class ProviderRow(TypedDict):
     requests: int
     interval: int                  # seconds
     models: dict[str, ModelRow]    # exceptions only; {} means none
+    audio_api: NotRequired[API]    # where audio input goes, only when api takes none
     price_id: NotRequired[str]     # genai-prices name, only when it differs

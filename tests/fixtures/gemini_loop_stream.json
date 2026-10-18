@@ -1,0 +1,149 @@
+[
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "tools": [
+     {
+      "functionDeclarations": [
+       {
+        "description": "Current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+         "properties": {
+          "city": {
+           "description": "",
+           "type": "STRING"
+          }
+         },
+         "required": [
+          "city"
+         ],
+         "type": "OBJECT"
+        }
+       }
+      ]
+     }
+    ],
+    "generationConfig": {
+     "thinkingConfig": {
+      "include_thoughts": true,
+      "thinking_level": "LOW"
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream",
+   "body": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"**Analyzing the Requests**\\n\\nI've begun dissecting the user's initial request. I'm focusing on the sequential nature of the problem, first the riddle which sets up the state and then the parallel weather calls to Toronto and Paris. I'm taking the riddle apart bit by bit to understand the state. For the riddle, I am now focused on isolating what \\\"all but\\\" means.\\n\\n\\n\",\"thought\": true}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 96,\"totalTokenCount\": 324,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 96}],\"thoughtsTokenCount\": 228,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MiHVasD3BJqaqtsPh_S3KA\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_weather\",\"args\": {\"city\": \"Toronto\"},\"id\": \"call_5548707\"},\"thoughtSignature\": \"EpUHCpIHAWkUfROPUj7oJ1RVywAAI+8EPRD7MtzS44tpZfOI0ZW4FelSndzjnd8Q3FJkDLRKqnu/SgkHk+nBUbWNo+A04PCdBhT7t/WZ2cyAbUSA4Obc5Z+U4KrqeqfJeEue7wT+lLQPdPbGCmMx/Ch2US3ey7fGaUgRlwhnxJgw06FD0+vwauWcUYiIwU25h6JsZ7nOaO8Ax0v+r+gsRXnw7xC8GNhX7kBI+a7W0FgoNXjyFirQyHpmRl5OXK43MpHqrZbRhw+sW3UR/ybD5NT5tbbR+rbb6qxuRtVjYe8SdfGZ7FNIjlfg8JL46uCUBKOrOuHsZwm535mXNoh+cV/2rN8wCJUyMrZtoHvvUcyG2ZrJ4nCfjCKsIobp+AgEqW8poy4OWuQfrpwjUqi68CAfAeysoSFASJinStxH3s2Xp8SRLnzp2xNjP7A4yA7+3QggG/t379ylk03Qoocq74DrEplK0a3/ob+AHaBjRWbbkYcXSTVIfpc85qXEKAZByXG6fskKMJMin8mXXF7JdpNBFxYASA7vSjfgJLsN3XKpEuSkv/Vk9jTPdIgAXlMpiieopN0U03TJv2jus1QfyaXkJwSXxQJKqqQ+omQLAPqAc+0YGIv3UTgXh5BCwYzt+F+eEEIQdDbkxh2S7E7MhyDH0z/wEHKQn25kO97mcJpkdIanwdscrL1Jm52IWoCannJI2uuULAT+GSRMzJjF2P6qgUEgWhctecPFLXREyB8FUO6BHVNTY3xv+BcMYuOfH6xtUgafzPK1jvA1m7UhA4SEtZkXnN7hvs9UKCcsqdqBXvbwiINoMjYMd3xR8Zyx4ZAr9zmJeBXp9wp7eifduze5ryQuC86YIVxFXKw+Wc9cplhNvH56H8iw8tq6NU2We4FNpUEMA1GltlAWBb83NeQMrgF6TKBDnsKxQ+BufXHnmvkGf+8V2/m2exvjJ8IfGRZp4/YvyRhBb1BGrSU7rVz4apprU6kROHCRdv/gIyD8N6FjVzQ7rMg5eZQJiQiWvvnVYr7OIMyh5C6yDf7VNSEATEdlGLXvfBpXooXQupwVB4KjLKiseGT9XwXLpnil+ZkH3cQLjBMHOxB3djo4ZDtOpuznDiL5Zce/y6CQWpqeCdItt5S/ezD2CfSPmnqEC7kDTc7I0D9po/HdgxhJSTRCoVMtRwTejV+rIjnUyv+bmeN0TvyKB2K/RoP7gj3sedQqmTa2ZRg=\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 96,\"candidatesTokenCount\": 16,\"totalTokenCount\": 340,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 96}],\"thoughtsTokenCount\": 228,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MiHVasD3BJqaqtsPh_S3KA\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"functionCall\": {\"name\": \"get_weather\",\"args\": {\"city\": \"Paris\"},\"id\": \"call_5548710\"}}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 96,\"candidatesTokenCount\": 32,\"totalTokenCount\": 356,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 96}],\"thoughtsTokenCount\": 228,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MiHVasD3BJqaqtsPh_S3KA\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 96,\"candidatesTokenCount\": 32,\"totalTokenCount\": 356,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 96}],\"thoughtsTokenCount\": 228,\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MiHVasD3BJqaqtsPh_S3KA\"}\r\n\r\n"
+  }
+ },
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+       }
+      ],
+      "role": "user"
+     },
+     {
+      "parts": [
+       {
+        "functionCall": {
+         "id": "call_5548707",
+         "args": {
+          "city": "Toronto"
+         },
+         "name": "get_weather"
+        },
+        "thoughtSignature": "EpUHCpIHAWkUfROPUj7oJ1RVywAAI-8EPRD7MtzS44tpZfOI0ZW4FelSndzjnd8Q3FJkDLRKqnu_SgkHk-nBUbWNo-A04PCdBhT7t_WZ2cyAbUSA4Obc5Z-U4KrqeqfJeEue7wT-lLQPdPbGCmMx_Ch2US3ey7fGaUgRlwhnxJgw06FD0-vwauWcUYiIwU25h6JsZ7nOaO8Ax0v-r-gsRXnw7xC8GNhX7kBI-a7W0FgoNXjyFirQyHpmRl5OXK43MpHqrZbRhw-sW3UR_ybD5NT5tbbR-rbb6qxuRtVjYe8SdfGZ7FNIjlfg8JL46uCUBKOrOuHsZwm535mXNoh-cV_2rN8wCJUyMrZtoHvvUcyG2ZrJ4nCfjCKsIobp-AgEqW8poy4OWuQfrpwjUqi68CAfAeysoSFASJinStxH3s2Xp8SRLnzp2xNjP7A4yA7-3QggG_t379ylk03Qoocq74DrEplK0a3_ob-AHaBjRWbbkYcXSTVIfpc85qXEKAZByXG6fskKMJMin8mXXF7JdpNBFxYASA7vSjfgJLsN3XKpEuSkv_Vk9jTPdIgAXlMpiieopN0U03TJv2jus1QfyaXkJwSXxQJKqqQ-omQLAPqAc-0YGIv3UTgXh5BCwYzt-F-eEEIQdDbkxh2S7E7MhyDH0z_wEHKQn25kO97mcJpkdIanwdscrL1Jm52IWoCannJI2uuULAT-GSRMzJjF2P6qgUEgWhctecPFLXREyB8FUO6BHVNTY3xv-BcMYuOfH6xtUgafzPK1jvA1m7UhA4SEtZkXnN7hvs9UKCcsqdqBXvbwiINoMjYMd3xR8Zyx4ZAr9zmJeBXp9wp7eifduze5ryQuC86YIVxFXKw-Wc9cplhNvH56H8iw8tq6NU2We4FNpUEMA1GltlAWBb83NeQMrgF6TKBDnsKxQ-BufXHnmvkGf-8V2_m2exvjJ8IfGRZp4_YvyRhBb1BGrSU7rVz4apprU6kROHCRdv_gIyD8N6FjVzQ7rMg5eZQJiQiWvvnVYr7OIMyh5C6yDf7VNSEATEdlGLXvfBpXooXQupwVB4KjLKiseGT9XwXLpnil-ZkH3cQLjBMHOxB3djo4ZDtOpuznDiL5Zce_y6CQWpqeCdItt5S_ezD2CfSPmnqEC7kDTc7I0D9po_HdgxhJSTRCoVMtRwTejV-rIjnUyv-bmeN0TvyKB2K_RoP7gj3sedQqmTa2ZRg="
+       },
+       {
+        "functionCall": {
+         "id": "call_5548710",
+         "args": {
+          "city": "Paris"
+         },
+         "name": "get_weather"
+        }
+       }
+      ],
+      "role": "model"
+     },
+     {
+      "parts": [
+       {
+        "functionResponse": {
+         "id": "call_5548707",
+         "name": "get_weather",
+         "response": {
+          "result": "Toronto: 20C, sunny"
+         }
+        }
+       },
+       {
+        "functionResponse": {
+         "id": "call_5548710",
+         "name": "get_weather",
+         "response": {
+          "result": "Paris: 20C, sunny"
+         }
+        }
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "tools": [
+     {
+      "functionDeclarations": [
+       {
+        "description": "Current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+         "properties": {
+          "city": {
+           "description": "",
+           "type": "STRING"
+          }
+         },
+         "required": [
+          "city"
+         ],
+         "type": "OBJECT"
+        }
+       }
+      ]
+     }
+    ],
+    "generationConfig": {
+     "thinkingConfig": {
+      "include_thoughts": true,
+      "thinking_level": "LOW"
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream",
+   "body": "data: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"Here\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 1,\"totalTokenCount\": 169,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" is the step-by-step breakdown for the sheep riddle:\\n\\n1. **Initial\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 19,\"totalTokenCount\": 187,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" count:** 17 sheep.\\n2. **\\\"All but 9 run away\\\":** 9 sheep remain.\\n3\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 46,\"totalTokenCount\": 214,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \". **\\\"He buys twice as many as remain\\\":** He buys $2 \\\\times 9 = 18\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 70,\"totalTokenCount\": 238,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"$ sheep. The total flock is now $9 + 18 = 27$ sheep.\\n4. **\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 95,\"totalTokenCount\": 263,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\\\"Sells a third of the flock\\\":** He sells $\\\\frac{1}{3} \\\\times 27\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 119,\"totalTokenCount\": 287,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" = 9$ sheep.\\n5. **Final count:** $27 - 9 = 18$ sheep remaining\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 145,\"totalTokenCount\": 313,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \".\\n\\n**Weather updates:**\\n* **Toronto:** 20\u00b0C, sunny\\n* **Paris:** 20\u00b0C,\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 174,\"totalTokenCount\": 342,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \" sunny\"}],\"role\": \"model\"},\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 168,\"candidatesTokenCount\": 175,\"totalTokenCount\": 343,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 168}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"\",\"thoughtSignature\": \"EmkKZwFpFH0T2ncuVwfIQd/O/F/HL265UmQLC0gjKQXtZ4/kVChNFHJai/QcOcTVEz6ePYI01jLf3agq+OPlt7Uj7p+2A12dTSxVKsubuyFK8TSXsyOVhQFqgti8SRcFytzW3ct22pLHwog=\"}],\"role\": \"model\"},\"finishReason\": \"STOP\",\"index\": 0}],\"usageMetadata\": {\"promptTokenCount\": 396,\"candidatesTokenCount\": 175,\"totalTokenCount\": 571,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 396}],\"serviceTier\": \"standard\"},\"modelVersion\": \"gemini-3.6-flash\",\"responseId\": \"MyHVapqHMPDRz7IPmqPXwAs\"}\r\n\r\n"
+  }
+ }
+]

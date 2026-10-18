@@ -1,0 +1,143 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     }
+    ],
+    "model": "claude-sonnet-5-5",
+    "output_config": {
+     "effort": "high"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ],
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "stream": true
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream; charset=utf-8",
+   "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-5-5\",\"id\":\"msg_011CgAGmKaJAHGiRmehrqary\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":440,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":2,\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}     }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}            }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"So \"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"17\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" s\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"heep, all\"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" but 9 run away, le\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"aving 9.\"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" Buying twice that\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" am\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"ount ad\"}   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"ds 18,\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" gi\"}             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"ving 27,\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" then selling a third of\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" the flock remov\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"es 9, leaving \"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"18. Now I should fet\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"ch the weather in\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\" parallel with this\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\".\"} }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"\\n\\n\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"CAQSqQUKEAgSGAI4AUIIdGhpbmtpbmcSDEsQTAVeY4fxU3e8AxoMixPE9s9F99tX8ITxIjAFVAhnxxtCElVbs+nbO7OGUBuG7+0pV2T02Aan8OSp8DbyH+B9LhMrHgWhjvjo1XEqxgTJ2npxxm7cPZxWt7lihT/YXuxrlXrUh5vw3v7bUM8wbs4wY3lMn0q+RbLat4P3FxWMZeKCVwJ8d1kGhKD05g3ZK603aVvelghJ6fffCY5ON7GnBWcGehVwBoyZSII9MtI3BbAT3xn8VI8jzyCGF4knAD7RIWnHD80KBYlnJk7PZScShcWUdwFqeRiZnZqH7hn9wBgoulVhViw2QIAl925cbvXJ3K1f/FLGnKxN/cWI4BCv4TiQv+7x4V/LUKO9EDwe/V/ki9qMk9k/NYfuG363PXaxrVhvlHzQN+R2bpYDHcs2bAsF/rKiUY6rz0QvcNnCbcpLOQV1YEa0cqC5NKn9RQ9ckFawnqxQAn0OoiF/lG2zrFXokuBoQcTAS2pMrPtKx6CrJGARJ0jjO4YllTNHMIDklYmsOdYNKj0gAy1B5zWuw82PmAe39JR43JO+3OeD2jUTo7RiFCOsZBID6lYe/rt1c/tNQWvvT1hsZKWYt80PjVwU9f8ewwmS8ipk/TN+yq4VBYLCYRvZFzDBnZXWn1dV2UqCMxmfQClGqUhl3Jcwg4O7Ek5fmj0EaMeCNu6WG3Q/T99O3ibPeolRLxJPX9uokUv7ZKrED6c9ohdxPspIwUxshL5yqpfWeIl8ukGWOQCMg/ueinVG32rDbneeimEo5lpBSq4JmZVVUxfDJiOTQ8FTeD3lqh86Hrtx0GzhoftRz4Udveh+g0no9PfuPBvQHFCYE04D0m0HneZU8JcuOq5AicWppq7QAxG5Vdai1mfHG+kYAQ==\"}              }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0 }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"} }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Working\"}        }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" through the sheep problem:\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n- \\\"All but 9 run\"}       }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" away\\\" le\"}         }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"aves 9 sheep\"}   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\".\\n- He buys tw\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"ice as many as rem\"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"ain, which is 18, so\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" he\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" has 27.\\n- He s\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"ells a third of the flock,\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" which is 9,\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" so he has **\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"18 sheep**\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\".\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\\nNow I'll get the weather\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\" for both cities.\"}            }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1         }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01QDiWVttHJL6AVtBgT33CZq\",\"name\":\"get_weather\",\"input\":{},\"caller\":{\"type\":\"direct\"}}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\"\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"Toro\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"nto\\\"}\"}       }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2     }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01Efz4u1iXvrx3cLKZg2kXWM\",\"name\":\"get_weather\",\"input\":{},\"caller\":{\"type\":\"direct\"}}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}      }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\"\"}             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"Pari\"}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"s\\\"}\"}  }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":3          }\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":440,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":263,\"output_tokens_details\":{\"thinking_tokens\":66}}           }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"    }\n\n"
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "signature": "CAQSqQUKEAgSGAI4AUIIdGhpbmtpbmcSDEsQTAVeY4fxU3e8AxoMixPE9s9F99tX8ITxIjAFVAhnxxtCElVbs+nbO7OGUBuG7+0pV2T02Aan8OSp8DbyH+B9LhMrHgWhjvjo1XEqxgTJ2npxxm7cPZxWt7lihT/YXuxrlXrUh5vw3v7bUM8wbs4wY3lMn0q+RbLat4P3FxWMZeKCVwJ8d1kGhKD05g3ZK603aVvelghJ6fffCY5ON7GnBWcGehVwBoyZSII9MtI3BbAT3xn8VI8jzyCGF4knAD7RIWnHD80KBYlnJk7PZScShcWUdwFqeRiZnZqH7hn9wBgoulVhViw2QIAl925cbvXJ3K1f/FLGnKxN/cWI4BCv4TiQv+7x4V/LUKO9EDwe/V/ki9qMk9k/NYfuG363PXaxrVhvlHzQN+R2bpYDHcs2bAsF/rKiUY6rz0QvcNnCbcpLOQV1YEa0cqC5NKn9RQ9ckFawnqxQAn0OoiF/lG2zrFXokuBoQcTAS2pMrPtKx6CrJGARJ0jjO4YllTNHMIDklYmsOdYNKj0gAy1B5zWuw82PmAe39JR43JO+3OeD2jUTo7RiFCOsZBID6lYe/rt1c/tNQWvvT1hsZKWYt80PjVwU9f8ewwmS8ipk/TN+yq4VBYLCYRvZFzDBnZXWn1dV2UqCMxmfQClGqUhl3Jcwg4O7Ek5fmj0EaMeCNu6WG3Q/T99O3ibPeolRLxJPX9uokUv7ZKrED6c9ohdxPspIwUxshL5yqpfWeIl8ukGWOQCMg/ueinVG32rDbneeimEo5lpBSq4JmZVVUxfDJiOTQ8FTeD3lqh86Hrtx0GzhoftRz4Udveh+g0no9PfuPBvQHFCYE04D0m0HneZU8JcuOq5AicWppq7QAxG5Vdai1mfHG+kYAQ==",
+        "thinking": "So 17 sheep, all but 9 run away, leaving 9. Buying twice that amount adds 18, giving 27, then selling a third of the flock removes 9, leaving 18. Now I should fetch the weather in parallel with this.\n\n",
+        "type": "thinking"
+       },
+       {
+        "text": "Working through the sheep problem:\n- \"All but 9 run away\" leaves 9 sheep.\n- He buys twice as many as remain, which is 18, so he has 27.\n- He sells a third of the flock, which is 9, so he has **18 sheep**.\n\nNow I'll get the weather for both cities.",
+        "type": "text"
+       },
+       {
+        "id": "toolu_01QDiWVttHJL6AVtBgT33CZq",
+        "caller": {
+         "type": "direct"
+        },
+        "input": {
+         "city": "Toronto"
+        },
+        "name": "get_weather",
+        "type": "tool_use"
+       },
+       {
+        "id": "toolu_01Efz4u1iXvrx3cLKZg2kXWM",
+        "caller": {
+         "type": "direct"
+        },
+        "input": {
+         "city": "Paris"
+        },
+        "name": "get_weather",
+        "type": "tool_use"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01QDiWVttHJL6AVtBgT33CZq",
+        "content": "Toronto: 20C, sunny"
+       },
+       {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01Efz4u1iXvrx3cLKZg2kXWM",
+        "content": "Paris: 20C, sunny"
+       }
+      ]
+     }
+    ],
+    "model": "claude-sonnet-5-5",
+    "output_config": {
+     "effort": "high"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ],
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "stream": true
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream; charset=utf-8",
+   "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-5-5\",\"id\":\"msg_011CgAGmXpkkprNa8yx1wZnC\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":784,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":62,\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}       }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}      }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"The farmer now\"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" has **18 sheep**\"} }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\".\"}            }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"\\n\\nBoth\"}  }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" cities have\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" the same weather right\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" now:\\n- **Toron\"}   }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"to:** 20\u00b0\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"C and\"}          }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" sunny\\n- **Pa\"}             }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ris:** 20\u00b0C and\"}           }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" sunny\"}              }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0               }\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":784,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":62,\"output_tokens_details\":{\"thinking_tokens\":0}} }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"               }\n\n"
+  }
+ }
+]

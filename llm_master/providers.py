@@ -30,6 +30,7 @@ _GEMINI_MODELS: dict[str, ModelRow] = {
 PROVIDERS: dict[ProviderName, ProviderRow] = {
     "openai": {
         "api": "responses",
+        "audio_api": "completion",
         "sdk": "openai",
         "requests": 10000,
         "interval": 60,

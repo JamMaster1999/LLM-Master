@@ -1,0 +1,67 @@
+[
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:generateContent",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "Say good morning to Toronto."
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "systemInstruction": {
+     "parts": [
+      {
+       "text": "Answer in French."
+      }
+     ],
+     "role": "user"
+    },
+    "tools": [
+     {
+      "functionDeclarations": [
+       {
+        "description": "Current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+         "properties": {
+          "city": {
+           "description": "",
+           "type": "STRING"
+          }
+         },
+         "required": [
+          "city"
+         ],
+         "type": "OBJECT"
+        }
+       }
+      ]
+     }
+    ],
+    "toolConfig": {
+     "functionCallingConfig": {
+      "mode": "NONE"
+     }
+    },
+    "generationConfig": {
+     "temperature": 0.5,
+     "maxOutputTokens": 2000,
+     "thinkingConfig": {
+      "include_thoughts": true,
+      "thinking_level": "LOW"
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json; charset=UTF-8",
+   "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"**My Thought Process: \\\"Bonjour Toronto!\\\"**\\n\\nOkay, so the user wants me to essentially say \\\"good morning\\\" to Toronto. Simple enough. But hold on, there's a constraint: the response *must* be in French. Got it. No problem; let's get down to brass tacks.\\n\\nFirst, I need to translate \\\"Good morning, Toronto!\\\" straight into French. The obvious, direct translation is \\\"Bonjour Toronto!\\\" That's the core. Now, being me, I always consider a little flair; a touch of warmth. Should I just deliver the bare minimum, or can I add some nuance? Maybe something like \\\"Bonjour Toronto ! J'esp\u00e8re que vous passez une excellente journ\u00e9e.\\\" \u2013 \\\"Good morning Toronto! I hope you're having an excellent day.\\\"\\n\\nBut honestly, given the brevity the user requests, and the simplicity of the task, the straightforward \\\"Bonjour Toronto!\\\" works perfectly fine. It's direct, friendly, and gets the message across. So, ultimately, that's what I'll output: \\\"Bonjour Toronto!\\\" It's efficient, polite, and within the specified parameters. Perfect.\\n\\n\\n\",\n            \"thought\": true\n          },\n          {\n            \"text\": \"Bonjour Toronto !\",\n            \"thoughtSignature\": \"EoIFCv8EAWkUfRPigmf8gWX/MmRITOGOCR/mRshVMZy9gsn7D4+gw0/Y6WGOCTRyDTmL651CmXbwvSHfWSJcj8jeNqm4lDNB1//j35LVMXmOw/dVwWHrwXiQ7izMyWvjQ5wPB6Bm0iTy8+zCRPrkSno24gmdJPKs6IUXTEqr9ZUt2ichswIuxkroa4SXZs24bq3gG3D4x+jmzGHhpyMfQ/3xEzZL/6yHHbM9or5rVqLgKyylrTCvQJwKYjCXymwF1hNSc2lr5QXPG5Z5mytwPKGXrN2EP93Ah5ry3K27uQMGn6Y3con0VDk3ZnYOjKtUdz98M5GzHfr+pJFOjiAzOL3rWWwfQYUTwQ1I0dRZki0eCW4FkcsFBUgCyJQorV8MhO6LpLKoz1UmKT7qxzRjCtGl9ONzhOWaa5s4k3CVNIXihLHiItneBmYVzqM//bueh8LuJlwj0QWBzoEZUQuVeQcCLJbw/jb0vRvEbcEwpFUdW/zfhlgM2bJJJCSQk090SPQiUMhXsP2wkBcnw8cqYLniAODMuaJbM8Zp8XdjO5MEhNUyDchlOmw2x2tPKVkLMGFgNavuXS2ZQIEojJm/i8ExtngpDf2VT7a5OxM7MMRP8VC5Qp70gdu9YWsvPqfLDEonb54DVWkUznAkcsU7qkEAPplbUk+KXRs+mvwNwgitAyhID1xYMuEqBHm35tjHxi8xI7TjZxTgtK8+4kwqSgDpfodi1uqWrGgNpryg+9UWhbzMsPCRcg7kOCOblP3BkwQ10SiQ2mItfznaj5stuvtPi1MO/Oomho0VFUuwHAVa7AbOQ3s/NQ6qjJbWvu4CAf8qArZg5KuUv4QJ+asZT6MIrYnI\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 54,\n    \"candidatesTokenCount\": 3,\n    \"totalTokenCount\": 181,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 54\n      }\n    ],\n    \"thoughtsTokenCount\": 124,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.6-flash\",\n  \"responseId\": \"gyDVataxEb2Gz7IPid_f0As\"\n}\n"
+  }
+ }
+]

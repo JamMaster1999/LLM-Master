@@ -13,7 +13,8 @@ def translate(level: Level, api: API) -> dict:
         case "messages":
             if level == "none":
                 return {"thinking": {"type": "disabled"}}
-            return {"thinking": {"type": "adaptive"}, "output_config": {"effort": level}}
+            # Claude 5.x hides the thought text unless asked: display defaults to omitted
+            return {"thinking": {"type": "adaptive", "display": "summarized"}, "output_config": {"effort": level}}
         case "responses":
             if level == "none":
                 return {"reasoning": {"effort": "none"}}

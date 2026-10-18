@@ -1,0 +1,149 @@
+[
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:generateContent",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "tools": [
+     {
+      "functionDeclarations": [
+       {
+        "description": "Current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+         "properties": {
+          "city": {
+           "description": "",
+           "type": "STRING"
+          }
+         },
+         "required": [
+          "city"
+         ],
+         "type": "OBJECT"
+        }
+       }
+      ]
+     }
+    ],
+    "generationConfig": {
+     "thinkingConfig": {
+      "include_thoughts": true,
+      "thinking_level": "LOW"
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json; charset=UTF-8",
+   "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"**Solving the Sheep and Weather Problem**\\n\\nAlright, let's break this down systematically. First, the math puzzle. The initial statement gives us the critical information: \\\"a farmer has 17 sheep; all but 9 run away\\\".  That's the core. It tells me immediately that after the initial incident, we have 9 sheep. No need to overcomplicate it. Then, \\\"he buys twice as many as remain,\\\" so that's 2 times 9, which is 18.  Easy enough. Adding that to the existing flock of 9 means we now have a total of 27 sheep. Finally, \\\"and sells a third of the flock.\\\" One third of 27? Simple. That's 9 sheep sold. So, subtract those 9 sheep from the 27 and we are left with 18. The answer is 18 sheep. I like that. Done.\\n\\nNext, I need weather data. Let's get that done in parallel, I am going to call `get_weather` function with Toronto and Paris as parameters. This is so that I do not spend too much time getting the information.\\n\\n\\n\",\n            \"thought\": true\n          },\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"city\": \"Toronto\"\n              },\n              \"id\": \"call_1880960\"\n            },\n            \"thoughtSignature\": \"EugDCuUDAWkUfRPLmPly/p/ZP1a6suJftA1YRm5xe0SVpnVUp+HbGMSTHmz+1vveauhbzQ3PHYooMUJ4s459BLXq867dXtofjCh7hhl0InjuoNLFE5zWIi7EMa+PqH1QfEuJ1PNAMi8K0pQsPF5b0dd3gq4mngNtQwdOxeeEm/tYVzwQMOSGqO1hcgnfphk75L+Cl5D95rzCGKFaWo9ZMQZLmTu9oIzmnP6fRek6CQUijRJphxb2fHJeOZot5oqz5AjkZWrEBSEH+YztPYoOYRBI96OKe/nB5fH4jxr0u/UKcsbf8kmXCJ9UsNJKlPiedGEQ50W8LfMrO8PxcraNDEk0XrNoi1TLEj8VeeMnmpWkcw/8qGNAOJ7L9cip7NG0+6U1hQA8gXjMjZ8E0v/yUaidB8r+n0s23T7qBIOx0BUrL92fUQmjwfQiY5mGtRIHdcS9bReRfGW6/LNEKC6tJdrRJdRebW5DZHNgWpajfu2/3nQtpnPsgTy7t/go+/O+sH6+EdsoTuHS7Xp1fxB8o/UpVv6Rnfp3jNWzZAOYK3avDy54n2KX8xxE5emgLmmoAHKOdPfzinTcNOZ3noFGm/+bPgQEXAQVnBpQ7yStGSGZN2KmG656MqPGz0yiBAkHYlGhV6Far1oaK7Y=\"\n          },\n          {\n            \"functionCall\": {\n              \"name\": \"get_weather\",\n              \"args\": {\n                \"city\": \"Paris\"\n              },\n              \"id\": \"call_1880961\"\n            }\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"finishMessage\": \"Model generated function call(s).\"\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 96,\n    \"candidatesTokenCount\": 32,\n    \"totalTokenCount\": 264,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 96\n      }\n    ],\n    \"thoughtsTokenCount\": 136,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.6-flash\",\n  \"responseId\": \"EiHVauq7HOuHz7IP58STwQQ\"\n}\n"
+  }
+ },
+ {
+  "request": {
+   "path": "/v1beta/models/gemini-3.5-flash:generateContent",
+   "body": {
+    "contents": [
+     {
+      "parts": [
+       {
+        "text": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+       }
+      ],
+      "role": "user"
+     },
+     {
+      "parts": [
+       {
+        "functionCall": {
+         "id": "call_1880960",
+         "args": {
+          "city": "Toronto"
+         },
+         "name": "get_weather"
+        },
+        "thoughtSignature": "EugDCuUDAWkUfRPLmPly_p_ZP1a6suJftA1YRm5xe0SVpnVUp-HbGMSTHmz-1vveauhbzQ3PHYooMUJ4s459BLXq867dXtofjCh7hhl0InjuoNLFE5zWIi7EMa-PqH1QfEuJ1PNAMi8K0pQsPF5b0dd3gq4mngNtQwdOxeeEm_tYVzwQMOSGqO1hcgnfphk75L-Cl5D95rzCGKFaWo9ZMQZLmTu9oIzmnP6fRek6CQUijRJphxb2fHJeOZot5oqz5AjkZWrEBSEH-YztPYoOYRBI96OKe_nB5fH4jxr0u_UKcsbf8kmXCJ9UsNJKlPiedGEQ50W8LfMrO8PxcraNDEk0XrNoi1TLEj8VeeMnmpWkcw_8qGNAOJ7L9cip7NG0-6U1hQA8gXjMjZ8E0v_yUaidB8r-n0s23T7qBIOx0BUrL92fUQmjwfQiY5mGtRIHdcS9bReRfGW6_LNEKC6tJdrRJdRebW5DZHNgWpajfu2_3nQtpnPsgTy7t_go-_O-sH6-EdsoTuHS7Xp1fxB8o_UpVv6Rnfp3jNWzZAOYK3avDy54n2KX8xxE5emgLmmoAHKOdPfzinTcNOZ3noFGm_-bPgQEXAQVnBpQ7yStGSGZN2KmG656MqPGz0yiBAkHYlGhV6Far1oaK7Y="
+       },
+       {
+        "functionCall": {
+         "id": "call_1880961",
+         "args": {
+          "city": "Paris"
+         },
+         "name": "get_weather"
+        }
+       }
+      ],
+      "role": "model"
+     },
+     {
+      "parts": [
+       {
+        "functionResponse": {
+         "id": "call_1880960",
+         "name": "get_weather",
+         "response": {
+          "result": "Toronto: 20C, sunny"
+         }
+        }
+       },
+       {
+        "functionResponse": {
+         "id": "call_1880961",
+         "name": "get_weather",
+         "response": {
+          "result": "Paris: 20C, sunny"
+         }
+        }
+       }
+      ],
+      "role": "user"
+     }
+    ],
+    "tools": [
+     {
+      "functionDeclarations": [
+       {
+        "description": "Current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+         "properties": {
+          "city": {
+           "description": "",
+           "type": "STRING"
+          }
+         },
+         "required": [
+          "city"
+         ],
+         "type": "OBJECT"
+        }
+       }
+      ]
+     }
+    ],
+    "generationConfig": {
+     "thinkingConfig": {
+      "include_thoughts": true,
+      "thinking_level": "LOW"
+     }
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json; charset=UTF-8",
+   "body": "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"The farmer now has **18 sheep**.\\n\\nHere are the step-by-step details:\\n1. **Initial state:** \\\"All but 9 run away\\\" means **9 sheep** remain.\\n2. **Buying more:** He buys twice as many as remain, which is $2 \\\\times 9 = 18$ sheep. Total flock is now $9 + 18 = 27$ sheep.\\n3. **Selling:** He sells a third of the flock ($\\\\frac{1}{3} \\\\times 27 = 9$ sheep).\\n4. **Final count:** $27 - 9 =$ **18 sheep**.\\n\\n---\\n\\n**Weather Updates:**\\n* **Toronto:** 20\u00b0C, Sunny\\n* **Paris:** 20\u00b0C, Sunny\",\n            \"thoughtSignature\": \"EmkKZwFpFH0TYfD3UF4oc9nzJG6YIcAygrJRsFkqpfzEMsj5ladT+uJlI8jihf+qTN5wfEPhNp3RHWjISlalk0fohbxe27bH28/d1y1tzhIsVetU1VrgfOQ1xW/7yhN//RX9X3SOMvYm8rY=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 304,\n    \"candidatesTokenCount\": 170,\n    \"totalTokenCount\": 474,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 304\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.6-flash\",\n  \"responseId\": \"FSHVatLOEbiKqtsPyoHAuAQ\"\n}\n"
+  }
+ }
+]

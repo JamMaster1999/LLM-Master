@@ -99,8 +99,10 @@ save → reload → next call is lossless by construction.
   genuinely disables where the model has an off setting (gemini sends `thinking_budget=0`);
   models that only run with thinking on (gemini 3.x, gemini-2.5-pro) reject it before the wire
   with any-llm's typed `UnsupportedParameterError`. `xhigh` maps to gemini's top tier.
-- messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive"}`
-  plus `output_config: {"effort": level}`. Anthropic's named tiers map 1:1, no budget table.
+- messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive",
+  "display": "summarized"}` plus `output_config: {"effort": level}`. Claude 5.x defaults `display` to
+  `"omitted"`, which returns thinking blocks with empty text; the signature is the same either way
+  ([thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)). Anthropic's named tiers map 1:1, no budget table.
   Live-verified on claude-sonnet-5: adaptive levels produce thinking blocks, disabled produces
   none. Most of the 5.5 generation can't turn thinking off: Opus 5.5 and Fable 5.1 reject
   `disabled`, Sonnet 5.5 too (its floor is `between_tools`, via `extra`), Haiku 5.5 takes it at
@@ -110,9 +112,8 @@ save → reload → next call is lossless by construction.
   openai's thought text is opt-in, so summaries are always fetched. Tiers a model doesn't take
   come back as openai's rejection, typed.
 - Thought text is always fetched when thinking is on: gemini via any-llm's hardwired
-  `include_thoughts=True`, anthropic's full blocks by its own design, openai via `summary:
-  "auto"`. It lands on `message.reasoning`; whether a user sees it is the caller's choice at
-  render time. Cost is the same either way — thought tokens are billed whether or not anyone
+  `include_thoughts=True`, anthropic via `display: "summarized"`, openai via `summary: "auto"`.
+  It lands on `message.reasoning`; whether a user sees it is the caller's choice at render time. Cost is the same either way — thought tokens are billed whether or not anyone
   reads them. Live note, openai: a summary only materializes when there's enough reasoning to
   summarize; an empty summary list is not an error.
 - No capability list: providers that map a tier clamp to nearest, providers that reject fail
@@ -178,8 +179,8 @@ save → reload → next call is lossless by construction.
   is that rename.
 - completion: each provider's converter does the rest (gemini rides `response_json_schema`).
   messages: anthropic's parse path via the beta client. responses: openai's native parse.
-- The parsed object surfaces on the response alongside the raw text — exact placement lands in
-  the response-type round.
+- The parsed object is `response.parsed`, read by llm_master from `message.content` (IO.md, The
+  response), so a stream and a plain call parse the same way.
 - Honest unknown: `stream=True` with `response_format` behaves differently per provider, and
   any-llm's parse paths may not stream at all. We pass through, rejections surface typed, and
   live seeds pin the working combinations at build.
@@ -216,13 +217,17 @@ save → reload → next call is lossless by construction.
   gemini auto-cache. On openai 5.6+, auto-caching bills writes at 1.25x by default; that's their
   default, not our opinion.
 - `"none"`: openai sends `prompt_cache_options={"mode": "explicit"}` with no breakpoints — skips
-  the cache, no write fee. Anthropic sends nothing (already off). Gemini quiet no-op: its
+  the cache, no write fee. It rides any-llm's `extra_body`, since any-llm's Responses params don't
+  name it yet. Anthropic sends nothing (already off). Gemini quiet no-op: its
   auto-cache has no off switch and no write fee.
-- minutes: a real lifetime, passed through — if it fails it fails. Anthropic: `5` → `"5m"`,
-  `60` → `"1h"`, anything between goes literally and their API rejects unknown tiers. Openai:
-  explicit mode plus ttl — only `"30m"` exists today (live-verified: other values 400 naming the
-  supported set) — with one breakpoint placed at the end of the prompt, since explicit mode
-  caches nothing without one. Gemini: implicit caching only, so minutes raise typed. any-llm
+- minutes: a real lifetime, passed through — if it fails it fails. Anthropic: top-level
+  `cache_control={"type": "ephemeral", "ttl": ...}`, which marks the last cacheable block; `5` →
+  `"5m"`, `60` → `"1h"`, anything between goes literally and their API rejects unknown tiers.
+  Openai: explicit mode plus ttl — only `"30m"` exists today (live-verified: other values 400
+  naming the supported set) — with one breakpoint placed at the end of the prompt, since explicit
+  mode caches nothing without one. Assembly puts `prompt_cache_breakpoint: {"mode": "explicit"}`
+  on the last block of the last item (IO.md). Live-verified: a saved and reloaded conversation
+  reads the cache on its next turn, with only the new end marked. Gemini: implicit caching only, so minutes raise typed. any-llm
   can turn a `cache_control` breakpoint into an explicit gemini context cache; this field never
   emits one.
 - Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on
@@ -231,13 +236,14 @@ save → reload → next call is lossless by construction.
   `cache_write_tokens`, with anthropic's 5m/1h split in `cache_creation_token_details`, so the
   cost step has every count it needs. genai-prices carries a single cache-write price, so
   anthropic's 1h-tier 2x needs our own multiplier — noted for the cost step.
-- Build seed: whether pre-5.6 openai models accept `prompt_cache_options` gracefully.
+- Pre-5.6 openai models reject `prompt_cache_options`: gpt-5.5 returns a typed 400 for `"none"` and
+  for minutes (live-verified). As with temperature, that's the provider's call; use `"auto"` there.
 - Lifetime exotics beyond the field ride the candidate's `extra`.
 
 ## 12. `moderation` — `bool`, default False
 
-- Not a translation but a pre-step: when on, the input text runs through openai's
-  `omni-moderation-latest` before dispatch. A flagged input raises our typed refusal before any
+- Not a translation but a pre-step: when on, the newest user message's text runs through openai's
+  `omni-moderation-latest` before dispatch, as in v1. A flagged input raises our typed refusal before any
   model is called or billed — same behavior on every dialect, every candidate.
 - The moderation call is free (openai prices it at zero; 1000 rpm in our registry).
 - v1 had this exact flag on `query()`; the chat platform is its consumer.

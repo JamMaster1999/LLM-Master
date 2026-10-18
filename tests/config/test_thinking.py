@@ -1,6 +1,7 @@
 """Live: the thinking translation drives real reasoning on and off, per API."""
 import pytest
 from any_llm import AnyLLM
+from any_llm.types.messages import MessageResponse
 
 from llm_master.config import thinking
 
@@ -16,7 +17,8 @@ def test_responses_levels_carry_summary_ask():
 
 def test_messages_levels_spelling():
     # the live test can't catch a lost output_config: adaptive alone still produces thinking blocks
-    assert thinking.translate("low", "messages") == {"thinking": {"type": "adaptive"}, "output_config": {"effort": "low"}}
+    assert thinking.translate("low", "messages") == {"thinking": {"type": "adaptive", "display": "summarized"},
+                                                      "output_config": {"effort": "low"}}
     assert thinking.translate("none", "messages") == {"thinking": {"type": "disabled"}}
 
 
@@ -53,7 +55,9 @@ async def test_messages_anthropic():
                               **thinking.translate("low", "messages"))
     none = await llm.amessages("claude-sonnet-5", [{"role": "user", "content": Q}], 3000,
                                **thinking.translate("none", "messages"))
-    assert any(b.type == "thinking" for b in low.content), f"no thinking block in {[b.type for b in low.content]}"
+    assert isinstance(low, MessageResponse) and isinstance(none, MessageResponse)
+    # readable text, not just a block: Claude 5.x returns empty thinking unless display is summarized
+    assert any(b.type == "thinking" and b.thinking for b in low.content), [b.type for b in low.content]
     assert not any(b.type == "thinking" for b in none.content)
 
 

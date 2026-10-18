@@ -1,0 +1,130 @@
+[
+ {
+  "request": {
+   "path": "/responses",
+   "body": {
+    "include": [
+     "reasoning.encrypted_content"
+    ],
+    "input": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     }
+    ],
+    "model": "gpt-5.6-luna",
+    "reasoning": {
+     "effort": "high",
+     "summary": "auto"
+    },
+    "store": false,
+    "tools": [
+     {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\n  \"id\": \"resp_0abd745e3129f71e016ad52109faa487d086f79a625ac6c39e\",\n  \"object\": \"response\",\n  \"created_at\": 1792352522,\n  \"status\": \"completed\",\n  \"access_programs\": null,\n  \"background\": false,\n  \"billing\": {\n    \"payer\": \"developer\"\n  },\n  \"completed_at\": 1792352524,\n  \"error\": null,\n  \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\": null,\n  \"max_output_tokens\": null,\n  \"max_tool_calls\": null,\n  \"model\": \"gpt-5.6-luna\",\n  \"moderation\": null,\n  \"output\": [\n    {\n      \"id\": \"rs_0abd745e3129f71e016ad5210a974887d0be603570bf8018a7\",\n      \"type\": \"reasoning\",\n      \"content\": [],\n      \"encrypted_content\": \"gAAAAABq1SEMfRsyZC7RuZ7S-pdmXQLvjSB4-XABZMnCO6cKGRmlwX1X5yzL8U9o1dpwm6zYBsRSptIR-lzSUg0Hkt9A9gU6KCyUMe0peCYlUwWqFsYb7CJzhiNxVG-wAtm71Xy4DrXZKJBjgI72yHJTY3ZvIP8CoQny8drIigH6tu47MW8SKdyUluf0unavXcQVccucnytp9q0n4oF003jUzdTboTrHAeGO62is5ermb7CwB6LK-H5a-GiL0RS5go3ysWHKkuF3j1Jd11f63zIxv3kAIlV4Ti3k2GQtCucDN_GcAl4kHS91caTioEu21IzuP83DpSPve98g7-k9zk9CI4cOf8K_LunC3xGzYYQMIynDbvljWQ6KKMMmfOk8h-o1f8o2ZtQ6w6m-_CjJUZV1-dt82b0XsDe-VLWUZOxaTE4col5YcaSRWgd9o_xgllpCz4ukrtCpU1j0wNjaduQARuv1qi85TNVL1EzrAvfs8myESl8UjNRum_yRzaZQqp2w2BI8rgAW4KKVo0TZ_BfvgeOupgR3iPWFpI8cw4W-ywlEGjnSIE8KyYvA0LNBjUigqHKbPD2c_p16kPP_-h6PCrAYxSXCRuQkP92Ngn-ZiBjQlhrAGwtwOK-7C3c0g2UD0-0f97FItdJYy6aP0nk1LqaQ3v_PGvPJ03WyriCzcWoIMiu97hdNTG8R5Z2t1Py-y1cuHB5voo9kehcQPKnulSmh8EFlxtTrVCUAONgiODpCUzDR2ja5HJhrGipO5CGtUUU8Pw4Lp2LrOUMhvt1oc5wctnue8fm9HjJe9twETUdnSN2Xdn8P_3Qk_LG-wpddIE6aEa7DznrAXO4wqsswMvqPzeIHqzuf_U4NuS2IMMs4xLZPfVm6tn5eNzreS1EzVV18ivUdr2oRHq5Ak0LnHbjAXbC0zeLv0YSo1D4zG1gvBQn_BcbJW0FuC9c6a7oV-SmVHKM5_7GR6IFva5SrosIMpzPOIkq2P9BX4lZDj-EH-Xd9TWRHN4rxu901Evdj5wJGgLZnNhUX3Gs0yAKh_FD5EevnRe9HSrPn09rra9QCmXnQ6HODW04w89BBt-3sRkS5_uFYsM6IMefzxEAD-gTq_V0_VFfJJldq25kWk4XCDlotsu0kQW-fggHAaH3Of8dgaya9Wvvs1Xg5QkxLhhy0eoxaM4C-P8zS9S7Y2sKlNlaUtRO7DGb82ZnUJxOJT8obCbiV4o-bMsnwITc-kpOKTfvxG_BCU76YJZzRbdyV6HHKUWV2Iy2CwSHKVPb-OsrgAsxuM7_VXlrtMiudUhN_39Jns7XKadPIp4zLRYXkaHZ6nYRqiwHvV1bt0NipwJtU4DqeqASNfvJQXtbr8s8ykpokpAEfF5Ye1wgcUyhVinbseMV00LXaxL7lR2YBQmHYrfntkhT048lJO2yO4DbE8YQSbJEKyEGqTEkPQxeGrhwu00oN1cGEFY7HxWx-0ES7h2e4KrfhELSeFUMTzJAiW5f9-_wJdyOYS-I0gMjISfzKGuIzylyEqJvKoWU3kqtVggWaSStlRYQDNZlStB0OzOYnV5HY4n8HNDgXcMMRVvkf3U-5XWBw40S6VCliwiZxLQORLClHePj9A0EFMDN-ISq2Q7mV-HyIYngUhbd8wozWgtTMgd_HMqoT0MEhjUk_FArmMriEp-m0pyg2sEOJj6Eck3OV7mSD1NlZyw5aH0ZLxp1wRm4UmhPG3Jl2fCOKwfhFBtAU3gZU_YMVdIX92_vKkr5Mva5b7eb8tB6rshM40YRw8XoYj9-y5vpt3CbNEF8SFTwmmSFZd0eY1vOQhZCz5AUkxrNVIKgylAG8MkF6C1EQA90VcSVm3kV8en1-pxtUUTRKK4nSvYSFeAhsioJ8O0hpv60A81t_mvar8JW4-GV8EEUFO0L5m1hZz_NZkmoNCMG3qvlmD9wPSWm3mUUIC-07yMsIfXubyAgDR_T9Dldt7o3-f8TzwrmTv2FmuLwNJR4M4t-GXLUOk2wMsqGd4A==\",\n      \"summary\": [\n        {\n          \"type\": \"summary_text\",\n          \"text\": \"**Clarifying buying and selling**\\n\\nI need to solve this ambiguity. If 17 are almost gone, that means 9 remain. If someone buys twice as many as what\\u2019s left, then they\\u2019d purchase 18, making a total of 27. When they sell a third of their flock, which is 9, they still have 18 left. Okay, I\\u2019ll need to call the weather tool now in parallel to get that information too! It\\u2019s all coming together!\"\n        }\n      ]\n    },\n    {\n      \"id\": \"fc_0abd745e3129f71e016ad5210c279c87d09c58e730707c445c\",\n      \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\": \"{\\\"city\\\":\\\"Toronto\\\"}\",\n      \"call_id\": \"call_mrozkqlMPaafsX9M0yvToDT2\",\n      \"name\": \"get_weather\"\n    },\n    {\n      \"id\": \"fc_0abd745e3129f71e016ad5210c27b087d083c4a1222089b6be\",\n      \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\": \"{\\\"city\\\":\\\"Paris\\\"}\",\n      \"call_id\": \"call_S8YsczRuJQwzNa1rwX4LCSJs\",\n      \"name\": \"get_weather\"\n    }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_retention\": \"24h\",\n  \"reasoning\": {\n    \"context\": \"all_turns\",\n    \"effort\": \"high\",\n    \"mode\": \"standard\",\n    \"summary\": \"detailed\"\n  },\n  \"safety_identifier\": null,\n  \"service_tier\": \"default\",\n  \"store\": false,\n  \"temperature\": 1.0,\n  \"text\": {\n    \"format\": {\n      \"type\": \"text\"\n    },\n    \"verbosity\": \"medium\"\n  },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\": {\n    \"image_gen\": {\n      \"input_tokens\": 0,\n      \"input_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\": 0,\n      \"output_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"total_tokens\": 0\n    },\n    \"web_search\": {\n      \"num_requests\": 0\n    }\n  },\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"description\": \"Current weather for a city\",\n      \"name\": \"get_weather\",\n      \"output_schema\": null,\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ],\n        \"additionalProperties\": false\n      },\n      \"strict\": true\n    }\n  ],\n  \"top_logprobs\": 0,\n  \"top_p\": 0.98,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\": 93,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n      \"cached_tokens\": 0\n    },\n    \"output_tokens\": 107,\n    \"output_tokens_details\": {\n      \"reasoning_tokens\": 57\n    },\n    \"total_tokens\": 200\n  },\n  \"user\": null,\n  \"metadata\": {}\n}"
+  }
+ },
+ {
+  "request": {
+   "path": "/responses",
+   "body": {
+    "include": [
+     "reasoning.encrypted_content"
+    ],
+    "input": [
+     {
+      "role": "user",
+      "content": "Think carefully: a farmer has 17 sheep; all but 9 run away, then he buys twice as many as remain and sells a third of the flock. How many sheep now? Then call get_weather for Toronto and for Paris, in parallel."
+     },
+     {
+      "type": "reasoning",
+      "id": "rs_0abd745e3129f71e016ad5210a974887d0be603570bf8018a7",
+      "content": [],
+      "summary": [
+       {
+        "type": "summary_text",
+        "text": "**Clarifying buying and selling**\n\nI need to solve this ambiguity. If 17 are almost gone, that means 9 remain. If someone buys twice as many as what\u2019s left, then they\u2019d purchase 18, making a total of 27. When they sell a third of their flock, which is 9, they still have 18 left. Okay, I\u2019ll need to call the weather tool now in parallel to get that information too! It\u2019s all coming together!"
+       }
+      ],
+      "encrypted_content": "gAAAAABq1SEMfRsyZC7RuZ7S-pdmXQLvjSB4-XABZMnCO6cKGRmlwX1X5yzL8U9o1dpwm6zYBsRSptIR-lzSUg0Hkt9A9gU6KCyUMe0peCYlUwWqFsYb7CJzhiNxVG-wAtm71Xy4DrXZKJBjgI72yHJTY3ZvIP8CoQny8drIigH6tu47MW8SKdyUluf0unavXcQVccucnytp9q0n4oF003jUzdTboTrHAeGO62is5ermb7CwB6LK-H5a-GiL0RS5go3ysWHKkuF3j1Jd11f63zIxv3kAIlV4Ti3k2GQtCucDN_GcAl4kHS91caTioEu21IzuP83DpSPve98g7-k9zk9CI4cOf8K_LunC3xGzYYQMIynDbvljWQ6KKMMmfOk8h-o1f8o2ZtQ6w6m-_CjJUZV1-dt82b0XsDe-VLWUZOxaTE4col5YcaSRWgd9o_xgllpCz4ukrtCpU1j0wNjaduQARuv1qi85TNVL1EzrAvfs8myESl8UjNRum_yRzaZQqp2w2BI8rgAW4KKVo0TZ_BfvgeOupgR3iPWFpI8cw4W-ywlEGjnSIE8KyYvA0LNBjUigqHKbPD2c_p16kPP_-h6PCrAYxSXCRuQkP92Ngn-ZiBjQlhrAGwtwOK-7C3c0g2UD0-0f97FItdJYy6aP0nk1LqaQ3v_PGvPJ03WyriCzcWoIMiu97hdNTG8R5Z2t1Py-y1cuHB5voo9kehcQPKnulSmh8EFlxtTrVCUAONgiODpCUzDR2ja5HJhrGipO5CGtUUU8Pw4Lp2LrOUMhvt1oc5wctnue8fm9HjJe9twETUdnSN2Xdn8P_3Qk_LG-wpddIE6aEa7DznrAXO4wqsswMvqPzeIHqzuf_U4NuS2IMMs4xLZPfVm6tn5eNzreS1EzVV18ivUdr2oRHq5Ak0LnHbjAXbC0zeLv0YSo1D4zG1gvBQn_BcbJW0FuC9c6a7oV-SmVHKM5_7GR6IFva5SrosIMpzPOIkq2P9BX4lZDj-EH-Xd9TWRHN4rxu901Evdj5wJGgLZnNhUX3Gs0yAKh_FD5EevnRe9HSrPn09rra9QCmXnQ6HODW04w89BBt-3sRkS5_uFYsM6IMefzxEAD-gTq_V0_VFfJJldq25kWk4XCDlotsu0kQW-fggHAaH3Of8dgaya9Wvvs1Xg5QkxLhhy0eoxaM4C-P8zS9S7Y2sKlNlaUtRO7DGb82ZnUJxOJT8obCbiV4o-bMsnwITc-kpOKTfvxG_BCU76YJZzRbdyV6HHKUWV2Iy2CwSHKVPb-OsrgAsxuM7_VXlrtMiudUhN_39Jns7XKadPIp4zLRYXkaHZ6nYRqiwHvV1bt0NipwJtU4DqeqASNfvJQXtbr8s8ykpokpAEfF5Ye1wgcUyhVinbseMV00LXaxL7lR2YBQmHYrfntkhT048lJO2yO4DbE8YQSbJEKyEGqTEkPQxeGrhwu00oN1cGEFY7HxWx-0ES7h2e4KrfhELSeFUMTzJAiW5f9-_wJdyOYS-I0gMjISfzKGuIzylyEqJvKoWU3kqtVggWaSStlRYQDNZlStB0OzOYnV5HY4n8HNDgXcMMRVvkf3U-5XWBw40S6VCliwiZxLQORLClHePj9A0EFMDN-ISq2Q7mV-HyIYngUhbd8wozWgtTMgd_HMqoT0MEhjUk_FArmMriEp-m0pyg2sEOJj6Eck3OV7mSD1NlZyw5aH0ZLxp1wRm4UmhPG3Jl2fCOKwfhFBtAU3gZU_YMVdIX92_vKkr5Mva5b7eb8tB6rshM40YRw8XoYj9-y5vpt3CbNEF8SFTwmmSFZd0eY1vOQhZCz5AUkxrNVIKgylAG8MkF6C1EQA90VcSVm3kV8en1-pxtUUTRKK4nSvYSFeAhsioJ8O0hpv60A81t_mvar8JW4-GV8EEUFO0L5m1hZz_NZkmoNCMG3qvlmD9wPSWm3mUUIC-07yMsIfXubyAgDR_T9Dldt7o3-f8TzwrmTv2FmuLwNJR4M4t-GXLUOk2wMsqGd4A=="
+     },
+     {
+      "type": "function_call",
+      "id": "fc_0abd745e3129f71e016ad5210c279c87d09c58e730707c445c",
+      "call_id": "call_mrozkqlMPaafsX9M0yvToDT2",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"Toronto\"}",
+      "status": "completed"
+     },
+     {
+      "type": "function_call",
+      "id": "fc_0abd745e3129f71e016ad5210c27b087d083c4a1222089b6be",
+      "call_id": "call_S8YsczRuJQwzNa1rwX4LCSJs",
+      "name": "get_weather",
+      "arguments": "{\"city\":\"Paris\"}",
+      "status": "completed"
+     },
+     {
+      "type": "function_call_output",
+      "call_id": "call_mrozkqlMPaafsX9M0yvToDT2",
+      "output": "Toronto: 20C, sunny"
+     },
+     {
+      "type": "function_call_output",
+      "call_id": "call_S8YsczRuJQwzNa1rwX4LCSJs",
+      "output": "Paris: 20C, sunny"
+     }
+    ],
+    "model": "gpt-5.6-luna",
+    "reasoning": {
+     "effort": "high",
+     "summary": "auto"
+    },
+    "store": false,
+    "tools": [
+     {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\n  \"id\": \"resp_0abd745e3129f71e016ad5210cc5e887d08769841d45ad78c2\",\n  \"object\": \"response\",\n  \"created_at\": 1792352524,\n  \"status\": \"completed\",\n  \"access_programs\": null,\n  \"background\": false,\n  \"billing\": {\n    \"payer\": \"developer\"\n  },\n  \"completed_at\": 1792352526,\n  \"error\": null,\n  \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\": null,\n  \"max_output_tokens\": null,\n  \"max_tool_calls\": null,\n  \"model\": \"gpt-5.6-luna\",\n  \"moderation\": null,\n  \"output\": [\n    {\n      \"id\": \"msg_0abd745e3129f71e016ad5210d37ec87d0a06f55b30f7f15ee\",\n      \"type\": \"message\",\n      \"status\": \"completed\",\n      \"content\": [\n        {\n          \"type\": \"output_text\",\n          \"annotations\": [],\n          \"logprobs\": [],\n          \"text\": \"He has **18 sheep** now:\\n\\n- 9 remain after the others run away.\\n- He buys twice that amount: 18 sheep, giving 27.\\n- He sells one-third (9), leaving **18**.\\n\\nWeather:\\n- **Toronto:** 20\\u00b0C, sunny\\n- **Paris:** 20\\u00b0C, sunny\"\n        }\n      ],\n      \"phase\": \"final_answer\",\n      \"role\": \"assistant\"\n    }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\": null,\n  \"prompt_cache_retention\": \"24h\",\n  \"reasoning\": {\n    \"context\": \"all_turns\",\n    \"effort\": \"high\",\n    \"mode\": \"standard\",\n    \"summary\": \"detailed\"\n  },\n  \"safety_identifier\": null,\n  \"service_tier\": \"default\",\n  \"store\": false,\n  \"temperature\": 1.0,\n  \"text\": {\n    \"format\": {\n      \"type\": \"text\"\n    },\n    \"verbosity\": \"medium\"\n  },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\": {\n    \"image_gen\": {\n      \"input_tokens\": 0,\n      \"input_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\": 0,\n      \"output_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"total_tokens\": 0\n    },\n    \"web_search\": {\n      \"num_requests\": 0\n    }\n  },\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"description\": \"Current weather for a city\",\n      \"name\": \"get_weather\",\n      \"output_schema\": null,\n      \"parameters\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"city\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"city\"\n        ],\n        \"additionalProperties\": false\n      },\n      \"strict\": true\n    }\n  ],\n  \"top_logprobs\": 0,\n  \"top_p\": 0.98,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\": 234,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n      \"cached_tokens\": 0\n    },\n    \"output_tokens\": 71,\n    \"output_tokens_details\": {\n      \"reasoning_tokens\": 0\n    },\n    \"total_tokens\": 305\n  },\n  \"user\": null,\n  \"metadata\": {}\n}"
+  }
+ }
+]
