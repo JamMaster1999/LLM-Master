@@ -1,8 +1,8 @@
 """The pipeline every call runs through: query(), image() and speech() hand it one try per candidate.
 
 A try is an async generator: a streamed try yields its chunks, and every try yields its Final last. The
-pipeline stamps every attempt, the whole call's latency and its cost on that CallReturn. Per try, the rate
-limiter first, then the try, then retries (SPEC.md Failures). Step 7 adds fallback over the candidates.
+pipeline stamps every attempt, the whole call's latency and its cost on that CallReturn. Candidates run in
+order; per try, the rate limiter first, then the try, then retries or the next candidate (SPEC.md Failures).
 """
 import asyncio
 import random
@@ -48,45 +48,46 @@ class Final(Generic[A]):
 
 def chain(candidates: Model | Sequence[Model]) -> list[Model]:
     chain = [candidates] if isinstance(candidates, Model) else list(candidates)
-    if len(chain) != 1:  # never drop a fallback silently: it lands in SPEC.md step 7
-        raise NotImplementedError(f"{len(chain)} candidates: a call takes exactly one until fallback (step 7)")
+    if not chain:
+        raise ValueError("a call needs at least one candidate")
     return chain
 
 
 async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
                  ) -> AsyncGenerator[dict | Final[A], None]:
     """Each try's chunks, then the answering try's Final, stamped. Each try waits for the limiter first."""
-    started = time.monotonic()
-    candidate = chain[0]
-    attempt = Attempt(candidate.provider, candidate.model, 0.0)
-    waited = 0.0  # the pauses alone: not the tries, not the limiter
-    for n in range(1, TRIES + 1):
-        await llm.limiter.wait(candidate.provider, candidate.model)
-        began, final = time.monotonic(), None  # an attempt's latency counts its tries, not the waits
-        try:
-            async with aclosing(once(candidate)) as items:
-                async for item in items:
-                    if isinstance(item, Final):
-                        final = item
-                    else:
-                        yield item
-        except Exception as e:
-            attempt.latency += time.monotonic() - began
-            _unload(e)  # the error stays on the attempt; its request needn't
-            attempt.errors.append(e)
-            if (pause := _pause(e, n, waited)) is None:
-                raise
-            waited += pause
-            await asyncio.sleep(pause)
-            continue
-        assert final is not None, "a try yields its Final last"
-        ended = time.monotonic()
-        attempt.latency += ended - began
-        final.value.latency = ended - started
-        final.value.attempts = [attempt]
-        final.value.cost = price(final.value.usage, candidate.provider, candidate.model)
-        yield final
-        return
+    started, attempts = time.monotonic(), []
+    for candidate in chain:
+        attempts.append(attempt := Attempt(candidate.provider, candidate.model, 0.0))
+        waited = 0.0  # the pauses alone: not the tries, not the limiter
+        for n in range(1, TRIES + 1):
+            await llm.limiter.wait(candidate.provider, candidate.model)
+            began, final = time.monotonic(), None  # an attempt's latency counts its tries, not the waits
+            try:
+                async with aclosing(once(candidate)) as items:
+                    async for item in items:
+                        if isinstance(item, Final):
+                            final = item
+                        else:
+                            yield item
+            except Exception as e:
+                attempt.latency += time.monotonic() - began
+                _unload(e)  # the error stays on the attempt; its request needn't
+                attempt.errors.append(e)
+                if (pause := _pause(e, n, waited)) is None:
+                    break  # to the next candidate
+                waited += pause
+                await asyncio.sleep(pause)
+                continue
+            assert final is not None, "a try yields its Final last"
+            ended = time.monotonic()
+            attempt.latency += ended - began
+            final.value.latency = ended - started
+            final.value.attempts = attempts
+            final.value.cost = price(final.value.usage, candidate.provider, candidate.model)
+            yield final
+            return
+    raise _last(attempts)
 
 
 async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
@@ -99,6 +100,15 @@ async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[
             if isinstance(item, Final):
                 return item.value
     raise AssertionError("stream() ends with a Final or raises")
+
+
+def _last(attempts: list[Attempt]) -> Exception:
+    """The last candidate's last error, noting every earlier one: what a call raises when all fail."""
+    errors = [(a, e) for a in attempts for e in a.errors]
+    last = errors[-1][1]
+    for a, e in errors[:-1]:
+        last.add_note(f"earlier, {a.provider}/{a.model}: {type(e).__name__}: {e}")
+    return last
 
 
 def _retryable(e: Exception) -> bool:
