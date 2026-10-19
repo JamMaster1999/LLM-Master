@@ -75,13 +75,14 @@ async def speech(llm: "LLM", candidates: Model | Sequence[Model], text: str) -> 
 
 async def _make(llm: "LLM", call: str, candidates: Model | Sequence[Model],
                 once: Callable[[Model], Awaitable[Media]]) -> Media:
-    chain = pipeline.chain(candidates)
-    for candidate in chain:
+    async def checked(candidate: Model) -> Media:
+        """once(), for a candidate a media call can take: one that can't fails alone, and fallback moves on."""
         if set_fields := candidate.config.model_dump(exclude_defaults=True).keys() - {"timeout"}:
             raise UnsupportedField(call, min(set_fields), "media calls take only timeout")
         if candidate.extra.get("n", 1) != 1:  # a Media holds one file: more would be dropped unseen
             raise UnsupportedField(call, "n", "a media call makes one file; make one call per file")
-    return await pipeline.run(llm, chain, once)
+        return await once(candidate)
+    return await pipeline.run(llm, pipeline.chain(candidates), checked)
 
 
 def _made(candidate: Model, data: bytes, mime: str, usage: Usage | None) -> Media:

@@ -6,13 +6,12 @@ import time
 from typing import Literal
 
 import pytest
-from cases import ASK, CONFIGURED, FIXTURES, GREET, LONG, LOOPS, WRITE
+from cases import ASK, CONFIGURED, CUT, FIXTURES, GREET, LONG, LOOPS
 from pydantic import BaseModel, Field
 
 from llm_master.config import UnsupportedField
 from llm_master.config.moderation import Flagged
 from llm_master.config.response_format import Format
-from llm_master.config.tool_choice import ToolChoice
 from llm_master.facade import LLM
 from llm_master.io.messages import validate
 from llm_master.io.parts import Audio, Text
@@ -115,15 +114,6 @@ async def test_openai_audio_input_goes_to_completion(recorded, llm):
     r = await llm.query(Model(provider="openai", model="gpt-audio-mini"),
                         [{"role": "user", "content": [Text(text="Transcribe this audio."), spoken]}])
     assert "seven" in r.message.content.lower() or "7" in r.message.content
-
-
-# the streamed anthropic call is the sly one: eager_input_streaming sends the arguments unbuffered, and
-# anthropic's SDK parses the cut JSON into a valid-looking input
-CUT = {"openai": Model(provider="openai", model="gpt-5.6-luna",
-                       config=Config(tools=[WRITE], thinking="none", max_tokens=16)),
-       "anthropic": Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
-           tools=[{**WRITE, "function": {**WRITE["function"], "eager_input_streaming": True}}],
-           tool_choice=ToolChoice(mode="required"), thinking="none", max_tokens=60))}
 
 
 @pytest.mark.parametrize("provider, stream", [("openai", False), ("anthropic", True)])

@@ -38,6 +38,14 @@ CONFIGURED = {  # each field placed per API; the recorded request body pins the 
     "openai-none": Model(provider="openai", model="gpt-5.6-luna", config=Config(system="Answer in French.",
                                                                                  cache=False)),
 }
+CHAIN = [CONFIGURED["anthropic"], CONFIGURED["openai"]]  # a fallback pair; both recordings ask GREET
+# the streamed anthropic call is the sly one: eager_input_streaming sends the arguments unbuffered, and
+# anthropic's SDK parses the cut JSON into a valid-looking input
+CUT = {"openai": Model(provider="openai", model="gpt-5.6-luna",
+                       config=Config(tools=[WRITE], thinking="none", max_tokens=16)),
+       "anthropic": Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
+           tools=[{**WRITE, "function": {**WRITE["function"], "eager_input_streaming": True}}],
+           tool_choice=ToolChoice(mode="required"), thinking="none", max_tokens=60))}
 LONG = "Remember these facts. " + " ".join(f"Fact {i}: the code for item {i} is {i * 7919 % 10007}." for i in range(700))
 
 # small outputs keep the recordings small; an explicit None config field means unset, as everywhere
