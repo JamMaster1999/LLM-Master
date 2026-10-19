@@ -1,8 +1,12 @@
 """The loop at its entry point, turn(), against recorded provider exchanges (RECORD=1 re-records them
-live) and the Exa stand-in: the tools here need no sandbox."""
+live) and the Exa stand-in."""
+import uuid
 from contextlib import aclosing
 from typing import Any
 
+import pytest
+
+from agent.sandbox import delete
 from agent.turn import INTERRUPTED, Conversation, turn, typed_urls
 from llm_master.types import Config, Model
 
@@ -11,8 +15,8 @@ ASK = ("Use ask_user to ask me one question, which grade I teach, with the optio
        "Then write one sentence for that grade.")
 
 
-async def run(llm, conversation: Conversation, **kwargs) -> list:
-    return [chunk async for chunk in turn(llm, MODEL, "c", conversation, **kwargs)]
+async def run(llm, conversation: Conversation, id: str = "c", **kwargs) -> list:
+    return [chunk async for chunk in turn(llm, MODEL, id, conversation, **kwargs)]
 
 
 async def test_parallel_calls_stream_their_results_and_the_loop_goes_on_to_the_answer(recorded, exa, llm):
@@ -68,6 +72,20 @@ async def test_a_stop_mid_answer_keeps_the_text_the_user_saw(recorded, llm):
     after = await run(llm, conversation, text="Go on.")
     answer = "".join(c["delta"] for c in after if c["type"] == "text-delta")
     assert answer.split()[0] == str(int(seen.split()[-1]) + 1), answer  # it counts on from the kept text
+
+
+@pytest.mark.live  # on Modal, with the model's turn recorded
+async def test_a_call_that_changes_the_sandbox_runs_before_the_calls_after_it(recorded, llm):
+    recorded("turn_ordered")
+    conversation, id = Conversation(), f"test-{uuid.uuid4().hex[:12]}"
+    try:
+        await run(llm, conversation, id, text="In a single message, call bash with `echo fresh > note.txt` and "
+                                              "read on note.txt. Then say done.")
+    finally:
+        await delete(id)
+    bash, read = conversation.messages[1].calls or []
+    assert (bash.name, read.name) == ("bash", "read")
+    assert [m.content for m in conversation.messages if m.call_id == read.id] == ["fresh"]
 
 
 def test_typed_urls_leave_out_the_punctuation_around_them():

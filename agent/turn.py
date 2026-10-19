@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent.result import Result, UserFile
-from agent.toolbox import Toolbox
+from agent.toolbox import SERIAL, Toolbox
 from llm_master.facade import LLM
 from llm_master.io.messages import Call, Message
 from llm_master.types import Model
@@ -71,16 +71,17 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
             message = stream.response.message
             conversation.messages.append(message)
             asking = False
-            async with asyncio.TaskGroup() as group:
-                runs = [group.create_task(_run(box, call)) for call in message.calls or []]
-                for run in asyncio.as_completed(runs):
-                    call, result = await run
-                    if result.waiting:  # the browser asks the user; the answers come with the next request
-                        asking = True
-                        continue
-                    conversation.messages.append(_answer(call, result))
-                    for chunk in _shown(call, result, conversation.sources):
-                        yield chunk
+            for batch in _batches(message.calls or []):
+                async with asyncio.TaskGroup() as group:
+                    runs = [group.create_task(_run(box, call)) for call in batch]
+                    for run in asyncio.as_completed(runs):
+                        call, result = await run
+                        if result.waiting:  # the browser asks the user; the answers come with the next request
+                            asking = True
+                            continue
+                        conversation.messages.append(_answer(call, result))
+                        for chunk in _shown(call, result, conversation.sources):
+                            yield chunk
             if asking or not message.calls:
                 break
         ended = True
@@ -102,6 +103,19 @@ def typed_urls(text: str) -> list[str]:
             url = url[:-1]
         urls.append(url)
     return urls
+
+
+def _batches(calls: list[Call]) -> list[list[Call]]:
+    """The calls in the order they run, as Claude Code runs them: a call that changes the sandbox
+    runs alone, after the calls before it, and the calls between such calls run together. A
+    review_file sent beside the bash that builds its file then reviews the new file."""
+    batches: list[list[Call]] = []
+    for call in calls:
+        if batches and call.name not in SERIAL and batches[-1][-1].name not in SERIAL:
+            batches[-1].append(call)
+        else:
+            batches.append([call])
+    return batches
 
 
 async def _run(box: Toolbox, call: Call) -> tuple[Call, Result]:
