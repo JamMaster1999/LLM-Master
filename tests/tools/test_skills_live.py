@@ -8,7 +8,8 @@ import pytest_asyncio
 from agent import Toolbox
 from agent.sandbox import delete
 
-pytestmark = [pytest.mark.live, pytest.mark.asyncio(loop_scope="module")]
+# one worker runs them all, so they share the module's sandbox
+pytestmark = [pytest.mark.live, pytest.mark.asyncio(loop_scope="module"), pytest.mark.xdist_group("skills_live")]
 
 SKILLS = Path(__file__).parents[2] / "skills"
 
