@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
+os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():
