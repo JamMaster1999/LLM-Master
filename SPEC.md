@@ -49,19 +49,11 @@ belongs to the caller.
 **Media.** `query()` is conversation only: text and tool calls, no media out. Images and
 speech get their own calls, `image(candidates, prompt, images)` and `speech(candidates, text)`,
 on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns a
-`Media`: the file's bytes, its mime type, the candidate that made it (`origin`), usage, cost,
-attempts and latency. One case per provider: gemini through `acompletion` with
-`response_modalities` `["IMAGE"]` or `["AUDIO"]` (any-llm wraps gemini's PCM speech as WAV),
-openai through the held client's own SDK calls, `images.generate`, `images.edit` and
-`audio.speech.create`. any-llm wraps no image edit and forbids every extra key on generate and
-speech, so the held client keeps the pass-through law; its errors convert to any-llm's typed ones.
-A media candidate takes only `timeout` from its config; any other field set raises
-`UnsupportedField`. Everything else rides its `extra`, merged last over our own keys: size,
-quality, `output_format`, `voice` (openai's default is `alloy`, since the API requires one),
-gemini's `image_config` or `response_modalities`. openai speech's mime type is its reply's
-`Content-Type`. Anthropic and Fireworks make no
-media and raise `UnsupportedField`. A candidate that answers without the media raises typed
-`MissingMedia`, so fallback moves on.
+`Media`: the file's bytes, its mime type, the candidate that made it, usage, cost, attempts and
+latency. Gemini, Vertex AI and OpenAI make both; Anthropic and Fireworks raise
+`UnsupportedField`. A media candidate takes only `timeout` from its config; the provider's own
+options (size, quality, format, voice) ride its `extra`. A candidate that answers without the
+media raises `MissingMedia`, so fallback moves on.
 
 An edit is lineage, not a conversation: the parent image plus the new instruction, one
 request, no history and no server state. Any provider can edit any provider's image.
@@ -89,9 +81,9 @@ discount manually.
 model, tokens, latency, cost, retry and fallback outcome, and errors.
 
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
-exchanges in `tests/fixtures/` replay offline through a local stand-in that also pins every
-request body; `RECORD=1` re-records them live. Two benchmark gates run before migration:
-conversion overhead at concurrency 50, and streaming time to first token.
+exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
+benchmark gates run before migration: conversion overhead at concurrency 50, and streaming time
+to first token.
 
 ## Not rebuilt
 
