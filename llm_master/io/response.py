@@ -16,8 +16,7 @@ from llm_master.providers import API, ProviderName
 Finish = Literal["stop", "length", "calls", "refusal"]
 _CHAT_FINISH: dict[str, Finish] = {"stop": "stop", "length": "length", "tool_calls": "calls",
                                    "content_filter": "refusal"}
-_ANTHROPIC_FINISH: dict[str, Finish] = {"end_turn": "stop", "stop_sequence": "stop", "compaction": "stop",
-                                        "max_tokens": "length",
+_ANTHROPIC_FINISH: dict[str, Finish] = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length",
                                         "model_context_window_exceeded": "length", "tool_use": "calls",
                                         "refusal": "refusal"}
 
