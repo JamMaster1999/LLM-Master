@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Literal, assert_never, cast
 
-from any_llm.exceptions import ProviderError
+from any_llm.exceptions import InvalidRequestError, ProviderError
 from any_llm.providers.anthropic.utils import ANTHROPIC_STOP_REASON_TO_FINISH_REASON
 from any_llm.types.completion import ChatCompletion, CompletionUsage
 from any_llm.types.messages import MessageResponse
@@ -15,6 +15,7 @@ from llm_master.io.messages import Call, Message, Origin, new_id
 from llm_master.providers import API, ProviderName
 
 Finish = Literal["stop", "length", "tool_calls", "content_filter"]  # any-llm's words
+_PASSING = {"server_error", "rate_limit_exceeded", "vector_store_timeout"}  # openai failures worth a retry
 
 
 @dataclass
@@ -131,8 +132,12 @@ def _messages(raw: MessageResponse, origin: Origin, ids: dict[str, str]) -> tupl
 
 
 def _responses(raw: OpenAIResponse, origin: Origin, ids: dict[str, str]) -> tuple[Message, Finish, Usage | None]:
-    if raw.status == "failed":  # a plain call reports a failed generation as a 200; a stream raises
-        raise ProviderError(raw.error.message if raw.error else "the response failed", provider_name="openai")
+    if raw.status == "failed":  # a failed generation still answers 200, plain or streamed
+        error = raw.error
+        if error and error.code not in _PASSING:  # invalid_prompt, bio_policy, a bad image: it fails again
+            raise InvalidRequestError(error.message, provider_name="openai", code=error.code)
+        raise ProviderError(error.message if error else "the response failed", provider_name="openai",
+                            code=error.code if error else None)
     native = [i.model_dump(mode="json", exclude_none=True) for i in raw.output]
     parts = [p for i in native if i["type"] == "message" for p in i["content"]]
     text = "".join(p.get("text") or p.get("refusal") or "" for p in parts)

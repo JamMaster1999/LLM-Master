@@ -68,8 +68,6 @@ async def test_tool_loop_replays_the_models_own_turn(provider, stream, recorded,
         check_stream(chunks, second)
 
 
-
-
 @pytest.mark.parametrize("provider", CONFIGURED)
 async def test_config_fields_reach_the_request(provider, recorded, llm):
     recorded(f"{provider}_configured")

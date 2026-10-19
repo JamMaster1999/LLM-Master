@@ -7,6 +7,7 @@ limiter first, then the try, then retries (SPEC.md Failures). Step 7 adds fallba
 import asyncio
 import random
 import time
+import traceback
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -51,7 +52,7 @@ def chain(candidates: Model | Sequence[Model]) -> list[Model]:
     return chain
 
 
-async def stream(llm: "LLM", chain: list[Model], tries: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
+async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
                  ) -> AsyncGenerator[dict | Final[A], None]:
     """Each try's chunks, then the answering try's Final, stamped. Each try waits for the limiter first."""
     started = time.monotonic()
@@ -61,7 +62,7 @@ async def stream(llm: "LLM", chain: list[Model], tries: Callable[[Model], AsyncG
         await llm.limiter.wait(candidate.provider, candidate.model)
         began, final = time.monotonic(), None  # an attempt's latency counts its tries, not the waits
         try:
-            async with aclosing(tries(candidate)) as items:
+            async with aclosing(once(candidate)) as items:
                 async for item in items:
                     if isinstance(item, Final):
                         final = item
@@ -69,10 +70,11 @@ async def stream(llm: "LLM", chain: list[Model], tries: Callable[[Model], AsyncG
                         yield item
         except Exception as e:
             attempt.latency += time.monotonic() - began
+            traceback.clear_frames(e.__traceback__)  # the error stays on the attempt; its request needn't
             attempt.errors.append(e)
-            if n == TRIES or not retryable(e):
+            if n == TRIES or not _retryable(e):
                 raise
-            await asyncio.sleep(pause(e, n))
+            await asyncio.sleep(_pause(e, n))
             continue
         assert final is not None, "a try yields its Final last"
         ended = time.monotonic()
@@ -86,17 +88,17 @@ async def stream(llm: "LLM", chain: list[Model], tries: Callable[[Model], AsyncG
 
 async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
     """stream() for a call with no chunks."""
-    async def tries(candidate: Model) -> AsyncGenerator[Final[A], None]:
+    async def streamed(candidate: Model) -> AsyncGenerator[Final[A], None]:
         yield Final(await once(candidate))
 
-    async with aclosing(stream(llm, chain, tries)) as items:
+    async with aclosing(stream(llm, chain, streamed)) as items:
         async for item in items:
             if isinstance(item, Final):
                 return item.value
     raise AssertionError("stream() ends with a Final or raises")
 
 
-def retryable(e: Exception) -> bool:
+def _retryable(e: Exception) -> bool:
     """Transient: a rate limit, a gateway or upstream failure, or a provider fault that isn't a 4xx."""
     if isinstance(e, (RateLimitError, GatewayTimeoutError, UpstreamProviderError)):
         return True
@@ -104,7 +106,7 @@ def retryable(e: Exception) -> bool:
     return isinstance(e, ProviderError) and not isinstance(e, CutCall) and not 400 <= (e.status_code or 0) < 500
 
 
-def pause(e: Exception, n: int) -> float:
+def _pause(e: Exception, n: int) -> float:
     """Seconds before try n + 1: the provider's Retry-After, else full jitter."""
     after = _seconds(e.retry_after) if isinstance(e, RateLimitError) and e.retry_after else None
     return min(after, 60) if after is not None else random.uniform(0, 0.5 * 2 ** (n - 1))
