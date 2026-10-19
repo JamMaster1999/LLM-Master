@@ -187,7 +187,7 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **Skills** appear at `/skills/<name>/`, added from the caller's folder as the sandbox starts.
   A running sandbox keeps the skills it started with.
 - **The image** is Debian slim (bookworm) with Python 3.13, LibreOffice 25.2 from
-  bookworm-backports, fonts that match Calibri and Cambria, Noto, poppler, pandoc, Pillow, openpyxl,
+  bookworm-backports, fonts that match Calibri and Cambria, Noto with CJK, poppler, pandoc, Pillow, openpyxl,
   charset-normalizer, and Indra OCR with its weights. Nothing installs at run time, so a skill that
   needs a package lists it in the skills folder: `apt.txt` for Debian packages, `requirements.txt`
   for pip, one per line, `#` for comments. A new image reaches a conversation when its sandbox next

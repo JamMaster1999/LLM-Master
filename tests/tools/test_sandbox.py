@@ -55,6 +55,7 @@ async def test_exec_stops_a_command_that_floods_its_output(sandbox, monkeypatch)
 async def test_image_has_what_the_tools_need(sandbox):
     code, stdout, stderr = await sandbox.exec(
         "bash", "-c", "soffice --version && pdftoppm -v && pandoc --version && ps --version && "
+                      "fc-list | grep -q 'Noto Sans CJK' && "
                       "python -c 'import PIL, pillow_heif, openpyxl, charset_normalizer, indra_ocr'",
         timeout=120)
     assert code == 0, (stdout + stderr).decode()
