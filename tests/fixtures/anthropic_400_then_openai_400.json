@@ -1,0 +1,101 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 400,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"invalid_request_error\", \"message\": \"max_tokens: too large\"}}"
+  }
+ },
+ {
+  "request": {
+   "path": "/responses",
+   "body": {
+    "include": [
+     "reasoning.encrypted_content"
+    ],
+    "input": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "instructions": "Answer in French.",
+    "max_output_tokens": 2000,
+    "model": "gpt-5.6-luna",
+    "reasoning": {
+     "effort": "low",
+     "summary": "auto"
+    },
+    "store": false,
+    "tool_choice": "none",
+    "tools": [
+     {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 400,
+   "type": "application/json",
+   "body": "{\"error\": {\"message\": \"Invalid 'max_output_tokens': too large.\", \"type\": \"invalid_request_error\", \"param\": \"max_output_tokens\", \"code\": null}}"
+  }
+ }
+]
