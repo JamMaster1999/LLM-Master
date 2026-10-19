@@ -811,6 +811,19 @@ wheels = [
 ]
 
 [[package]]
+name = "genai-prices"
+version = "0.1.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx2" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/de/119c7ba00b9ddbf629de34cf390ab472da6d7bc5df0c51cdbec900280a74/genai_prices-0.1.13.tar.gz", hash = "sha256:76c9e2dd3917fdacdf3bc562297c4591384142ea2283c477e1512fafa4e3a384", size = 134622, upload-time = "2026-10-15T09:47:04.739Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/5a/b6b7d55148d367d07bcd3efdf24e3086ad199ea5109d0c335a872dfaac95/genai_prices-0.1.13-py3-none-any.whl", hash = "sha256:6d2b40760a2f7f5e207bac9b98de0af80e60c58ead497872a5331a7cee610477", size = 142541, upload-time = "2026-10-15T09:47:03.424Z" },
+]
+
+[[package]]
 name = "google-api-core"
 version = "2.36.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1199,6 +1212,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anthropic", extra = ["aiohttp"] },
     { name = "any-llm-sdk", extra = ["gemini"] },
+    { name = "genai-prices" },
     { name = "google-genai", extra = ["aiohttp"] },
     { name = "httpx" },
     { name = "openai", extra = ["aiohttp"] },
@@ -1227,6 +1241,7 @@ requires-dist = [
     { name = "anthropic", extras = ["aiohttp"] },
     { name = "any-llm-sdk", extras = ["gemini"], git = "https://github.com/JamMaster1999/any-llm?branch=llm-master" },
     { name = "exa-py", marker = "extra == 'agent'", specifier = ">=2.25.0" },
+    { name = "genai-prices", specifier = ">=0.1.13" },
     { name = "google-genai", extras = ["aiohttp"] },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "modal", marker = "extra == 'agent'", specifier = ">=1.6.2" },

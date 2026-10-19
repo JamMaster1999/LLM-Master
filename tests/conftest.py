@@ -42,7 +42,7 @@ def pytest_collection_modifyitems(items):
 @pytest.fixture
 async def llm():
     from llm_master.facade import LLM
-    llm = LLM()
+    llm = LLM(update_prices=False)  # never fetches prices: the offline tests stay offline
     yield llm
     await llm.aclose()
 

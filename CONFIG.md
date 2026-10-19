@@ -136,6 +136,10 @@ save → reload → next call is lossless by construction.
   message (IO.md).
 - responses: same information, flattened — two three-line reshapes at build (tool schemas, and
   results as `function_call_output` items).
+- Strict mode: when a tool leaves `strict` unset, openai's Responses API makes its schema strict
+  where it can, and strict mode marks every parameter required, optional ones included. A caller
+  who wants optional parameters sets `"strict": false` on the tool, as the tools do (TOOLS.md),
+  and the pass-through law carries it. Completion stays non-strict unless asked.
 - Scope boundary: `query()` never runs a tool. It returns the model's tool calls; executing and
   looping is the caller's job.
 - Recorded tool loops verify the loop end to end per provider (tests/test_query.py) — we read
@@ -216,7 +220,8 @@ save → reload → next call is lossless by construction.
   and Fireworks charge no write fee and have no off switch, so off sends nothing.
 - Costs, verified: openai 5.6+ and anthropic bill a cache write at 1.25x; reads cost 0.1x
   everywhere. any-llm's usage reports reads as `cached_tokens` and writes as `cache_write_tokens`,
-  so the cost step has every count it needs.
+  so the cost step has every count it needs. A 1-hour anthropic write bills at 2x, and
+  `response.usage` breaks it out as `cache_write_1h` (SPEC.md Money).
 - Pre-5.6 openai models reject off with a typed 400. They charge no write fee, so leave it on.
 - A cache lifetime, such as anthropic's 1 hour, rides the candidate's `extra`.
 

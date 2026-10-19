@@ -61,8 +61,9 @@ sends the same bytes (see The same-bytes rule). HEIC becomes JPEG. A source that
 `Image` that isn't an image, or a `File` that isn't a PDF raises `PartError` before any model is
 billed. Never pass a user's input as a source: a path or URL is read as given.
 
-Size limits are left to the provider. For reference: Anthropic rejects an image over 10 MB, and
-Gemini accepts at most 20 MB of inline data per request.
+Size limits are left to the provider. For reference: Anthropic's API rejects an image over 10 MB
+(5 MB on Bedrock and Vertex AI), and Gemini takes up to 100 MB of inline data per request, 50 MB
+for a PDF.
 
 ## Assistant messages: readable fields and native
 
@@ -265,9 +266,10 @@ call and never go into history:
   `content_filter`. A model's own refusal reads as `content_filter` too; its text, if any, is in
   `message.content`. Errors raise a typed exception, so `finish` never says error.
 - `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
-  prompt token, cache reads and writes included; `output` counts reasoning. None when the provider
-  reported no usage: unknown, never zero.
-- `cost` — dollars (SPEC.md step 4).
+  prompt token, cache reads and writes included; `output` counts reasoning. Anthropic's 1-hour
+  cache writes and audio and image tokens are broken out too, because they're priced apart. None
+  when the provider reported no usage: unknown, never zero.
+- `cost` — dollars, or None when the usage or the model's price is unknown (SPEC.md Money).
 - `attempts` — every candidate tried, in order, with the one that answered last. One entry when
   the first candidate answers. Each attempt holds:
   - provider, model and latency;

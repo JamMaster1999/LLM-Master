@@ -15,7 +15,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 1. **Providers** — the registry data page. Done.
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
-4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included.
+4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
@@ -77,6 +77,31 @@ bill one generation twice
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
 discount manually.
+
+- `cost` on a `Response` or a `Media` is dollars, a `float`. The pipeline prices the answering
+  try's usage with genai-prices' `calc_price` when the call ends, streams included.
+- It is None when usage is None, when genai-prices doesn't know the model, or when a price entry
+  can't split the usage: unknown, never zero, and the answered call still returns.
+- Only the answering try is priced. A failed try reports no usage, so its spend goes uncounted.
+- The genai-prices provider is the row's `price_id`, else the provider's own name. An import-time
+  check rejects a name genai-prices doesn't know, so a typo can't pass for an unpriced model.
+- `Usage` breaks out the parts providers price apart. Each is part of `input` or `output`:
+  - `cache_write_1h`: Anthropic's 1-hour cache writes, 2x the input rate against 1.25x for
+    5 minutes.
+  - `input_audio`, `input_image`, `output_audio`, `output_image`: audio and image tokens. OpenAI's
+    audio input costs 16x its text rate, and a Gemini image's output 20x.
+- `LLM()` starts genai-prices' hourly refresh, one thread for every `LLM` in the process, and
+  `aclose()` stops it. `LLM(update_prices=False)` starts none, so costs come from the prices
+  genai-prices holds: its bundled snapshot, unless a refresh ran. The tests' `llm` fixture uses
+  it, so a replayed call never fetches prices.
+- Known limits:
+  - The bundled snapshot lags. On 2026-10-19 it lacked Fireworks' glm-5p3 and deepseek-v4p1-flash
+    and priced gemini-3.8-flash-tts as gemini-3.8-flash; the refreshed prices had all three.
+  - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
+    no caller sets `service_tier` yet.
+  - Gemini's audio input prices at the text rate, half its price on gemini-3.1-flash-lite: the
+    locked any-llm build drops Gemini's input breakdown. Fork PR #19's second commit (80f4287)
+    reports it, and `input_audio` fills once that commit reaches the build.
 
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.

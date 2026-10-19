@@ -30,9 +30,9 @@ class Media:
     mime: str
     origin: Origin
     usage: Usage | None  # None when the provider reports none: cost None, never zero
-    attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these two
+    attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these three
     latency: float = 0.0
-    cost: float | None = None  # SPEC.md step 4
+    cost: float | None = None  # dollars; None when unknown (SPEC.md Money)
 
 
 async def image(llm: "LLM", candidates: Model | Sequence[Model], prompt: str, images: Sequence[Image] = ()) -> Media:
@@ -101,7 +101,8 @@ async def _openai_image(llm: "LLM", candidate: Model, prompt: str, images: Seque
     if not reply.data or not reply.data[0].b64_json:
         raise MissingMedia(f"openai/{candidate.model} answered without an image")
     u = reply.usage
-    usage = Usage(input=u.input_tokens, output=u.output_tokens) if u else None
+    usage = Usage(input=u.input_tokens, output=u.output_tokens, input_image=u.input_tokens_details.image_tokens,
+                  output_image=u.output_tokens_details.image_tokens if u.output_tokens_details else 0) if u else None
     return _made(candidate, base64.b64decode(reply.data[0].b64_json), f"image/{reply.output_format or 'png'}", usage)
 
 

@@ -1,0 +1,21 @@
+[
+ {
+  "request": {
+   "path": "/chat/completions",
+   "body": {
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say hi."
+     }
+    ],
+    "model": "accounts/fireworks/models/unpriced"
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\"id\":\"chatcmpl-13648deb\",\"choices\":[{\"index\":0,\"message\":{\"content\":\"Hi there! \ud83d\udc4b How can I help you today?\",\"role\":\"assistant\",\"reasoning_content\":\"The user just asked me to say hi. This is a simple, casual greeting request. I should respond warmly and naturally. This is a very low-stakes interaction, so a brief, friendly response is appropriate. No need for lists, headers, or lengthy elaboration\u2014just a warm, conversational reply.\"},\"finish_reason\":\"stop\",\"logprobs\":null,\"raw_output\":null}],\"created\":1792404445,\"model\":\"accounts/fireworks/models/unpriced\",\"service_tier\":null,\"system_fingerprint\":null,\"object\":\"chat.completion\",\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":77,\"total_tokens\":92,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"accepted_prediction_tokens\":null,\"reasoning_tokens\":63,\"rejected_prediction_tokens\":null}}}"
+  }
+ }
+]
