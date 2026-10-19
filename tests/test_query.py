@@ -1,13 +1,13 @@
 """query() at its entry point, against recorded provider exchanges (RECORD=1 re-records them live)."""
 import asyncio
 import json
-import pathlib
 import threading
 import time
 from typing import Literal
 
 import pytest
 from any_llm.exceptions import ProviderError
+from cases import FIXTURES, LONG
 from pydantic import BaseModel, Field
 
 from llm_master.config import UnsupportedField
@@ -19,8 +19,6 @@ from llm_master.io.messages import validate
 from llm_master.io.parts import Audio, Text
 from llm_master.io.response import CutCall
 from llm_master.types import Config, Model
-
-FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 WEATHER = {"type": "function", "function": {"name": "get_weather", "description": "Current weather for a city",
            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}
@@ -270,9 +268,6 @@ async def test_switching_models_mid_tool_loop(llm):
         if not r.message.calls:
             history.append({"role": "user", "content": "Now check Rome too."})
     assert any(m.role == "tool" for m in validate(history)), "no model called the tool"
-
-
-LONG = "Remember these facts. " + " ".join(f"Fact {i}: the code for item {i} is {i * 7919 % 10007}." for i in range(700))
 
 
 @pytest.mark.live

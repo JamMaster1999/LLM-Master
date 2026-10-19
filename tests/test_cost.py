@@ -4,19 +4,18 @@ The expected dollars come from genai-prices itself, fed the token counts each re
 """
 import genai_prices
 import pytest
-from test_media import DRAW, GEMINI, OPENAI, parent
-from test_query import FIXTURES, LONG
+from cases import DRAW, FIXTURES, GEMINI_IMAGE, LONG, OPENAI_IMAGE, parent
 
 from llm_master.io.parts import Audio, Text
 from llm_master.types import Config, Model
 
 
 async def gemini_image(llm):
-    return await llm.image(GEMINI, DRAW)
+    return await llm.image(GEMINI_IMAGE, DRAW)
 
 
 async def openai_edit(llm):
-    return await llm.image(OPENAI, "Make the square blue.", [parent()])
+    return await llm.image(OPENAI_IMAGE, "Make the square blue.", [parent()])
 
 
 async def openai_audio(llm):

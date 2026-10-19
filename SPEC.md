@@ -15,7 +15,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 1. **Providers** — the registry data page. Done.
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
-4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included.
+4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
@@ -80,7 +80,8 @@ discount manually.
 
 - `cost` on a `Response` or a `Media` is dollars, a `float`. The pipeline prices the answering
   try's usage with genai-prices' `calc_price` when the call ends, streams included.
-- It is None when usage is None or genai-prices doesn't know the model: unknown, never zero.
+- It is None when usage is None, when genai-prices doesn't know the model, or when a price entry
+  can't split the usage: unknown, never zero, and the answered call still returns.
 - Only the answering try is priced. A failed try reports no usage, so its spend goes uncounted.
 - The genai-prices provider is the row's `price_id`, else the provider's own name. An import-time
   check rejects a name genai-prices doesn't know, so a typo can't pass for an unpriced model.
@@ -98,6 +99,9 @@ discount manually.
     and priced gemini-3.8-flash-tts as gemini-3.8-flash; the refreshed prices had all three.
   - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
     no caller sets `service_tier` yet.
+  - Gemini's audio input prices at the text rate, half its price on gemini-3.1-flash-lite: the
+    locked any-llm build drops Gemini's input breakdown. Fork PR #19's second commit (80f4287)
+    reports it, and `input_audio` fills once that commit reaches the build.
 
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.

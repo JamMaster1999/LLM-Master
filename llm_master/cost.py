@@ -17,5 +17,7 @@ def price(usage: Usage | None, provider: ProviderName, model: str) -> float | No
         output_audio_tokens=usage.output_audio, output_image_tokens=usage.output_image)
     try:
         return float(genai_prices.calc_price(tokens, model, provider_id=price_id(provider)).total_price)
-    except LookupError:  # a model genai-prices doesn't know yet; registry.py checks the provider at import
+    # a model genai-prices doesn't know yet (registry.py checks the provider at import), or usage its price
+    # entry can't split, such as cached audio on a model with no such rate
+    except (LookupError, ValueError):
         return None
