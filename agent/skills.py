@@ -24,7 +24,10 @@ class Skills:
 
     def __init__(self, folder: str | Path) -> None:
         self.folder = Path(folder)
-        self.skills = {path.name: _load(path) for path in sorted(self.folder.iterdir()) if path.is_dir()}
+        if link := next((path for path in self.folder.rglob("*") if path.is_symlink()), None):  # the sandbox mounts it all
+            raise ValueError(f"Skills {self.folder}: {link} is a symlink; the sandbox gets real files only")
+        self.skills = {path.name: _load(path) for path in sorted(self.folder.iterdir())
+                       if path.is_dir() and not path.name.startswith(".") and path.name != "__pycache__"}
         listing = "\n".join(f"- {name}: {description}" for name, (description, _) in self.skills.items())
         self.spec = {"type": "function", "function": {
             "name": "skill",
@@ -50,8 +53,8 @@ class Skills:
 
 def _load(folder: Path) -> tuple[str, str]:
     """A skill's description and instructions, from SKILL.md's YAML frontmatter and the text after it."""
-    if folder.is_symlink() or any(path.is_symlink() for path in folder.rglob("*")):
-        raise ValueError(f"Skill {folder}: holds a symlink; the sandbox gets real files only")
+    if not (folder / "SKILL.md").is_file():
+        raise ValueError(f"Skill {folder}: SKILL.md is missing")
     lines = (folder / "SKILL.md").read_text().splitlines()
     if lines[:1] != ["---"] or "---" not in lines[1:]:
         raise ValueError(f"Skill {folder}: SKILL.md must start with frontmatter between --- lines")

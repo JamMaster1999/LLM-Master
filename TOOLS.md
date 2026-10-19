@@ -248,8 +248,9 @@ don't have.
 - **Reading.** A call returns the skill's instructions, wrapped as agentskills.io suggests, with
   its folder and its other files listed. The model reads those with read and runs them with bash.
 - **Skill folders** follow the Agent Skills spec. SKILL.md's `name` matches its folder, and its
-  `description` is at most 1024 characters. PyYAML reads the frontmatter, and a folder holds real
-  files, no symlinks. A broken skill fails the toolbox's construction.
+  `description` is at most 1024 characters. PyYAML reads the frontmatter. The skills folder holds
+  real files, no symlinks, since the sandbox mounts all of it. Every folder in it is a skill,
+  except dot-folders and `__pycache__`. A broken skill fails the toolbox's construction.
 
 ## Files
 
@@ -277,7 +278,7 @@ Longer audio gets the path only, and nothing can listen to it yet.
   takes them out of the fallback chain.
 - An audio upload leaves only Gemini and OpenAI's audio models able to answer (IO.md).
 - A deploy that changes a skill updates its instructions at once, but a running sandbox keeps the
-  old files until it restarts, after 15 idle minutes at most.
+  old files until it stops. An idle one stops after 15 minutes, a busy one after 24 hours.
 - A planted instruction can still put data into a search query, which reaches Exa, not the
   attacker. Routes that need the user remain: a link the user clicks, and a downloaded HTML file
   the user opens.

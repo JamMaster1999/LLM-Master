@@ -15,7 +15,9 @@ def test_skills_are_listed_in_the_tools_description(tmp_path):
     assert spec["description"].endswith(
         "Available skills:\n- greet: Greets a student by name: use when a lesson starts.\n- quiz: Writes a one-question quiz.")
     assert spec["parameters"]["properties"]["skill"]["enum"] == ["greet", "quiz"]
-    for box in (Toolbox("c"), Toolbox("c", skills=tmp_path)):  # no skills, or an empty folder: no tool
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "__pycache__").mkdir()
+    for box in (Toolbox("c"), Toolbox("c", skills=tmp_path)):  # no skills, or a folder holding none: no tool
         assert "skill" not in [spec["function"]["name"] for spec in box.specs]
 
 
@@ -36,6 +38,7 @@ async def test_an_unknown_skill_is_an_error_result():
 
 
 @pytest.mark.parametrize("skill_md", [
+    None,
     "# Broken\n",
     "---\nname: other\ndescription: Named for another folder.\n---\n",
     f"---\nname: broken\ndescription: {'x' * 1025}\n---\n",
@@ -44,15 +47,17 @@ async def test_an_unknown_skill_is_an_error_result():
 ])
 def test_a_broken_skill_fails_construction(tmp_path, skill_md):
     (tmp_path / "broken").mkdir()
-    (tmp_path / "broken" / "SKILL.md").write_text(skill_md)
+    if skill_md is not None:  # None: no SKILL.md at all
+        (tmp_path / "broken" / "SKILL.md").write_text(skill_md)
     with pytest.raises(ValueError, match="^Skill .*/broken: "):
         Toolbox("c", skills=tmp_path)
 
 
-def test_a_skill_holding_a_symlink_fails_construction(tmp_path):
+@pytest.mark.parametrize("link", ["secrets", "linked/secrets"])  # the sandbox mounts the whole folder
+def test_a_symlink_in_the_skills_folder_fails_construction(tmp_path, link):
     (tmp_path / "linked").mkdir()
     (tmp_path / "linked" / "SKILL.md").write_text("---\nname: linked\ndescription: Links out.\n---\n")
-    (tmp_path / "linked" / "secrets").symlink_to("/etc/hosts")
+    (tmp_path / link).symlink_to("/etc/hosts")
     with pytest.raises(ValueError, match="symlink"):
         Toolbox("c", skills=tmp_path)
 
