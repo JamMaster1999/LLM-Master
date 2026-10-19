@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import pathlib
+import secrets
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
@@ -13,6 +14,11 @@ import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
 os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
+# server/app.py reads these at import: each worker's own app, public while the tests run, with a short
+# prompt and the fixture skills
+os.environ.update(AGENT_APP=f"llm-master-test-{secrets.token_hex(4)}", AGENT_PUBLIC="1",
+                  AGENT_PROMPT=str(pathlib.Path(__file__).parent / "fixtures" / "prompt.md"),
+                  AGENT_SKILLS=str(pathlib.Path(__file__).parent / "tools" / "skills"))
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():

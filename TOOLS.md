@@ -126,6 +126,38 @@ save(conversation)
   does. Its reasoning and unfinished calls are dropped.
 - **Failure**: a provider's error raises, as in llm_master, and the caller sends the `error` chunk.
 
+## The backend
+
+`server/app.py` runs the loop on Modal. Each container takes one request at a time, so llm_master's
+blocking calls are fine there. `server/cli.py` drives one conversation from the terminal.
+
+- **`POST /chat`** takes the body the AI SDK sends when it sends only the last message, `{id,
+  message}`, plus `model`, one of the four the backend offers. A user message's `file` parts hold
+  base64 data URLs, and each goes through `box.attach`. An assistant message carries ask_user's
+  answers in its `tool-ask_user` parts. The answer streams as server-sent events in the UI message
+  stream protocol.
+- **`DELETE /conversations/{id}`** stops the sandbox, drops the volume and deletes the history.
+  Uflo calls it when the user deletes the conversation. Nothing else deletes a conversation.
+- **State** lives in the `llm-master-history` volume, a JSON file per conversation, read at the start
+  of a request and written at its end, whatever ends it. No sandbox mounts that volume, and the
+  sandbox has no network and no Modal token, so model-written code can't forge the history.
+- **Files**: the backend never mounts a workspace volume. Every file it reads or writes goes through
+  the conversation's sandbox, so the sandbox is the volume's only writer.
+- **One request per conversation**: a lock in the `llm-master-locks` Dict, holding the time it
+  lapses. The request pushes it back every 20 seconds while it runs, so a container that dies frees
+  its conversation within a minute. A second request waits up to 30 seconds, then gets an `error`
+  chunk.
+- **Stopping**: the user stops a turn by closing the stream. Modal tells the app only when a write
+  fails, so the backend pings with an SSE comment after 5 quiet seconds. The turn then stops and
+  saves, and only then does the next request get the lock.
+- **Delivered files** go as `file` chunks holding data URLs until the files origin exists. The AI
+  SDK's file chunk has no name field, so the name rides in `providerMetadata.agent.filename`.
+- **Keys** reach the backend as the `llm-master-keys` Modal Secret. The sandbox gets none.
+- **Auth**: Modal's proxy auth guards the endpoint; a client sends a proxy token as
+  `Authorization: Bearer wk-….ws-…`. `AGENT_PUBLIC=1` drops it, for test apps that live minutes.
+- **Deploying**: `modal deploy --env dev server/app.py` ships the prompt in `prompts/system.md`
+  and the skills in `skills/`; `AGENT_PROMPT`, `AGENT_SKILLS` and `AGENT_APP` point elsewhere.
+
 ## The sandbox
 
 Each conversation gets one Modal sandbox, named after it and started on its first sandbox call.
