@@ -174,6 +174,30 @@ discount manually.
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.
 
+- Every `query()`, `image()` and `speech()` call sends one event when it ends, answered or failed
+  after its last candidate. A stream the caller leaves early sends none, like its cost (CONFIG.md
+  field 3), and moderation sends none.
+- The event is PostHog's LLM analytics `$ai_generation`, so its dashboards read it as is:
+  - `$ai_trace_id`, new per call, and `$ai_span_name`: `query`, `image` or `speech`.
+  - `$ai_provider` and `$ai_model`: the answering candidate, or the last one tried.
+  - `$ai_input_tokens`, `$ai_output_tokens`, `$ai_cache_read_input_tokens`,
+    `$ai_cache_creation_input_tokens` and `$ai_cache_creation_1h_input_tokens`.
+    `$ai_cache_reporting_exclusive` is false, because `input` counts the cache tokens.
+  - `$ai_latency`: the call's latency. `$ai_total_cost_usd`: its cost, with `$ai_cost_passthrough`
+    so PostHog keeps genai-prices' price. Both cost keys are absent when the cost is unknown.
+  - `$ai_stop_reason`: a query's `finish`.
+  - `retries` counts the failed tries, `fallbacks` the candidates tried after the first, and
+    `errors` holds one `provider/model: Type: message` line per failed try.
+  - A failed call adds `$ai_is_error`, `$ai_error` with the raised error's text, and
+    `$ai_http_status` when the error has one.
+- No content leaves: no messages, prompts, answers or media, so a user's work never reaches
+  PostHog. Events are personless (`$process_person_profile: false`).
+- Telemetry is on when `POSTHOG_API_KEY` is set. `POSTHOG_HOST` overrides the host, PostHog's US
+  cloud by default, where the project lives.
+- Each `LLM` holds one PostHog `AsyncClient`. Events queue and go out in batches from tasks on
+  the event loop, and `aclose()` sends what's left. A PostHog failure never fails a call: the SDK
+  logs it.
+
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
 benchmark gates run before migration: conversion overhead at concurrency 50, and streaming time
