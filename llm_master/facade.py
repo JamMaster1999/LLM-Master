@@ -12,6 +12,7 @@ from llm_master.io.messages import Message
 from llm_master.io.parts import Image
 from llm_master.io.response import Response
 from llm_master.io.stream import Stream
+from llm_master.limiter import Limiter
 from llm_master.media import Media
 from llm_master.providers import PROVIDERS, SDK, ProviderName
 from llm_master.query import run
@@ -30,6 +31,7 @@ class LLM:
         """update_prices starts genai-prices' hourly price refresh (SPEC.md Money); off, nothing is fetched."""
         self._clients: dict[ProviderName, AnyLLM] = {}
         self._http: list = []
+        self.limiter = Limiter()  # every call through this LLM shares its windows (SPEC.md Rate limits)
         self._prices = UpdatePrices()  # one refresh thread per process, however many LLMs start it
         if update_prices:
             self._prices.start()

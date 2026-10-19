@@ -8,11 +8,14 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
-from typing import Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
 from llm_master.cost import price
 from llm_master.io.response import Attempt, Usage
 from llm_master.types import Model
+
+if TYPE_CHECKING:
+    from llm_master.facade import LLM
 
 
 class CallReturn(Protocol):
@@ -41,11 +44,13 @@ def chain(candidates: Model | Sequence[Model]) -> list[Model]:
     return chain
 
 
-async def stream(chain: list[Model], tries: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
+async def stream(llm: "LLM", chain: list[Model], tries: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
                  ) -> AsyncGenerator[dict | Final[A], None]:
-    """The try's chunks, then its Final, stamped."""
+    """The try's chunks, then its Final, stamped. The try waits for the limiter first."""
     started = time.monotonic()
     candidate, final = chain[0], None
+    await llm.limiter.wait(candidate.provider, candidate.model)
+    began = time.monotonic()  # an attempt's latency starts with its try, after the limiter
     async with aclosing(tries(candidate)) as items:
         async for item in items:
             if isinstance(item, Final):
@@ -53,18 +58,19 @@ async def stream(chain: list[Model], tries: Callable[[Model], AsyncGenerator[dic
             else:
                 yield item
     assert final is not None, "a try yields its Final last"
-    final.value.latency = time.monotonic() - started
-    final.value.attempts = [Attempt(candidate.provider, candidate.model, final.value.latency)]
+    ended = time.monotonic()
+    final.value.latency = ended - started
+    final.value.attempts = [Attempt(candidate.provider, candidate.model, ended - began)]
     final.value.cost = price(final.value.usage, candidate.provider, candidate.model)
     yield final
 
 
-async def run(chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
+async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
     """stream() for a call with no chunks."""
     async def tries(candidate: Model) -> AsyncGenerator[Final[A], None]:
         yield Final(await once(candidate))
 
-    async with aclosing(stream(chain, tries)) as items:
+    async with aclosing(stream(llm, chain, tries)) as items:
         async for item in items:
             if isinstance(item, Final):
                 return item.value
