@@ -38,7 +38,7 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequenc
     history = validate(messages)
     chain = pipeline.chain(candidates)
     if moderation:
-        await moderating.check(llm, history)
+        await moderating.check(llm.client("openai"), history)
     if stream:
         return Stream(pipeline.stream(llm, chain, lambda c: _streamed(llm, c, history)))
 

@@ -1,48 +1,43 @@
-"""The rate limiter: a sliding window per (provider, model), waited on before every try. See SPEC.md Rate limits."""
+"""The rate limiter: LLM(per_minute=n) lets n tries start in any minute per model, across every call. See SPEC.md
+Rate limits."""
 import asyncio
-import time
 
 import pytest
-from cases import ASK, CONFIGURED, GREET, LOOPS
+from cases import CONFIGURED, GREET
 
-from llm_master.config import moderation
-from llm_master.providers import PROVIDERS
-
-
-async def test_a_full_window_holds_a_try_until_its_oldest_start_leaves(monkeypatch, llm):
-    monkeypatch.setitem(PROVIDERS["anthropic"]["models"], "m", {"requests": 2, "interval": 1})
-    started = time.monotonic()
-    await llm.limiter.wait("anthropic", "m")
-    await llm.limiter.wait("anthropic", "m")
-    await llm.limiter.wait("anthropic", "other")  # another model, another window
-    assert time.monotonic() - started < 0.5
-    await llm.limiter.wait("anthropic", "m")
-    assert time.monotonic() - started >= 1
+from llm_master import limiter
+from llm_master.facade import LLM
 
 
-async def stream(llm):
-    async for _ in await llm.query(LOOPS["anthropic"], ASK, stream=True):
-        pass
+@pytest.fixture
+async def capped():
+    llm = LLM(per_minute=1, update_prices=False)
+    yield llm
+    await llm.aclose()
 
 
-@pytest.mark.parametrize("call, provider, window", [
-    (lambda llm: llm.query(LOOPS["anthropic"], ASK), "anthropic", LOOPS["anthropic"].model),
-    (stream, "anthropic", LOOPS["anthropic"].model),
-    (lambda llm: llm.query(LOOPS["anthropic"], ASK, moderation=True), "openai", moderation.MODEL),
-], ids=["plain", "stream", "moderation"])
-async def test_a_call_waits_for_its_window_before_it_sends(call, provider, window, recorded, monkeypatch, llm):
-    recorded("nothing_sent")  # teardown fails on any request
-    monkeypatch.setitem(PROVIDERS[provider]["models"], window, {"requests": 1, "interval": 60})
-    await llm.limiter.wait(provider, window)
+async def test_a_full_window_holds_the_next_try_before_it_sends(recorded, capped):
+    recorded("gemini_configured")  # one exchange: teardown fails on a second request
+    await capped.query(CONFIGURED["gemini"], GREET)
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(call(llm), 0.2)
+        await asyncio.wait_for(capped.query(CONFIGURED["gemini"], GREET), 0.3)
 
 
-async def test_the_wait_counts_toward_the_calls_latency_not_the_attempts(recorded, monkeypatch, llm):
+async def test_the_wait_counts_toward_the_calls_latency_not_the_attempts(recorded, monkeypatch, capped):
     recorded("gemini_configured")
-    candidate = CONFIGURED["gemini"]
-    monkeypatch.setitem(PROVIDERS["gemini"]["models"], candidate.model, {"requests": 1, "interval": 1})
-    await llm.limiter.wait("gemini", candidate.model)
-    r = await llm.query(candidate, GREET)
+    monkeypatch.setattr(limiter, "WINDOW", 0.5)
+    await capped.limiter.wait("gemini", CONFIGURED["gemini"].model)  # an earlier try took the slot
+    r = await capped.query(CONFIGURED["gemini"], GREET)
     [attempt] = r.attempts
-    assert r.latency - attempt.latency >= 0.9, "the attempt counted the limiter's wait"
+    assert r.latency - attempt.latency >= 0.45, "the try started inside the earlier one's window"
+
+
+async def test_each_model_has_its_own_window(recorded, capped):
+    recorded("gemini_configured")
+    await capped.limiter.wait("gemini", "another-model")
+    await asyncio.wait_for(capped.query(CONFIGURED["gemini"], GREET), 5)  # a shared window would hold it 60 s
+
+
+def test_a_cap_below_one_raises():
+    with pytest.raises(ValueError):
+        LLM(per_minute=0, update_prices=False)

@@ -16,7 +16,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
-5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries. Done.
+5. **Rate limiter** — a local sliding window per (provider, model), its per-minute cap set by the caller on `LLM`, wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
@@ -30,11 +30,11 @@ not written.
 
 **Providers (built).** providers.py is pure data: name-keyed rows, one field per line, no
 code. The rosters (`API`, `ProviderName`, `SDK`) sit at its top, and every type in
-the repo derives from them. shapes.py holds the row TypedDicts. registry.py holds `limit()`
+the repo derives from them. shapes.py holds the row TypedDicts. registry.py holds `price_id()`
 and import-time asserts. The editor flags a bad row as you type; the asserts
-catch it at import. A model override replaces the provider default. Unknown models inherit
-the provider default, so new models work day one. Unknown providers raise. vertexai uses
-any-llm's first-class provider with full GCP login; v1's express mode is gone.
+catch it at import. The page lists no models, so a new model works the day it ships. Unknown
+providers raise. vertexai uses any-llm's first-class provider with full GCP login; v1's express
+mode is gone.
 
 **Calls.** The caller states provider and model; there is no model-name routing. Fallbacks
 are explicit candidate lists on the call. One history format, our own (IO.md), goes in, and
@@ -64,17 +64,23 @@ Live-checked 2026-10-18:
 * The media tools own the files and the lineage record (TOOLS.md). 
 * OpenAI speech reports its usage only in its streamed format, which `speech()` asks for unless `extra` sets `stream_format`.
 
-**Rate limits.** Each `LLM` holds one limiter: a sliding window per (provider, model), from
-`registry.limit()`. At most `requests` tries may start in any `interval` seconds.
+**Rate limits.** We keep no table of the providers' limits: they differ per account and tier,
+and they change without notice. The caller caps its own tries instead. `LLM(per_minute=250)`
+lets at most 250 tries start in any 60 seconds per (provider, model), across every call through
+that `LLM`. With no cap, the default, nothing waits.
 
-- Every try waits for a slot before it sends, retries and fallback hops included, which is why
-  the limiter sits before retries. Moderation waits in its own window,
-  `omni-moderation-latest`'s.
+- A sliding window per (provider, model), shared by `query()`, streams, `image()` and `speech()`.
+  Providers count their limits per model too. One window for every model would make a fallback
+  wait out its failed primary's tries: measured live on 2026-10-19, 250 calls whose primary
+  failed at once waited 61 seconds for their fallback under one shared window of 250.
+- Every try waits for a slot in its model's window before it sends, retries and fallback hops
+  included, which is why the limiter sits before retries. A moderation check takes no slot: it
+  isn't a candidate's try.
 - The wait counts toward `response.latency` but not an attempt's latency, which starts with the
   try.
-- The windows are local to one `LLM`, so other processes don't share them. A provider's 429 still
+- The window is local to one `LLM`, so other processes don't share it. A provider's 429 still
   surfaces typed, for the retries.
-- A model without a row of its own still gets its own window, at the provider's default limit.
+- A cap below 1 raises `ValueError`, since nothing could ever start.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A

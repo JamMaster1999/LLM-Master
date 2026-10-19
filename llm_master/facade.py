@@ -29,11 +29,13 @@ assert set(_AIOHTTP) == set(get_args(SDK)), "every SDK needs an aiohttp decision
 class LLM:
     """Hold one per process and aclose it at shutdown. Async-only: sync callers run asyncio.run once."""
 
-    def __init__(self, update_prices: bool = True) -> None:
-        """update_prices starts genai-prices' hourly price refresh (SPEC.md Money); off, nothing is fetched."""
+    def __init__(self, *, per_minute: int | None = None, update_prices: bool = True) -> None:
+        """per_minute caps the tries that start in any minute per (provider, model), across every call through
+        this LLM; None, the default, sets no cap (SPEC.md Rate limits). update_prices starts genai-prices' hourly price refresh
+        (SPEC.md Money); off, nothing is fetched."""
         self._clients: dict[ProviderName, AnyLLM] = {}
         self._closers: list[Callable[[], Awaitable[None]]] = []
-        self.limiter = Limiter()  # every call through this LLM shares its windows (SPEC.md Rate limits)
+        self.limiter = Limiter(per_minute)
         self._prices = UpdatePrices()  # one refresh thread per process, however many LLMs start it
         if update_prices:
             self._prices.start()
