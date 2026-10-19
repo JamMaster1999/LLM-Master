@@ -71,16 +71,41 @@ def provider_server(monkeypatch, request):
     return start
 
 
+def exchanges(name: str) -> list[dict]:
+    """A recording's request and response pairs, in order."""
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def failing(name: str, status: int, error: dict, *, times: int = 1, headers: dict | None = None) -> list[dict]:
+    """name's first request, answered `times` times with a crafted error: providers don't fail on cue."""
+    reply = {"status": status, "type": "application/json", "body": json.dumps(error), "headers": headers or {}}
+    return [{"request": exchanges(name)[0]["request"], "response": reply}] * times
+
+
+def cut(name: str, before: str, tail: str = "") -> list[dict]:
+    """name's first exchange, its stream ended before the first event holding `before`, then `tail`."""
+    first = exchanges(name)[0]
+    body = first["response"]["body"]
+    end = "\r\n\r\n" if "\r\n\r\n" in body else "\n\n"  # openai's speech stream ends events with CRLFs
+    events = body.split(end)
+    kept = events[:next(i for i, event in enumerate(events) if before in event)]
+    return [{**first, "response": {**first["response"], "body": "".join(e + end for e in kept) + tail}}]
+
+
 @pytest.fixture
 def recorded(provider_server, request):
-    """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
-    that each request body matches the recorded one: the goldens of the same-bytes rule.
-    RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys).
-    A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
-    def serve(name: str) -> None:
-        path, live = FIXTURES / f"{name}.json", os.environ.get("RECORD") == "1"
-        exchanges = [] if live else json.loads(path.read_text())
+    """Stands in for every provider, answering from the steps in order, and checks at teardown that each
+    request body matches the recorded one: the goldens of the same-bytes rule. A step is a fixture name,
+    fixtures/<name>.json, or a list of exchanges built by failing() or cut(), which replay as given.
+    RECORD=1 forwards a named step's requests to the real provider and rewrites its file (bodies only,
+    never keys). A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
+    def serve(*steps: str | list[dict]) -> None:
+        live = os.environ.get("RECORD") == "1"
+        new = live and len(steps) == 1 and isinstance(steps[0], str)  # one name, recorded afresh
+        plan = [] if new else [(step if isinstance(step, str) else None, e)
+                               for step in steps for e in (exchanges(step) if isinstance(step, str) else step)]
         received: list[dict] = []
+        recordings: dict[str, list[dict]] = {}
 
         def answer(handler: BaseHTTPRequestHandler, provider: str, path: str, body: bytes) -> None:
             kind = handler.headers.get("Content-Type", "")
@@ -89,16 +114,19 @@ def recorded(provider_server, request):
             else:
                 pinned = json.loads(body)
             received.append({"path": path, "body": pinned})
-            if live:
+            name, exchange = (steps[0], None) if new else plan[len(received) - 1]
+            if live and isinstance(name, str):
                 headers = {k: v for k, v in handler.headers.items()
                            if k.lower() not in ("host", "content-length", "accept-encoding")}
-                reply = httpx.post(f"{UPSTREAM[provider][1]}{path}", content=body, headers=headers, timeout=600)
-                kind = reply.headers.get("content-type", "")
+                upstream = httpx.post(f"{UPSTREAM[provider][1]}{path}", content=body, headers=headers, timeout=600)
+                kind = upstream.headers.get("content-type", "")
                 text = kind.startswith(("application/json", "text/"))  # else binary, kept as base64
-                exchanges.append({"request": received[-1], "response": {
-                    "status": reply.status_code, "type": kind,
-                    **({"body": reply.text} if text else {"base64": base64.b64encode(reply.content).decode()})}})
-            reply = exchanges[len(received) - 1]["response"]
+                reply = {"status": upstream.status_code, "type": kind, **(
+                    {"body": upstream.text} if text else {"base64": base64.b64encode(upstream.content).decode()})}
+                recordings.setdefault(name, []).append({"request": received[-1], "response": reply})
+            else:
+                assert exchange is not None
+                reply = exchange["response"]
             payload = reply["body"].encode() if "body" in reply else base64.b64decode(reply["base64"])
             handler.send_response(reply["status"])
             for header, value in reply.get("headers", {}).items():  # a crafted Retry-After, say
@@ -111,9 +139,10 @@ def recorded(provider_server, request):
         provider_server(answer)
 
         def check():
-            if live:
-                path.write_text(json.dumps(exchanges, indent=1) + "\n")
-            else:
-                assert received == [e["request"] for e in exchanges], f"{name}: the request changed"
+            for name, recording in recordings.items():
+                (FIXTURES / f"{name}.json").write_text(json.dumps(recording, indent=1) + "\n")
+            if not live:
+                names = " + ".join(step if isinstance(step, str) else "crafted" for step in steps)
+                assert received == [e["request"] for _, e in plan], f"{names}: the request changed"
         request.addfinalizer(check)
     return serve
