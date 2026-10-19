@@ -1,18 +1,20 @@
 """The generate pair on llm_master: generate_image calls image(), generate_audio calls speech(). Each
 saves what it made in the sandbox and sends it to the user."""
 import base64
+import io
 import json
 import posixpath
 import uuid
 from typing import Annotated
 
+from PIL import Image as Pillow, UnidentifiedImageError
 from pydantic import Field
 
 from agent import files
 from agent.result import Result, ToolError, UserFile
 from agent.sandbox import Sandbox
 from llm_master.facade import LLM
-from llm_master.io.parts import Image, PartError
+from llm_master.io.parts import Image
 from llm_master.media import Media
 from llm_master.types import Model
 
@@ -21,6 +23,7 @@ from llm_master.types import Model
 IMAGE_MODELS = [Model(provider="openai", model="gpt-image-2")]
 SPEECH_MODELS = [Model(provider="openai", model="gpt-4o-mini-tts")]
 MAX_SPEECH = 4096  # characters, OpenAI's limit
+EDITABLE = ("PNG", "JPEG", "WEBP")  # what OpenAI's edit endpoint takes
 
 GENERATE_IMAGE = {"type": "function", "function": {
     "name": "generate_image",
@@ -43,12 +46,7 @@ GENERATE_AUDIO = {"type": "function", "function": {
 
 
 async def generate_image(sandbox: Sandbox, llm: LLM, prompt: str, image: str | None = None) -> Result:
-    parents = []
-    if image:
-        try:  # Image reads the type from the bytes, not the name
-            parents.append(Image("data:;base64," + base64.b64encode(await files.load(sandbox, image)).decode()))
-        except PartError:
-            raise ToolError(f"{image} is not an image.") from None
+    parents = [Image(_editable(await files.load(sandbox, image), image))] if image else []
     made = await llm.image(IMAGE_MODELS, prompt, parents)
     path, sent = await _save(sandbox, "images", made)
     record = {"parent": image, "prompt": prompt, "candidate": made.origin.model_dump()}
@@ -63,6 +61,20 @@ async def generate_audio(sandbox: Sandbox, llm: LLM, text: Annotated[str, Field(
     made = await llm.speech(SPEECH_MODELS, text)
     path, sent = await _save(sandbox, "audio", made)
     return Result(f"Saved {path} and sent it to the user.", files=[sent])
+
+
+def _editable(data: bytes, path: str) -> str:
+    """The parent as a data URI the edit endpoint takes: PNG, JPEG and WebP as they are, any other
+    image redrawn as PNG."""
+    try:
+        with Pillow.open(io.BytesIO(data)) as picture:
+            if picture.format not in EDITABLE:
+                redrawn = io.BytesIO()
+                picture.convert("RGBA").save(redrawn, "PNG")
+                data = redrawn.getvalue()
+    except UnidentifiedImageError:
+        raise ToolError(f"{path} is not an image.") from None
+    return "data:;base64," + base64.b64encode(data).decode()
 
 
 async def _save(sandbox: Sandbox, folder: str, made: Media) -> tuple[str, UserFile]:

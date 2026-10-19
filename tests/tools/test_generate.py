@@ -41,10 +41,12 @@ async def record(box: Toolbox, image: str) -> dict:
 @pytest.mark.live
 async def test_an_image_is_made_then_edited_with_its_parent_on_record(box):
     made = await box.run("generate_image", {"prompt": DRAW})
-    edited = await box.run("generate_image", {"prompt": "Make the circle blue.", "image": saved(made)})
+    # a BMP parent, which the edit endpoint doesn't take, is redrawn as PNG on the way
+    await box.run("bash", {"command": f"python -c \"from PIL import Image; Image.open('{saved(made)}').save('a.bmp')\""})
+    edited = await box.run("generate_image", {"prompt": "Make the circle blue.", "image": "a.bmp"})
     candidate = media.IMAGE_MODELS[0].model_dump(include={"provider", "model"})
     assert await record(box, saved(made)) == {"parent": None, "prompt": DRAW, "candidate": candidate}
-    assert await record(box, saved(edited)) == {"parent": saved(made), "prompt": "Make the circle blue.",
+    assert await record(box, saved(edited)) == {"parent": "a.bmp", "prompt": "Make the circle blue.",
                                                 "candidate": candidate}
     for result in (made, edited):  # the model sees the image; the user gets the file
         [file] = result.files
