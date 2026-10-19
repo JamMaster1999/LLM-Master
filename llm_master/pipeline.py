@@ -1,7 +1,7 @@
 """The pipeline every call runs through: query(), image() and speech() hand it one try per candidate.
 
-A try is an async generator: a streamed try yields its chunks, and every try yields its Result last. The
-pipeline stamps every attempt and the whole call's latency on that result. Steps 5 to 7 grow this loop in
+A try is an async generator: a streamed try yields its chunks, and every try yields its Final last. The
+pipeline stamps every attempt and the whole call's latency on that CallReturn. Steps 5 to 7 grow this loop in
 place: the rate limiter, retries, then fallback over the candidates.
 """
 import time
@@ -14,19 +14,19 @@ from llm_master.io.response import Attempt
 from llm_master.types import Model
 
 
-class Answer(Protocol):
-    """What a call returns, a Response or a Media: both carry these."""
+class CallReturn(Protocol):
+    """What a call returns, a Response or a Media: the pipeline sets these two on it."""
 
     attempts: list[Attempt]
     latency: float
 
 
-A = TypeVar("A", bound=Answer)
+A = TypeVar("A", bound=CallReturn)
 
 
 @dataclass
-class Result(Generic[A]):
-    """What a try yields last. The wrapper keeps a result from ever passing for a chunk."""
+class Final(Generic[A]):
+    """A try's last item, its CallReturn. The label keeps it from ever passing for a chunk."""
 
     value: A
 
@@ -38,30 +38,30 @@ def chain(candidates: Model | Sequence[Model]) -> list[Model]:
     return chain
 
 
-async def stream(chain: list[Model], tries: Callable[[Model], AsyncGenerator[dict | Result[A], None]]
-                 ) -> AsyncGenerator[dict | Result[A], None]:
-    """The try's chunks, then its Result, stamped."""
+async def stream(chain: list[Model], tries: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
+                 ) -> AsyncGenerator[dict | Final[A], None]:
+    """The try's chunks, then its Final, stamped."""
     started = time.monotonic()
-    candidate, result = chain[0], None
+    candidate, final = chain[0], None
     async with aclosing(tries(candidate)) as items:
         async for item in items:
-            if isinstance(item, Result):
-                result = item
+            if isinstance(item, Final):
+                final = item
             else:
                 yield item
-    assert result is not None, "a try yields its Result last"
-    result.value.latency = time.monotonic() - started
-    result.value.attempts = [Attempt(candidate.provider, candidate.model, result.value.latency)]
-    yield result
+    assert final is not None, "a try yields its Final last"
+    final.value.latency = time.monotonic() - started
+    final.value.attempts = [Attempt(candidate.provider, candidate.model, final.value.latency)]
+    yield final
 
 
 async def run(chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
     """stream() for a call with no chunks."""
-    async def tries(candidate: Model) -> AsyncGenerator[Result[A], None]:
-        yield Result(await once(candidate))
+    async def tries(candidate: Model) -> AsyncGenerator[Final[A], None]:
+        yield Final(await once(candidate))
 
     async with aclosing(stream(chain, tries)) as items:
         async for item in items:
-            if isinstance(item, Result):
+            if isinstance(item, Final):
                 return item.value
-    raise AssertionError("stream() ends with a Result or raises")
+    raise AssertionError("stream() ends with a Final or raises")
