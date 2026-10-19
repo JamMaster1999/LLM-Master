@@ -3,7 +3,7 @@
 This page defines the agent's tools: what each takes and returns, how the caller runs them, and
 the rules that keep a conversation's data in. Every tool is ours, a function tool the caller runs
 beside llm_master (SPEC.md); no provider-hosted tools. Message parts are in IO.md, skills in
-SKILLS.md, and the code in `agent/`.
+SKILLS-LIST.md, and the code in `agent/`.
 
 | tool | runs on | precedent | result |
 |---|---|---|---|
@@ -66,8 +66,8 @@ await box.aclose()
 - **`sources` and `urls`** carry state across rebuilds. `sources` are the source parts already
   sent, so numbering continues. `urls` are the URLs the user typed, which fetch_url may read.
 - **`llm`** is llm_master's facade, for the generate pair.
-- **`skills`** is the caller's folder of skill folders (SKILLS.md). Without skills, there's no
-  skill tool.
+- **`skills`** is the caller's folder of skill folders (SKILLS-LIST.md). Without skills, there's
+  no skill tool.
 - **`specs`** lists the built-in tools, then the caller's own, as openai function dicts. Each
   sets `strict` off, since OpenAI's strict mode makes every optional parameter required.
 - **Custom tools** are plain Python functions, sync or async. The schema comes from the signature
@@ -248,9 +248,8 @@ don't have.
 - **Reading.** A call returns the skill's instructions, wrapped as agentskills.io suggests, with
   its folder and its other files listed. The model reads those with read and runs them with bash.
 - **Skill folders** follow the Agent Skills spec. SKILL.md's `name` matches its folder, and its
-  `description` is at most 1024 characters. The frontmatter is one-line `key: value` pairs, not
-  YAML, and a folder holds real files, no symlinks. A broken skill fails the toolbox's
-  construction.
+  `description` is at most 1024 characters. PyYAML reads the frontmatter, and a folder holds real
+  files, no symlinks. A broken skill fails the toolbox's construction.
 
 ## Files
 

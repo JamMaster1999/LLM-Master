@@ -3,6 +3,8 @@ skill's instructions. A skill is an Agent Skills folder (agentskills.io): SKILL.
 frontmatter gives the name and description, and any scripts, references and assets beside it."""
 from pathlib import Path
 
+import yaml
+
 from agent.result import ToolError
 from agent.sandbox import SKILLS
 
@@ -47,25 +49,22 @@ class Skills:
 
 
 def _load(folder: Path) -> tuple[str, str]:
-    """A skill's description and instructions. Its frontmatter is read as `key: value` lines, not
-    YAML: PyYAML isn't a dependency, and our skills keep frontmatter that simple."""
+    """A skill's description and instructions, from SKILL.md's YAML frontmatter and the text after it."""
     if folder.is_symlink() or any(path.is_symlink() for path in folder.rglob("*")):
         raise ValueError(f"Skill {folder}: holds a symlink; the sandbox gets real files only")
     lines = (folder / "SKILL.md").read_text().splitlines()
     if lines[:1] != ["---"] or "---" not in lines[1:]:
         raise ValueError(f"Skill {folder}: SKILL.md must start with frontmatter between --- lines")
     end = lines.index("---", 1)
-    fields = {}
-    for line in lines[1:end]:
-        key, colon, value = line.partition(":")
-        if colon and not line[0].isspace():  # a nested map's lines, such as metadata's, are skipped
-            value = value.strip()
-            if value[:1] in (">", "|"):
-                raise ValueError(f"Skill {folder}: write {key.strip()} on one line, not as a YAML block")
-            quoted = len(value) > 1 and value[0] == value[-1] and value[0] in "\"'"
-            fields[key.strip()] = value[1:-1] if quoted else value
+    try:
+        fields = yaml.safe_load("\n".join(lines[1:end]))
+    except yaml.YAMLError as error:
+        raise ValueError(f"Skill {folder}: its frontmatter isn't valid YAML") from error
+    if not isinstance(fields, dict):
+        raise ValueError(f"Skill {folder}: its frontmatter must be a map of keys to values")
     if fields.get("name") != folder.name:
         raise ValueError(f"Skill {folder}: its name must be {folder.name}, the folder's name")
-    if not 0 < len(fields.get("description", "")) <= MAX_DESCRIPTION:
+    description = fields.get("description")
+    if not isinstance(description, str) or not 0 < len(description) <= MAX_DESCRIPTION:
         raise ValueError(f"Skill {folder}: its description is required, at most {MAX_DESCRIPTION} characters")
-    return fields["description"], "\n".join(lines[end + 1:]).strip()
+    return description, "\n".join(lines[end + 1:]).strip()

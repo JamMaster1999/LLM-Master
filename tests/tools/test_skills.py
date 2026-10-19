@@ -11,7 +11,7 @@ SKILLS = Path(__file__).parent / "skills"
 
 
 def test_skills_are_listed_in_the_tools_description(tmp_path):
-    spec = Toolbox("c", skills=SKILLS).specs[-1]["function"]
+    spec = Toolbox("c", skills=SKILLS).specs[-1]["function"]  # quiz's description is folded over two lines
     assert spec["description"].endswith(
         "Available skills:\n- greet: Greets a student by name: use when a lesson starts.\n- quiz: Writes a one-question quiz.")
     assert spec["parameters"]["properties"]["skill"]["enum"] == ["greet", "quiz"]
@@ -39,7 +39,8 @@ async def test_an_unknown_skill_is_an_error_result():
     "# Broken\n",
     "---\nname: other\ndescription: Named for another folder.\n---\n",
     f"---\nname: broken\ndescription: {'x' * 1025}\n---\n",
-    "---\nname: broken\ndescription: >-\n  Folded over\n  two lines.\n---\n",
+    "---\nname: [broken\n---\n",
+    "---\nJust words.\n---\n",
 ])
 def test_a_broken_skill_fails_construction(tmp_path, skill_md):
     (tmp_path / "broken").mkdir()
