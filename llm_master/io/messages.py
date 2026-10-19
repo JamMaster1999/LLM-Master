@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, JsonValue, model_validator
 
 from llm_master.config import UnsupportedField
 from llm_master.io.parts import Audio, File, Image, Part, Text, uri
-from llm_master.providers import API, PROVIDERS, ProviderName
+from llm_master.providers import API, ProviderName
 
 
 def new_id() -> str:
@@ -102,7 +102,7 @@ def assemble(messages: list[Message], provider: ProviderName, model: str, api: A
             wire |= {c.id: c.wire_id for c in m.calls or [] if c.wire_id}
     match api:
         case "completion":
-            return {"messages": _completion(messages, replays, wire, PROVIDERS[provider]["tool_media"], system)}
+            return {"messages": _completion(messages, replays, wire, system)}
         case "messages":
             return {"messages": _messages(messages, replays, wire)}
         case "responses":
@@ -113,8 +113,7 @@ def assemble(messages: list[Message], provider: ProviderName, model: str, api: A
             assert_never(api)
 
 
-def _completion(messages: list[Message], replays: list[bool], wire: dict, tool_media: bool,
-                system: str | None) -> list[dict]:
+def _completion(messages: list[Message], replays: list[bool], wire: dict, system: str | None) -> list[dict]:
     out: list[dict] = [{"role": "system", "content": system}] if system is not None else []
     for m, replay in zip(messages, replays):
         match m.role:
@@ -132,8 +131,6 @@ def _completion(messages: list[Message], replays: list[bool], wire: dict, tool_m
                                              for c in m.calls]
                 out.append(message)
             case "tool":
-                if not tool_media and isinstance(m.content, list) and any(not isinstance(p, Text) for p in m.content):
-                    raise UnsupportedField("completion", "messages", "this provider takes text-only tool results")
                 out.append({"role": "tool", "tool_call_id": wire.get(m.call_id, m.call_id),
                             "content": _each(m.content, _completion_part)})
             case _:

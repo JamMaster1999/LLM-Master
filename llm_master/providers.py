@@ -31,7 +31,6 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "openai": {
         "api": "responses",
         "sdk": "openai",
-        "tool_media": True,
         "requests": 10000,
         "interval": 60,
         "models": {
@@ -52,7 +51,6 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "anthropic": {
         "api": "messages",
         "sdk": "anthropic",
-        "tool_media": True,
         "requests": 4000,
         "interval": 60,
         "models": {},
@@ -60,7 +58,6 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "gemini": {
         "api": "completion",
         "sdk": "genai",
-        "tool_media": True,
         "price_id": "google",
         "requests": 10000,
         "interval": 60,
@@ -69,7 +66,6 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "vertexai": {
         "api": "completion",
         "sdk": "genai",
-        "tool_media": True,
         "price_id": "google",
         "requests": 10000,
         "interval": 60,
@@ -78,7 +74,6 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     "fireworks": {
         "api": "completion",
         "sdk": "openai",
-        "tool_media": False,
         "requests": 600,
         "interval": 60,
         "models": {},

@@ -92,8 +92,7 @@ def test_completion_spells_audio():
 @pytest.mark.parametrize("history, provider, model, api, error", [
     (AUDIO, *CLAUDE, "messages", "no audio input"),
     (AUDIO, *GPT, "responses", "no audio input"),
-    (HISTORY[:3] + [{"role": "user", "content": "x"}], "fireworks", "kimi-k3", "completion", "text-only"),
-], ids=["audio-messages", "audio-responses", "fireworks-tool-image"])
+], ids=["audio-messages", "audio-responses"])
 def test_content_without_a_spelling_raises(history, provider, model, api, error):
     with pytest.raises(UnsupportedField, match=error):
         assemble(validate(history), provider, model, api, None)
@@ -203,7 +202,8 @@ async def test_media_in_tool_results_is_read(provider, model, api, make, fmt, mi
 
 
 @pytest.mark.live
-async def test_fireworks_reads_text_results_of_other_models_calls(llm):
-    history = media_loop(Text(text="TOOL CODE: ZEBRA-7741"), "Reply with the looked-up code only.")
+async def test_fireworks_reads_an_image_result_of_another_models_call(llm):
+    result = Image(page("TOOL CODE: ZEBRA-7741", "PNG", "image/png"))
+    history = media_loop(result, "Reply with the looked-up code only.")
     text = await answer(llm, "fireworks", "accounts/fireworks/models/kimi-k3", "completion", history)
     assert "ZEBRA-7741" in text, text
