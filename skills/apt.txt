@@ -1,0 +1,6 @@
+# WeasyPrint lays out text with Pango and subsets fonts with HarfBuzz
+libpango-1.0-0
+libpangoft2-1.0-0
+libharfbuzz-subset0
+# Chinese, Japanese and Korean, for files and previews in those languages
+fonts-noto-cjk
