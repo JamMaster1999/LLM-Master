@@ -1,5 +1,5 @@
 """The facade: one held any-llm client per provider, so every call reuses its connection pool."""
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, get_args, overload
 
 import anthropic
@@ -7,7 +7,7 @@ import openai
 from any_llm import AnyLLM
 from genai_prices import UpdatePrices
 
-from llm_master import media
+from llm_master import fanout, media
 from llm_master.io.messages import Message
 from llm_master.io.parts import Image
 from llm_master.io.response import Response
@@ -60,6 +60,15 @@ class LLM:
         moderation checks the newest user message once, before any candidate (CONFIG.md field 12).
         """
         return await run(self, candidates, messages, stream, moderation)
+
+    async def async_query(self, candidates: Model | Sequence[Model], requests: Sequence[fanout.Request], *,
+                          concurrency: int = 128, progress_callback: Callable[[int, int], None] | None = None
+                          ) -> list[Response]:
+        """Many query() calls at once, at most concurrency in flight; the Responses in request order.
+
+        progress_callback(done, total) runs after each request finishes. See SPEC.md Fan-out.
+        """
+        return await fanout.run(self, candidates, requests, concurrency, progress_callback)
 
     async def image(self, candidates: Model | Sequence[Model], prompt: str, images: Sequence[Image] = ()) -> Media:
         """A new image, or an edit of the parent images. See SPEC.md Media."""
