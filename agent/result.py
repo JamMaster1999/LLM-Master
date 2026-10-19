@@ -22,7 +22,7 @@ class Result:
     files: list[UserFile] = field(default_factory=list)
     sources: list[dict] = field(default_factory=list)  # AI SDK source parts; sourceId is the number the model cites
     error: bool = False
-    waiting: Literal["question", "approval"] | None = None  # no result yet: the user replies, Toolbox.resume finishes it
+    waiting: Literal["question"] | None = None  # no result yet: the user replies, Toolbox.resume finishes it
 
     def text(self) -> str:
         """The content's text, for callers that take text only."""
