@@ -101,6 +101,8 @@ def recorded(provider_server, request):
             reply = exchanges[len(received) - 1]["response"]
             payload = reply["body"].encode() if "body" in reply else base64.b64decode(reply["base64"])
             handler.send_response(reply["status"])
+            for header, value in reply.get("headers", {}).items():  # a crafted Retry-After, say
+                handler.send_header(header, value)
             handler.send_header("Content-Type", reply["type"])
             handler.send_header("Content-Length", str(len(payload)))
             handler.end_headers()
