@@ -286,8 +286,10 @@ for a hash of the file's bytes.
 
 - `source.pdf`: the PDF, or LibreOffice's rendering of a document or deck.
 - `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule.
-- `transcript.jsonl`: per page `{"page", "text"}`, or per segment of a recording
-  `{"start", "end", "speaker", "text"}`.
+- `transcript.jsonl`: per page `{"page", "text"}`, or per line of a recording
+  `{"start", "end", "speaker", "text"}`. A line is a Whisper segment, split where the speaker
+  changes.
+- `duration`: a recording's length in seconds.
 
 Rules:
 
@@ -295,9 +297,10 @@ Rules:
   so a 20-page document or scan takes a few seconds.
 - **Recordings are transcribed on the host**, since the sandbox has no network: Together's Whisper,
   with speakers. The host needs `TOGETHER_API_KEY`.
-- **A view is built once**, in a temp folder renamed into place. A crash leaves nothing half-made,
-  and parallel builds don't collide. A changed file has a new hash and a new view, so nothing goes
-  stale.
+- **A view is built once**, from one snapshot of the file, in a temp folder renamed into place. A
+  file changed meanwhile can't land under another version's hash, a crash leaves nothing
+  half-made, and parallel builds don't collide. A changed file has a new hash and a new view, so
+  nothing goes stale.
 - **Over 100 pages**, a file gets no view. The model gets its path and a note that it's too long for
   read.
 - **A view that can't be built**, from a broken document or a failed transcription, is a note in the

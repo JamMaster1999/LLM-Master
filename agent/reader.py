@@ -45,7 +45,7 @@ class Problem(Exception):
 
 class Transcribe(Exception):
     """A recording has no view yet. The host makes it, since the sandbox has no network; the
-    message is the view's folder."""
+    arguments are the snapshot to transcribe and the view's folder."""
 
 
 def read(path: str, shown: str, offset: int | None, limit: int | None, pages: str | None) -> list[dict]:
@@ -86,7 +86,7 @@ def attach(path: str, shown: str) -> list[dict]:
         if family in ("pages", "audio"):
             text, source = _transcript(_view(path, family, shown))
             entries = _entries(source)
-            size = f"{len(entries)} pages" if family == "pages" else _clock(entries[-1]["end"] if entries else 0)
+            size = f"{len(entries)} pages" if family == "pages" else _clock(_duration(source))
             note = (f"Its transcript is too long to show here. Search {_shown(source)} with bash (rg, grep), and read "
                     f"{shown} with offset and limit" + (", or with pages to see page images." if family == "pages" else "."))
             return [_text(attached(f"{shown} ({size})", text if fits(text) else note))]
@@ -178,27 +178,32 @@ def _decode(path: str) -> str | None:
 
 
 def _view(path: str, family: str, shown: str) -> str:
-    """The file's view folder, built if it's missing (TOOLS.md, Files). A build happens in a temp
-    folder renamed into place, so a crash leaves no half-made view and parallel builds don't collide."""
+    """The file's view folder, built if it's missing (TOOLS.md, Files). One snapshot of the file is
+    hashed and built, so a file changed meanwhile can't land under another version's hash. A build
+    happens in a temp folder renamed into place, so a crash leaves no half-made view and parallel
+    builds don't collide."""
+    local = tempfile.mkdtemp()  # off the volume; the host removes it after a transcription
+    snapshot = f"{local}/{os.path.basename(path)}"
+    shutil.copyfile(path, snapshot)
     digest = hashlib.sha256(VIEW_VERSION)
-    with open(path, "rb") as f:
+    with open(snapshot, "rb") as f:
         digest.update(f.read())
     view = f"{VIEWS}/{digest.hexdigest()[:16]}"
-    if os.path.isdir(view):
-        return view
-    if family == "audio":
-        raise Transcribe(view)
+    if family == "audio" and not os.path.isdir(view):
+        raise Transcribe(snapshot, view)
     work = f"{view}.{uuid.uuid4().hex[:8]}"
-    os.makedirs(work)
     try:
-        (_pages_view if family == "pages" else _book_view)(path, shown, work)
-        try:
-            os.rename(work, view)
-        except OSError:  # a parallel build of the same file got there first
-            if not os.path.isdir(view):
-                raise
+        if not os.path.isdir(view):
+            os.makedirs(work)
+            (_pages_view if family == "pages" else _book_view)(snapshot, shown, work)
+            try:
+                os.rename(work, view)
+            except OSError:  # a parallel build of the same file got there first
+                if not os.path.isdir(view):
+                    raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(local)
     return view
 
 
@@ -220,17 +225,22 @@ def _pages_view(path: str, shown: str, out: str) -> None:
         raise Problem(f"{shown} has {total} pages, too long for read, which takes {MAX_VIEW_PAGES} at most. "
                       f"Use bash to work with it.")
     os.mkdir(f"{out}/pages")
-    render = subprocess.Popen(["pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(IMAGE_SIDE), pdf,
-                               f"{out}/pages/p"], stderr=subprocess.PIPE, text=True)  # runs beside Indra
-    [(_, pages)] = indra_ocr.convert_many([pdf])
+    with subprocess.Popen(["pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(IMAGE_SIDE), pdf,
+                           f"{out}/pages/p"], stderr=subprocess.PIPE, text=True) as render:  # runs beside Indra
+        try:
+            [(_, pages)] = indra_ocr.convert_many([pdf])
+        except BaseException:
+            render.kill()
+            raise
+        errors = render.communicate()[1]
     if isinstance(pages, Exception):
         raise Problem(f"Could not read {shown}: {pages}")
+    if render.returncode:
+        raise Problem(f"pdftoppm failed: {errors.strip() or 'no reason given'}")
     with open(f"{out}/transcript.jsonl", "w") as f:
         for index, result in pages:
             text = result.markdown if result.markdown is not None else result.text
             f.write(json.dumps({"page": index + 1, "text": text}, ensure_ascii=False) + "\n")
-    if render.wait():
-        raise Problem(f"pdftoppm failed: {render.stderr.read().strip() if render.stderr else 'no reason given'}")
     for name in os.listdir(f"{out}/pages"):  # p-01.jpg, padded to the page count's digits
         os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name[2:-4])}.jpg")
 
@@ -251,6 +261,12 @@ def _transcript(view: str) -> tuple[str, str]:
         return "\n\n".join(f"## Page {entry['page']}\n{entry['text']}" for entry in entries), source
     return "\n".join(f"[{_clock(entry['start'])}] " + (f"Speaker {entry['speaker']}: " if entry["speaker"] else "")
                      + entry["text"] for entry in entries), source
+
+
+def _duration(source: str) -> float:
+    """A recording's length in seconds, as Together measured it."""
+    with open(f"{os.path.dirname(source)}/duration") as f:
+        return float(f.read())
 
 
 def _entries(source: str) -> list[dict]:
@@ -380,4 +396,4 @@ if __name__ == "__main__":
     except Problem as problem:
         print(json.dumps({"problem": str(problem)}))
     except Transcribe as needed:
-        print(json.dumps({"transcribe": str(needed)}))
+        print(json.dumps({"transcribe": needed.args}))

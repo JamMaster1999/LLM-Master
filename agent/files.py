@@ -116,10 +116,10 @@ async def _reader(sandbox: Sandbox, do: str, path: str, **arguments) -> list[dic
     request = json.dumps({"do": do, "path": resolve(path), "shown": path, **arguments})
     answer = await _run_reader(sandbox, request, path)
     if "transcribe" in answer:
-        await _transcribe(sandbox, path, answer["transcribe"])
+        await _transcribe(sandbox, path, *answer["transcribe"])
         answer = await _run_reader(sandbox, request, path)
-    if "problem" in answer:
-        raise ToolError(answer["problem"])
+    if "content" not in answer:  # a problem, or a recording that changed while it was transcribed
+        raise ToolError(answer.get("problem") or f"{path} changed while it was being read. Read it again.")
     return answer["content"]
 
 
@@ -135,13 +135,17 @@ async def _run_reader(sandbox: Sandbox, request: str, path: str) -> dict:
     return json.loads(stdout)
 
 
-async def _transcribe(sandbox: Sandbox, path: str, view: str) -> None:
-    """A recording's view, which holds only its transcript, made as reader.py makes the others:
-    in a temp folder renamed into place."""
-    segments = await transcribe(posixpath.basename(path), await load(sandbox, path))
+async def _transcribe(sandbox: Sandbox, path: str, snapshot: str, view: str) -> None:
+    """A recording's view, its transcript and length, made from the reader's snapshot of it as
+    reader.py makes the others: in a temp folder renamed into place."""
+    try:
+        duration, lines = await transcribe(posixpath.basename(path), await sandbox.read(snapshot))
+    finally:
+        await sandbox.exec("rm", "-r", posixpath.dirname(snapshot), timeout=30)
     work = f"{view}.{uuid.uuid4().hex[:8]}"
     await sandbox.write(f"{work}/transcript.jsonl",
-                        "".join(json.dumps(segment, ensure_ascii=False) + "\n" for segment in segments).encode())
+                        "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines).encode())
+    await sandbox.write(f"{work}/duration", str(duration).encode())
     # a parallel build that got there first wins
     await sandbox.exec("bash", "-c", 'mv -T "$1" "$2" 2>/dev/null || rm -r "$1"', "bash", work, view, timeout=30)
 
