@@ -60,7 +60,7 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequenc
 
 
 async def _streamed(llm: "LLM", candidate: Model, history: list[Message]
-                    ) -> AsyncGenerator[dict | pipeline.Result[Response], None]:
+                    ) -> AsyncGenerator[dict | pipeline.Final[Response], None]:
     """One streamed try: start-step, its chunks, finish-step, then its Response. Each try marks its own steps."""
     api, request = build(candidate, history, stream=True)
     convert, opened = adapter(api), False
@@ -81,7 +81,7 @@ async def _streamed(llm: "LLM", candidate: Model, history: list[Message]
             yield {"type": "reset-step"}  # the browser drops this try's output
         raise
     yield {"type": "finish-step"}
-    yield pipeline.Result(response)
+    yield pipeline.Final(response)
 
 
 async def _send(llm: "LLM", candidate: Model, api: API, request: dict) -> Any:

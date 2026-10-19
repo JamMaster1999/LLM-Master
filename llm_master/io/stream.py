@@ -10,7 +10,7 @@ from openai.types.responses import Response as OpenAIResponse, ResponseStreamEve
 
 from llm_master.io.messages import new_id
 from llm_master.io.response import Response, arguments
-from llm_master.pipeline import Result
+from llm_master.pipeline import Final
 from llm_master.providers import API
 
 
@@ -22,7 +22,7 @@ class Stream:
     belongs to the iterating side.
     """
 
-    def __init__(self, events: AsyncGenerator[dict | Result[Response], None]):
+    def __init__(self, events: AsyncGenerator[dict | Final[Response], None]):
         self._events = events
         self.response: Response | None = None
 
@@ -30,7 +30,7 @@ class Stream:
         # a loop that dies early drops this generator, and its finalizer closes the events
         async with aclosing(self._events) as events:
             async for event in events:
-                if isinstance(event, Result):
+                if isinstance(event, Final):
                     self.response = event.value
                 else:
                     yield event
