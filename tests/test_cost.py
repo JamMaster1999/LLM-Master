@@ -18,10 +18,17 @@ async def openai_edit(llm):
     return await llm.image(OPENAI_IMAGE, "Make the square blue.", [parent()])
 
 
-async def openai_audio(llm):
+async def transcribed(llm, candidate):
     spoken = Audio(str(FIXTURES / "spoken.mp3"))
-    return await llm.query(Model(provider="openai", model="gpt-audio-mini"),
-                           [{"role": "user", "content": [Text(text="Transcribe this audio."), spoken]}])
+    return await llm.query(candidate, [{"role": "user", "content": [Text(text="Transcribe this audio."), spoken]}])
+
+
+async def openai_audio(llm):
+    return await transcribed(llm, Model(provider="openai", model="gpt-audio-mini"))
+
+
+async def gemini_audio(llm):  # its audio input costs twice its text
+    return await transcribed(llm, Model(provider="gemini", model="gemini-3.1-flash-lite"))
 
 
 async def anthropic_cache_1h(llm):  # streamed: a stream's usage is priced like a plain call's
@@ -40,6 +47,7 @@ async def anthropic_cache_1h(llm):  # streamed: a stream's usage is priced like 
     (openai_edit, "openai", "gpt-image-2",
      {"input_tokens": 27, "input_image_tokens": 16, "output_tokens": 196, "output_image_tokens": 196}),
     (openai_audio, "openai", "gpt-audio-mini", {"input_tokens": 32, "input_audio_tokens": 16, "output_tokens": 6}),
+    (gemini_audio, "google", "gemini-3.1-flash-lite", {"input_tokens": 48, "input_audio_tokens": 42, "output_tokens": 6}),
     (anthropic_cache_1h, "anthropic", "claude-haiku-5-5",
      {"input_tokens": 12555, "cache_write_tokens": 12551, "cache_write_1h_tokens": 12551, "output_tokens": 23}),
 ], ids=lambda value: getattr(value, "__name__", None))

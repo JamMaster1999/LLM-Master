@@ -99,9 +99,6 @@ discount manually.
     and priced gemini-3.8-flash-tts as gemini-3.8-flash; the refreshed prices had all three.
   - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
     no caller sets `service_tier` yet.
-  - Gemini's audio input prices at the text rate, half its price on gemini-3.1-flash-lite: the
-    locked any-llm build drops Gemini's input breakdown. Fork PR #19's second commit (80f4287)
-    reports it, and `input_audio` fills once that commit reaches the build.
 
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.
