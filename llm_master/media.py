@@ -79,6 +79,8 @@ async def _make(call: str, candidates: Model | Sequence[Model], once: Callable[[
     for candidate in chain:
         if set_fields := candidate.config.model_dump(exclude_defaults=True).keys() - {"timeout"}:
             raise UnsupportedField(call, min(set_fields), "media calls take only timeout")
+        if candidate.extra.get("n", 1) != 1:  # a Media holds one file: more would be dropped unseen
+            raise UnsupportedField(call, "n", "a media call makes one file; make one call per file")
     return await pipeline.run(chain, once)
 
 
