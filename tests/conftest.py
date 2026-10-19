@@ -18,6 +18,7 @@ if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
         _key, _sep, _value = _line.partition("=")
         if _sep:
             os.environ.setdefault(_key.strip(), _value.strip().strip('"').strip("'"))
+POSTHOG_KEY = os.environ.pop("POSTHOG_API_KEY", None)  # no call sends telemetry unless its test sets the key
 
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"

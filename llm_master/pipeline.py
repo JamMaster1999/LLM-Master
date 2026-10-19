@@ -1,8 +1,9 @@
 """The pipeline every call runs through: query(), image() and speech() hand it one try per candidate.
 
 A try is an async generator: a streamed try yields its chunks, and every try yields its Final last. The
-pipeline stamps every attempt, the whole call's latency and its cost on that CallReturn. Candidates run in
-order; per try, the rate limiter first, then the try, then retries or the next candidate (SPEC.md Failures).
+pipeline stamps every attempt, the whole call's latency and its cost on that CallReturn, and sends the call's
+telemetry. Candidates run in order; per try, the rate limiter first, then the try, then retries or the next
+candidate (SPEC.md Failures).
 """
 import asyncio
 import random
@@ -19,6 +20,7 @@ from any_llm.exceptions import GatewayTimeoutError, ProviderError, RateLimitErro
 
 from llm_master.cost import price
 from llm_master.io.response import Attempt, CutCall, Usage
+from llm_master.telemetry import Call
 from llm_master.types import Model
 
 if TYPE_CHECKING:
@@ -52,8 +54,8 @@ def chain(candidates: Model | Sequence[Model]) -> list[Model]:
     return chain
 
 
-async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGenerator[dict | Final[A], None]]
-                 ) -> AsyncGenerator[dict | Final[A], None]:
+async def stream(llm: "LLM", call: Call, chain: list[Model],
+                 once: Callable[[Model], AsyncGenerator[dict | Final[A], None]]) -> AsyncGenerator[dict | Final[A], None]:
     """Each try's chunks, then the answering try's Final, stamped. Each try waits for the limiter first."""
     started, attempts = time.monotonic(), []
     for candidate in chain:
@@ -82,17 +84,20 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
             final.value.latency = ended - started
             final.value.attempts = attempts
             final.value.cost = price(final.value.usage, candidate.provider, candidate.model)
+            llm.telemetry.answered(call, final.value)
             yield final
             return
-    raise _last(attempts)
+    error = _last(attempts)
+    llm.telemetry.failed(call, attempts, time.monotonic() - started, error)
+    raise error
 
 
-async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
+async def run(llm: "LLM", call: Call, chain: list[Model], once: Callable[[Model], Awaitable[A]]) -> A:
     """stream() for a call with no chunks."""
     async def streamed(candidate: Model) -> AsyncGenerator[Final[A], None]:
         yield Final(await once(candidate))
 
-    async with aclosing(stream(llm, chain, streamed)) as items:
+    async with aclosing(stream(llm, call, chain, streamed)) as items:
         async for item in items:
             if isinstance(item, Final):
                 return item.value
