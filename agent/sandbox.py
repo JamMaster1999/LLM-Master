@@ -38,8 +38,7 @@ class Sandbox:
 
     def __init__(self, conversation_id: str, skills: str | Path | None = None) -> None:
         self.conversation_id = conversation_id
-        # copy=False, the default: Modal adds the files as the sandbox starts, without a build
-        self.image = IMAGE.add_local_dir(skills, SKILLS) if skills else IMAGE
+        self.image = image(Path(skills)) if skills else IMAGE
         self._box: modal.Sandbox | None = None
         self._lock = asyncio.Lock()
 
@@ -102,6 +101,19 @@ class Sandbox:
 
     async def write(self, path: str, data: bytes) -> None:
         await (await self.running()).filesystem.write_bytes.aio(data, resolve(path))
+
+
+def image(skills: Path) -> modal.Image:
+    """IMAGE with the packages the skills list, apt.txt's Debian ones and requirements.txt's pip ones,
+    and the skills themselves at /skills."""
+    built = IMAGE
+    if (apt := skills / "apt.txt").is_file():  # one package per line; # starts a comment
+        packages = [line.split("#")[0].strip() for line in apt.read_text().splitlines()]
+        built = built.apt_install(*filter(None, packages))
+    if (pip := skills / "requirements.txt").is_file():
+        built = built.uv_pip_install(requirements=[str(pip)])
+    # copy=False, the default: Modal adds the files as the sandbox starts, without a build
+    return built.add_local_dir(skills, SKILLS)
 
 
 def resolve(path: str) -> str:

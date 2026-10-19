@@ -115,7 +115,8 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **The image** is Debian slim (bookworm) with Python 3.13, LibreOffice 25.2 from
   bookworm-backports, fonts that match Calibri and Cambria, Noto, poppler, pandoc, Pillow, openpyxl,
   charset-normalizer, and Indra OCR with its weights. Nothing installs at run time, so a skill that
-  needs a package adds it to the image. A new image reaches a conversation when its sandbox next
+  needs a package lists it in the skills folder: `apt.txt` for Debian packages, `requirements.txt`
+  for pip, one per line, `#` for comments. A new image reaches a conversation when its sandbox next
   starts.
 - **4 CPUs**, so Indra reads a document's pages in parallel.
 
