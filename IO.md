@@ -248,7 +248,7 @@ attached.
 
 A tool call the model didn't finish, cut off by `max_tokens` or a refusal, can't run, so the call
 raises a typed `CutCall` instead of returning it. An OpenAI response with status `failed` raises a
-`ProviderError`.
+`ProviderError` when a retry might help, else an `InvalidRequestError` (SPEC.md Failures).
 
 `messages + [response.message] + [tool results]` is the next call's history. Saving, reloading
 and calling again loses nothing, because `native` is stored as raw JSON rather than SDK objects;
@@ -318,9 +318,9 @@ For each model call, llm_master yields:
 
 The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
 and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
-call raises; llm_master never sends an `error` chunk. A stream cut off before it finishes raises a
-typed `ProviderError` after its `reset-step`. A half-streamed tool call can't be run: tools run
-from `response.message.calls` after the loop ends.
+call raises; llm_master never sends an `error` chunk. A stream cut off before it finishes is a
+typed `ProviderError`: its step resets and the try runs again (SPEC.md Failures). A half-streamed
+tool call can't be run: tools run from `response.message.calls` after the loop ends.
 
 To abort, leave the loop or cancel the task that iterates it: the provider's stream closes.
 `await stream.aclose()` closes it at once, from the iterating task.
