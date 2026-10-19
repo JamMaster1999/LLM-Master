@@ -35,8 +35,13 @@ def pytest_xdist_auto_num_workers(config):
     return os.cpu_count() if config.option.markexpr == "not live" else 32
 
 
-def pytest_collection_modifyitems(items):
-    """Live tests first, so no parallel worker starts a slow one last."""
+def pytest_collection_modifyitems(config, items):
+    """Agentic tests only when -m names them. Live tests first, so no parallel worker starts a slow
+    one last."""
+    if "agentic" not in config.option.markexpr:
+        if skipped := [item for item in items if item.get_closest_marker("agentic")]:
+            config.hook.pytest_deselected(items=skipped)
+            items[:] = [item for item in items if not item.get_closest_marker("agentic")]
     items.sort(key=lambda item: item.get_closest_marker("live") is None)
 
 
