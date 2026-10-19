@@ -260,7 +260,8 @@ user sees `reasoning` is the caller's choice when rendering. The other fields de
 call and never go into history:
 
 - `parsed` — the `response_format` object when the model stopped normally: an instance for a
-  schema class, the parsed JSON for a schema dict or `type="json"`. Otherwise None.
+  schema class, the parsed JSON for a schema dict or `type="json"`. None otherwise, and when the
+  text doesn't fit the schema; the text stays in `message.content` for the caller to judge.
 - `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
   any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
 - `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
