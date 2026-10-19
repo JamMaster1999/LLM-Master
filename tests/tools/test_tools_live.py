@@ -1,12 +1,13 @@
 """Every sandbox and web tool through Toolbox.run, on real Modal and Exa."""
 import asyncio
 import base64
+import re
 import uuid
 
 import pytest
 
 from agent import Toolbox
-from agent.reader import MAX_BYTES
+from agent.reader import IMAGE_BYTES, MAX_BYTES, MAX_LINES
 from agent.sandbox import delete
 
 pytestmark = pytest.mark.live
@@ -82,6 +83,14 @@ async def test_read_scales_large_images_and_passes_small_ones(box):
     assert small[1]["mime"] == "image/png"
 
 
+async def test_read_sends_a_transparent_image_too_big_as_png_as_jpeg(box):
+    await run(box, "bash", command="python -c \"import os; from PIL import Image; "
+                                   "Image.frombytes('RGBA', (1568, 1568), os.urandom(1568 * 1568 * 4)).save('noise.png')\"")
+    header, image = parts(await run(box, "read", path="noise.png"))  # 9.8 MB as PNG
+    assert header["text"] == "Read image file [image/jpeg]"
+    assert len(base64.b64decode(image["data"])) <= IMAGE_BYTES
+
+
 async def test_read_turns_spreadsheets_into_csv(box):
     await run(box, "write", path="small.csv", content="name,score\nAda,9\n")
     assert (await run(box, "read", path="small.csv")).content == "## small.csv\nname,score\nAda,9"
@@ -122,7 +131,22 @@ async def test_bash_cuts_long_output_and_keeps_the_rest_for_read(box):
     assert one_line.text().endswith("]") and "[Showing the last 50.0KB of line 1. Full output: .agent/bash-" in one_line.text()
 
 
-async def test_run_program_calls_host_tools_and_the_host_refuses_the_rest(box):
+async def test_bash_output_stays_within_limits_when_the_model_swaps_cat(box):
+    """The model is root in the sandbox, so the host cuts again what the sandbox's tail sends."""
+    await run(box, "bash", command="printf '#!/bin/sh\\nyes | head -c 1000000\\n' > /usr/local/bin/cat && "
+                                   "chmod +x /usr/local/bin/cat")
+    text = (await run(box, "bash", command="echo hi")).text()
+    assert len(text.encode()) <= MAX_BYTES and text.count("\n") < MAX_LINES, len(text.encode())
+
+
+async def test_a_json_py_in_the_workspace_breaks_neither_read_nor_programs(box):
+    await run(box, "write", path="json.py", content="raise SystemExit('not the json module')\n")
+    assert (await run(box, "read", path="json.py")).content == "raise SystemExit('not the json module')"
+    assert (await run(box, "run_program", code="print('ok')")).content == "ok"
+
+
+async def test_run_program_calls_host_tools_and_the_host_refuses_the_rest(box, exa):
+    exa[WIKI] = "light " * 20_000  # the stand-in's page, longer than a pipe's 64 KB
     code = """
 with open("report.txt", "w") as f:
     f.write("Quiz report")
@@ -150,6 +174,21 @@ print(results.count("Sent note.txt to the user."), {str(r) for r in results if i
     assert result.content == "100 {'run_program allows at most 100 tool calls.'}"
 
 
+async def test_run_program_sends_the_user_at_most_50_mb_of_files(box):
+    code = """
+with open("big.bin", "wb") as f:
+    f.write(bytes(30 * 1024 * 1024))
+for _ in range(2):
+    try:
+        print(await deliver_file({"path": "big.bin"}))
+    except ToolError as error:
+        print(error)
+"""
+    result = await run(box, "run_program", code=code)
+    assert result.content == "Sent big.bin to the user.\nrun_program sends the user at most 50.0MB of files."
+    assert [file.name for file in result.files] == ["big.bin"]
+
+
 async def test_run_program_shows_the_programs_traceback(box):
     result = await run(box, "run_program", code="x = 1\nraise ValueError('no grades yet')\n")
     assert result.error
@@ -175,10 +214,22 @@ async def test_web_search_returns_numbered_results_from_exa():
     assert [part["sourceId"] for part in result.sources] == [str(n) for n in range(1, len(result.sources) + 1)]
 
 
+def saved(result) -> str:
+    """The path a cut result's notice names."""
+    match = re.search(r"The whole result is at (\S+); use read or bash for the rest\.]$", result.text())
+    assert match, result.text()[-300:]
+    return match[1]
+
+
 async def test_fetch_url_returns_the_page_and_keeps_what_doesnt_fit(box):
     page = await run(box, "fetch_url", urls=[WIKI])
-    notice = page.text().rsplit("\n", 1)[1]
     assert page.text().startswith(f"[1] Title: Photosynthesis\nURL: {WIKI}")
-    saved = notice.removeprefix("[The whole result is at ").removesuffix(".]")
-    assert saved.startswith(".agent/fetch_url-")
-    assert (await run(box, "read", path=saved, limit=1)).text().startswith("[1] Title: Photosynthesis")
+    assert saved(page).startswith(".agent/fetch_url-")
+    assert (await run(box, "read", path=saved(page), limit=1)).text().startswith("[1] Title: Photosynthesis")
+
+
+async def test_a_long_error_on_one_line_still_shows_its_start(box):
+    refused = await run(box, "fetch_url", urls=[f"https://unseen.example/{n:05d}" for n in range(3000)])  # 90 KB
+    start = refused.text().rsplit("\n\n", 1)[0]
+    assert refused.error and start.startswith("fetch_url reads only URLs") and len(start.encode()) == MAX_BYTES
+    assert (await run(box, "bash", command=f"tail -c 29 {saved(refused)}")).content == "Use web_search to find pages."

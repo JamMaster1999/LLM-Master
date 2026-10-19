@@ -1,6 +1,5 @@
 """What a tool hands back: content for the model, and files and sources for the user's UI."""
 from dataclasses import dataclass, field
-from typing import Literal
 
 
 class ToolError(Exception):
@@ -22,7 +21,7 @@ class Result:
     files: list[UserFile] = field(default_factory=list)
     sources: list[dict] = field(default_factory=list)  # AI SDK source parts; sourceId is the number the model cites
     error: bool = False
-    waiting: Literal["question"] | None = None  # no result yet: the user replies, Toolbox.resume finishes it
+    waiting: bool = False  # no result yet: the user answers, Toolbox.resume finishes it
 
     def text(self) -> str:
         """The content's text, for callers that take text only."""

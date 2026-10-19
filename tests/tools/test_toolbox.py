@@ -1,9 +1,9 @@
-"""The toolbox's own behaviour, for the tools that need neither Modal nor Exa."""
-import inspect
-
+"""The toolbox's own behaviour, for the tools that need neither Modal nor Exa, and its schemas at each provider."""
 import pytest
+from pydantic import TypeAdapter
 
-from agent import Toolbox, files, loop, shell, web
+from agent import Toolbox
+from llm_master.types import Config, Model
 
 PLAN = [{"step": "Draft the quiz", "status": "in_progress"}, {"step": "Write the key", "status": "pending"}]
 QUESTIONS = [{"question": "Which grade level?", "header": "Grade", "multiSelect": False,
@@ -18,11 +18,11 @@ async def test_todo_acknowledges_the_plan():
 
 async def test_ask_user_waits_for_the_users_answers():
     box = Toolbox("c")
-    assert (await box.run("ask_user", {"questions": QUESTIONS})).waiting == "question"
-    assert (await box.resume("ask_user", {"questions": QUESTIONS}, {"Which grade level?": "Grade 9"})).content == (
+    assert (await box.run("ask_user", {"questions": QUESTIONS})).waiting
+    assert box.resume({"Which grade level?": "Grade 9"}).content == (
         'User has answered your questions: "Which grade level?"="Grade 9". '
         "You can now continue with the user's answers in mind.")
-    assert (await box.resume("ask_user", {"questions": QUESTIONS}, None)).content == "User declined to answer questions"
+    assert box.resume(None).content == "User declined to answer questions"
 
 
 async def test_ask_user_refuses_too_few_questions_or_options():
@@ -41,16 +41,36 @@ async def test_unknown_tools_and_bad_arguments_come_back_as_errors():
         assert invalid.error and invalid.text().startswith("Invalid arguments for todo: plan"), invalid.content
 
 
-BOUND = {"self", "sandbox", "run", "tools"}  # what the toolbox binds before the model's arguments
+def shape(schema: dict, defs: dict) -> dict:
+    """The structure a schema gives a value, without its words: the type, enum, fields and items. A
+    union counts as its first member that isn't null: X | None is an optional X, and edit's other
+    members are the repairs pi accepts."""
+    schema = defs[schema["$ref"].split("/")[-1]] if "$ref" in schema else schema
+    if "anyOf" in schema:
+        return shape(next(member for member in schema["anyOf"] if member.get("type") != "null"), defs)
+    out = {key: schema[key] for key in ("type", "enum") if key in schema}
+    if "properties" in schema:
+        out["properties"] = {name: shape(field, defs) for name, field in schema["properties"].items()}
+        out["required"] = sorted(schema.get("required", []))
+    if "items" in schema:
+        out["items"] = shape(schema["items"], defs)
+    return out
 
 
-@pytest.mark.parametrize("spec, function", [
-    (files.READ, files.read), (files.WRITE, files.write), (files.EDIT, files.edit), (shell.BASH, shell.bash),
-    (shell.RUN_PROGRAM, shell.run_program), (web.SEARCH, web.Web.search), (web.FETCH, web.Web.fetch),
-    (files.DELIVER, files.deliver_file), (loop.TODO, loop.todo), (loop.ASK_USER, loop.ask_user)])
-def test_each_schema_matches_its_function(spec, function):
-    """The schema the model reads and the signature its arguments are checked against are written
+def test_each_schema_matches_its_function():
+    """The schema the model reads and the type hints its arguments are checked against are written
     apart, so this keeps them in step."""
-    schema, parameters = spec["function"]["parameters"], inspect.signature(function).parameters
-    assert set(schema["properties"]) == set(parameters) - BOUND
-    assert set(schema["required"]) == {name for name, p in parameters.items() if p.default is p.empty} - BOUND
+    for name, (spec, function) in Toolbox("c").tools.items():
+        hinted = TypeAdapter(function).json_schema()
+        assert shape(spec["function"]["parameters"], {}) == shape(hinted, hinted.get("$defs", {})), name
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("candidate", [Model(provider="openai", model="gpt-5.6-luna"),
+                                       Model(provider="anthropic", model="claude-haiku-5-5"),
+                                       Model(provider="gemini", model="gemini-3.5-flash"),
+                                       Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash")],
+                         ids=lambda m: m.provider)
+async def test_every_provider_takes_the_tools(candidate, llm):
+    candidate = candidate.model_copy(update={"config": Config(tools=Toolbox("c").specs, max_tokens=64)})
+    await llm.query(candidate, [{"role": "user", "content": "Reply with the word ok."}])

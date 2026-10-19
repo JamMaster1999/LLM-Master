@@ -110,11 +110,21 @@ def _image(path: str) -> list[dict]:
     else:  # too big, turned, or a format providers don't take: redraw it, JPEG unless it's transparent
         image = ImageOps.exif_transpose(image)
         image.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
-        alpha = image.mode in ("RGBA", "LA") or "transparency" in image.info
-        out, mime = io.BytesIO(), "image/png" if alpha else "image/jpeg"
-        image.convert("RGBA" if alpha else "RGB").save(out, "PNG" if alpha else "JPEG", quality=85)
-        data = out.getvalue()
+        data, mime = b"", "image/png"
+        if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+            image = image.convert("RGBA")
+            data = _encoded(image, "PNG")
+        if not data or len(data) > IMAGE_BYTES:  # a transparent photo can top 9 MB as PNG: JPEG it on white
+            if image.mode == "RGBA":  # dropping alpha alone would show whatever color the clear areas hide
+                image = Image.alpha_composite(Image.new("RGBA", image.size, "white"), image)
+            data, mime = _encoded(image.convert("RGB"), "JPEG"), "image/jpeg"
     return [_text(f"Read image file [{mime}]"), _image_part(data, mime)]
+
+
+def _encoded(image, format: str) -> bytes:
+    out = io.BytesIO()
+    image.save(out, format, quality=85)
+    return out.getvalue()
 
 
 def _pages(path: str, shown: str, first: int, count: int, work: str) -> list[dict]:

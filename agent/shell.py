@@ -11,13 +11,13 @@ from typing import Annotated
 from modal.exception import ConflictError
 from pydantic import Field
 
-from agent.reader import MAX_BYTES, MAX_LINES
+from agent.reader import MAX_BYTES, MAX_FILE, MAX_LINES, format_size
 from agent.result import Result
 from agent.sandbox import SCRATCH, Sandbox
 
 MAX_CALLS = 100  # tool calls one program may make
 MAX_CALL_BYTES = 1024 * 1024  # one call's JSON line; a program sending more is stopped
-MAX_ARGUMENT = 60_000  # characters; Modal takes at most 65,536 in one exec argument
+MAX_ARGUMENT = 60_000  # bytes; Modal takes 65,536 characters across an exec's arguments, Linux 131,072 bytes in each
 STDIN_CHUNK = 16 * 1024 * 1024  # Modal buffers at most this much stdin between drains
 Timeout = Annotated[float, Field(gt=0, le=600)]
 _RUNNER = resources.files("agent").joinpath("runner.py").read_text()
@@ -68,7 +68,7 @@ tail_log "$3"
 async def bash(sandbox: Sandbox, command: str, timeout: Timeout = 120) -> Result:
     name = uuid.uuid4().hex[:8]
     log = f"{SCRATCH}/bash-{name}.log"
-    if len(command) > MAX_ARGUMENT:  # Modal caps one exec argument, and a heredoc can pass it
+    if len(command.encode()) > MAX_ARGUMENT:  # Modal and Linux cap exec arguments, and a heredoc can pass that
         await sandbox.write(f"/tmp/bash-{name}.sh", command.encode())
         command = f"source /tmp/bash-{name}.sh"
     _, stdout, _ = await sandbox.exec("bash", "-c", _BASH, "bash", command, f"{timeout:g}", log,
@@ -86,7 +86,8 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
     program, log = f"/tmp/program-{name}.py", f"{SCRATCH}/program-{name}.log"
     await sandbox.write(program, code.encode())
     start = time.monotonic()
-    process = await sandbox.start("python", "-u", "-c", _RUNNER, program, log, json.dumps(tools), timeout=timeout)
+    # -I keeps /workspace off the import path, so a random.py there can't break the runner
+    process = await sandbox.start("python", "-I", "-u", "-c", _RUNNER, program, log, json.dumps(tools), timeout=timeout)
     files, sources, lock = [], [], asyncio.Lock()
 
     async def answer(request: dict, number: int) -> None:
@@ -96,6 +97,8 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
             result = Result(f"run_program allows at most {MAX_CALLS} tool calls.", error=True)
         else:
             result = await run(request["name"], request["arguments"])
+            if sum(len(file.data) for file in files + result.files) > MAX_FILE:  # all on the host until the program ends
+                result = Result(f"run_program sends the user at most {format_size(MAX_FILE)} of files.", error=True)
         files.extend(result.files)
         sources.extend(result.sources)
         reply = {"id": request["id"], "error" if result.error else "result": result.text()}
@@ -136,6 +139,7 @@ def _output(tailed: bytes, log: str, code: int, elapsed: float, timeout: float, 
     ended."""
     counts, shown = tailed.split(b"\n", 1)
     total, size = map(int, counts.split())
+    shown = shown[-MAX_BYTES:]  # tail_log cut it already, unless the model, root in there, swapped the tools it runs
     cut = total > MAX_LINES or size > MAX_BYTES  # tail_log kept the log and sent only its tail
     byte_cut = cut and len(shown) == MAX_BYTES
     lines = shown.decode(errors="replace").split("\n")
@@ -143,6 +147,7 @@ def _output(tailed: bytes, log: str, code: int, elapsed: float, timeout: float, 
         lines.pop()
     if byte_cut and len(lines) > 1:  # tail -c landed inside a line: drop what's left of it
         lines.pop(0)
+    lines = lines[-MAX_LINES:]
     out = "\n".join(lines) or "(no output)"
     if cut:
         name = log.removeprefix("/workspace/")

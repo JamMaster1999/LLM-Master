@@ -7,7 +7,7 @@ from typing import Annotated
 
 from modal.exception import SandboxFilesystemError, SandboxFilesystemNotFoundError
 from modal.types import FileType
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
 from agent.reader import MAX_FILE, format_size
@@ -73,11 +73,15 @@ class Edit(TypedDict):
     newText: str
 
 
+_EDITS: TypeAdapter[list[Edit] | Edit] = TypeAdapter(list[Edit] | Edit)
+
+
 async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] | None = None,
                limit: Annotated[int, Field(ge=1)] | None = None) -> Result:
     request = json.dumps({"path": resolve(path), "shown": path, "offset": offset, "limit": limit})
     try:
-        code, stdout, stderr = await sandbox.exec("python", "-c", _READER, request, timeout=READ_TIMEOUT)
+        # -I keeps /workspace off the import path, so a json.py there can't replace the reader's
+        code, stdout, stderr = await sandbox.exec("python", "-I", "-c", _READER, request, timeout=READ_TIMEOUT)
     except TimeoutError:
         raise ToolError(f"Reading {path} took over {READ_TIMEOUT} seconds.") from None
     if code:  # a file its library couldn't open
@@ -101,14 +105,10 @@ async def write(sandbox: Sandbox, path: str, content: str) -> str:
 async def edit(sandbox: Sandbox, path: str, edits: list[Edit] | Edit | str) -> str:
     if isinstance(edits, str):  # pi: some models send the array as a JSON string
         try:
-            edits = json.loads(edits)
-        except json.JSONDecodeError:
+            edits = _EDITS.validate_json(edits)
+        except ValidationError:
             raise ToolError("Edit tool input is invalid. edits must be an array of {oldText, newText}.") from None
-    if isinstance(edits, dict):  # and some send one edit without the array
-        edits = [edits]
-    if not isinstance(edits, list) or not all(
-            isinstance(e, dict) and isinstance(e.get("oldText"), str) and isinstance(e.get("newText"), str) for e in edits):
-        raise ToolError("Edit tool input is invalid. edits must be an array of {oldText, newText}.")
+    edits = edits if isinstance(edits, list) else [edits]  # and some send one edit without the array
     try:
         text = (await _load(sandbox, path)).decode()
     except UnicodeDecodeError:

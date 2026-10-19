@@ -15,8 +15,8 @@ TODO = {"type": "function", "function": {
         "plan": {"type": "array", "description": "The list of steps", "items": {"type": "object", "properties": {
             "step": {"type": "string", "description": "Task step text."},
             "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "Step status."},
-        }, "required": ["step", "status"], "additionalProperties": False}},
-    }, "required": ["plan"], "additionalProperties": False}}}
+        }, "required": ["step", "status"]}},
+    }, "required": ["plan"]}}}
 
 ASK_USER = {"type": "function", "function": {
     "name": "ask_user",
@@ -76,7 +76,7 @@ def todo(plan: list[Step], explanation: str | None = None) -> str:
 
 
 def ask_user(questions: Annotated[list[Question], Field(min_length=1, max_length=4)]) -> Result:
-    return Result("", waiting="question")
+    return Result("", waiting=True)
 
 
 def answered(answers: dict[str, str] | None) -> str:

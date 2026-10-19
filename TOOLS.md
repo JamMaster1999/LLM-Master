@@ -65,7 +65,8 @@ await box.aclose()
 - **`sources` and `urls`** carry state across rebuilds. `sources` are the source parts already
   sent, so numbering continues. `urls` are the URLs the user typed, which fetch_url may read.
 - **`llm`** is llm_master's facade, for the generate pair.
-- **`specs`** lists the built-in tools, then the caller's own, as openai function dicts.
+- **`specs`** lists the built-in tools, then the caller's own, as openai function dicts. Each
+  sets `strict` off, since OpenAI's strict mode makes every optional parameter required.
 - **Custom tools** are plain Python functions, sync or async. The schema comes from the signature
   and docstring, as in CONFIG.md field 6. One returns a string, a `Result`, or any JSON value, and
   raises `ToolError` to tell the model it failed.
@@ -85,12 +86,11 @@ await box.aclose()
 | `files` | `UserFile(name, mime, data)` for the user. The caller hosts them on the files origin and sends AI SDK `file` parts |
 | `sources` | AI SDK `source-url` parts. `sourceId` is the number the model cites |
 | `error` | the tool failed; `content` says why |
-| `waiting` | `"question"` when the call waits for the user |
+| `waiting` | the call waits for the user; only ask_user does |
 
 A waiting call has no result yet. The loop ends the turn, and the browser asks the user (AI SDK's
-client-side tools). The next request brings the reply, and `box.resume(name, arguments, reply)`
-finishes the call before anything else joins the history. A request without a reply declines it
-with None.
+client-side tools). The next request brings the reply, and `box.resume(reply)` finishes the call
+before anything else joins the history. A request without a reply declines it with None.
 
 ## The sandbox
 
@@ -115,12 +115,14 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **Paths** are relative to `/workspace`, the conversation's folder in its sandbox, or absolute.
   Only `/workspace` survives the sandbox stopping. Host tools' paths name sandbox files too.
 - **Long text** is cut at 2000 lines or 50 KB, pi's limits, with a notice saying how to read on.
-  bash and run_program keep the end. Every other tool keeps the start and saves the whole text in
-  the sandbox for read. read pages through files itself. Calls inside a program aren't cut.
+  bash and run_program keep the end. Every other tool keeps the start, mid-line if it must, and
+  saves the whole text in the sandbox. read pages through files itself. Calls inside a program
+  aren't cut.
 - **Citations** are numbers, one count across the conversation. The model writes `[3]` where it
   uses source 3.
-- **Images** a tool returns are at most 1568 px on the long side, and JPEG unless transparent.
-  That stays under the 2000 px Anthropic allows once a request holds more than 20 images.
+- **Images** a tool returns are at most 1568 px on the long side, and JPEG unless transparent. A
+  transparent one too big as PNG goes as JPEG on white. 1568 px stays under the 2000 px Anthropic
+  allows once a request holds more than 20 images.
 - **Schemas** are written by hand in each precedent's words, and a test keeps each in step with
   its function.
 
@@ -181,7 +183,7 @@ print(max(pages, key=len)[:2000])
   custom tool. The program has a shell already, and todo and ask_user draw UI.
 - **At most 100 calls** per program.
 - **The host checks every call**, since the program can send anything. Keys stay on the host.
-- **Files and sources** from the calls inside reach the user.
+- **Files and sources** from the calls inside reach the user, at most 50 MB of files per program.
 
 ### web_search
 
