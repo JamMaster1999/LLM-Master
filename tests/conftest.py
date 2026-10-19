@@ -42,13 +42,13 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Agentic tests only when -m names them. Live tests first, so no parallel worker starts a slow
-    one last."""
+    """Agentic tests only when -m names them. Live tests first, the minute-long agentic ones leading,
+    so no parallel worker starts a slow one last."""
     if "agentic" not in config.option.markexpr:
         if skipped := [item for item in items if item.get_closest_marker("agentic")]:
             config.hook.pytest_deselected(items=skipped)
             items[:] = [item for item in items if not item.get_closest_marker("agentic")]
-    items.sort(key=lambda item: item.get_closest_marker("live") is None)
+    items.sort(key=lambda item: (item.get_closest_marker("live") is None, item.get_closest_marker("agentic") is None))
 
 
 @pytest.fixture
