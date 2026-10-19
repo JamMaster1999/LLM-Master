@@ -23,21 +23,13 @@ def build(candidate: Model, history: list[Message], stream: bool) -> tuple[API, 
     """The API and kwargs one candidate gets. Pure, like assembly: same input, same request."""
     api = _api(candidate, history)
     c = candidate.config
+    # every field, unset ones too: each translate says what unset means on each API
     fragments = [assemble(history, candidate.provider, candidate.model, api, c.system),
-                 streaming.translate(stream, api), max_tokens.translate(c.max_tokens, api),
+                 system.translate(c.system, api), streaming.translate(stream, api),
+                 temperature.translate(c.temperature, api), thinking.translate(c.thinking, api),
+                 tools.translate(c.tools, api), tool_choice.translate(c.tool_choice, api),
+                 response_format.translate(c.response_format, api), max_tokens.translate(c.max_tokens, api),
                  timeout.translate(c.timeout, api), cache.translate(c.cache, api)]
-    if c.system is not None:
-        fragments.append(system.translate(c.system, api))
-    if c.temperature is not None:
-        fragments.append(temperature.translate(c.temperature, api))
-    if c.thinking is not None:
-        fragments.append(thinking.translate(c.thinking, api))
-    if c.tools is not None:
-        fragments.append(tools.translate(c.tools, api))
-    if c.tool_choice is not None:
-        fragments.append(tool_choice.translate(c.tool_choice, api))
-    if c.response_format is not None:
-        fragments.append(response_format.translate(c.response_format, api))
     return api, merge(*fragments, candidate.extra)
 
 

@@ -4,13 +4,13 @@ from typing import assert_never
 from llm_master.providers import API
 
 
-def translate(t: float, api: API) -> dict:
+def translate(t: float | None, api: API) -> dict:
     match api:
         case "completion":
-            return {"temperature": t}
+            return {} if t is None else {"temperature": t}
         case "messages":
-            return {"temperature": t}
+            return {} if t is None else {"temperature": t}
         case "responses":
-            return {"temperature": t}
+            return {} if t is None else {"temperature": t}
         case _:
             assert_never(api)

@@ -28,9 +28,11 @@ class Format(BaseModel, extra="forbid", populate_by_name=True):
         return self
 
 
-def translate(fmt: Format, api: API) -> dict:
+def translate(fmt: Format | None, api: API) -> dict:
     match api:
         case "completion":
+            if fmt is None:
+                return {}
             match fmt.type:
                 case "text":
                     return {}  # the provider default everywhere; messages has no explicit spelling at all
@@ -41,6 +43,8 @@ def translate(fmt: Format, api: API) -> dict:
                 case _:
                     assert_never(fmt.type)
         case "messages":
+            if fmt is None:
+                return {}
             match fmt.type:
                 case "text":
                     return {}
@@ -53,6 +57,8 @@ def translate(fmt: Format, api: API) -> dict:
                 case _:
                     assert_never(fmt.type)
         case "responses":
+            if fmt is None:
+                return {}
             match fmt.type:
                 case "text":
                     return {}
