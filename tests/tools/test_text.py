@@ -13,12 +13,13 @@ def test_page_returns_a_short_file_whole():
 def test_page_cuts_at_2000_lines_and_says_where_to_continue():
     out = page("\n".join(str(i) for i in range(1, 5001)), "f.txt", None, None)
     assert out.splitlines()[1999] == "2000"
-    assert out.endswith("\n\n[Showing lines 1-2000 of 5000. Use offset=2001 to continue.]")
+    assert out.endswith("\n\n[Showing lines 1-2000 of 5000. Use offset=2001 to continue, or search f.txt with bash (rg, grep).]")
 
 
 def test_page_cuts_at_50kb_between_lines():
     out = page("\n".join("x" * 99 for _ in range(1000)), "f.txt", 11, None)  # 100 bytes a line
-    assert out.endswith("x\n\n[Showing lines 11-522 of 1000 (50.0KB limit). Use offset=523 to continue.]")
+    assert out.endswith("x\n\n[Showing lines 11-522 of 1000 (50.0KB limit). Use offset=523 to continue, "
+                        "or search f.txt with bash (rg, grep).]")
 
 
 def test_page_stops_at_the_limit_and_counts_whats_left():

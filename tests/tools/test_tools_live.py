@@ -13,7 +13,6 @@ from agent.sandbox import delete
 pytestmark = pytest.mark.live
 
 WIKI = "https://en.wikipedia.org/wiki/Photosynthesis"
-TWO_PAGES = '<p>First page</p><p style="page-break-before: always">Second page</p>'
 
 
 @pytest.fixture
@@ -57,21 +56,9 @@ async def test_parallel_edits_to_one_file_both_land(box):
 async def test_read_says_what_is_wrong_with_a_path(box):
     await run(box, "bash", command=r"mkdir -p folder && printf 'PK\003\004\377\376' > blob.bin")
     for path, message in [("missing.txt", "File not found: missing.txt"), ("folder", "folder is a directory."),
-                          ("talk.mp3", "read can't return audio or video."), ("blob.bin", "blob.bin is a binary file")]:
+                          ("blob.bin", "read doesn't support binary files yet.")]:
         result = await run(box, "read", path=path)
         assert result.error and result.text().startswith(message), result.content
-
-
-async def test_read_renders_pdfs_and_documents_as_page_images(box):
-    await run(box, "write", path="pages.html", content=TWO_PAGES)
-    await run(box, "bash", command='soffice --headless --infilter="HTML (StarWriter)" --convert-to docx pages.html && '
-                                   "soffice --headless --convert-to pdf pages.html")
-    header, *pages = parts(await run(box, "read", path="pages.docx", limit=1))
-    assert header["text"] == "Rendered pages.docx [pages 1-1 of 2] Use offset=2 to continue."
-    assert [page["mime"] for page in pages] == ["image/jpeg"]
-    header, page = parts(await run(box, "read", path="pages.pdf", offset=2))
-    assert header["text"] == "Rendered pages.pdf [pages 2-2 of 2]"
-    assert base64.b64decode(page["data"])[:2] == b"\xff\xd8"
 
 
 async def test_read_scales_large_images_and_passes_small_ones(box):
@@ -92,8 +79,6 @@ async def test_read_sends_a_transparent_image_too_big_as_png_as_jpeg(box):
 
 
 async def test_read_turns_spreadsheets_into_csv(box):
-    await run(box, "write", path="small.csv", content="name,score\nAda,9\n")
-    assert (await run(box, "read", path="small.csv")).content == "## small.csv\nname,score\nAda,9"
     await run(box, "bash", command="python -c \"import openpyxl; book = openpyxl.Workbook(); sheet = book.active; "
                                    "sheet.title = 'Scores'; sheet.append([1]); sheet.append([2]); sheet.append(['=SUM(A1:A2)']); "
                                    "book.save('built.xlsx')\"")

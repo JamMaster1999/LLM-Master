@@ -1,7 +1,9 @@
-"""The file tools: read, write and edit copy pi's; deliver_file hands a file to the user."""
+"""The file tools: read, write and edit copy pi's; deliver_file hands a file to the user. And uploads,
+which the caller attaches to the user's message."""
 import json
 import mimetypes
 import posixpath
+import uuid
 from importlib import resources
 from typing import Annotated
 
@@ -10,25 +12,28 @@ from modal.types import FileType
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
-from agent.reader import MAX_FILE, format_size
+from agent.reader import MAX_FILE, attached, format_size
 from agent.result import Result, ToolError, UserFile
 from agent.sandbox import Sandbox, resolve
+from agent.transcribe import transcribe
 
-READ_TIMEOUT = 120  # LibreOffice on a long deck takes a while
+READ_TIMEOUT = 300  # a view's first build: LibreOffice and Indra on up to 100 pages
 _READER = resources.files("agent").joinpath("reader.py").read_text()
 
 READ = {"type": "function", "function": {
     "name": "read",
-    "description": "Read the contents of a file. Supports text files, images (jpg, png, gif, webp, bmp, tiff, heic), "
-                   "PDFs and office documents (docx, pptx and others, shown as page images), and spreadsheets "
-                   "(xlsx, xls, ods, csv, tsv, as CSV). Images are sent as attachments. For text files, output is "
-                   "truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When "
-                   "you need the full file, continue with offset until complete. For PDFs and documents, offset and "
-                   "limit count pages, at most 10 per call.",
+    "description": "Read the contents of a file. Supports text files, images (jpg, png, gif, webp, heic, avif, bmp, "
+                   "tiff), PDFs, documents and slides (docx, pptx and others) and audio (mp3, m4a, wav and others) as "
+                   "their transcript, ebooks and notebooks (epub, ipynb), and spreadsheets (xlsx, xls, ods, numbers, "
+                   "as CSV). Images are sent as attachments. Output is truncated to 2000 lines or 50KB (whichever is "
+                   "hit first). Use offset/limit for large files. When you need the full file, continue with offset "
+                   "until complete. To see pages of a PDF, document or slides, use pages.",
     "parameters": {"type": "object", "properties": {
         "path": {"type": "string", "description": "Path to the file to read (relative or absolute)"},
-        "offset": {"type": "integer", "description": "Line number to start reading from (1-indexed); for PDFs and documents, the first page"},
-        "limit": {"type": "integer", "description": "Maximum number of lines to read; for PDFs and documents, pages (at most 10)"},
+        "offset": {"type": "integer", "description": "Line number to start reading from (1-indexed)"},
+        "limit": {"type": "integer", "description": "Maximum number of lines to read"},
+        "pages": {"type": "string", "description": "Page range for PDFs, documents and slides (e.g., \"3\" or "
+                  "\"2-5\"), returned as page images. Maximum 10 pages per request."},
     }, "required": ["path"]}}}
 
 WRITE = {"type": "function", "function": {
@@ -77,8 +82,48 @@ _EDITS: TypeAdapter[list[Edit] | Edit] = TypeAdapter(list[Edit] | Edit)
 
 
 async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] | None = None,
-               limit: Annotated[int, Field(ge=1)] | None = None) -> Result:
-    request = json.dumps({"path": resolve(path), "shown": path, "offset": offset, "limit": limit})
+               limit: Annotated[int, Field(ge=1)] | None = None, pages: str | None = None) -> Result:
+    content = await _reader(sandbox, "read", path, offset=offset, limit=limit, pages=pages)
+    return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
+
+
+async def upload(sandbox: Sandbox, name: str, data: bytes) -> str:
+    """Saves an upload unchanged under uploads/; a taken name gets a number, as in `notes (2).pdf`.
+    Returns its path. Run one at a time, so two uploads can't take one name."""
+    stem, extension = posixpath.splitext(posixpath.basename(name))
+    number = 1
+    while True:
+        path = f"uploads/{stem}{f' ({number})' if number > 1 else ''}{extension}"
+        try:
+            await sandbox.stat(path)
+        except SandboxFilesystemNotFoundError:
+            await sandbox.write(path, data)
+            return path
+        number += 1
+
+
+async def attach(sandbox: Sandbox, path: str) -> list[dict]:
+    """The user message's parts for an upload: its path, and what the model gets within read's
+    limits. A view that can't be built is a note, not a failure."""
+    try:
+        return await _reader(sandbox, "attach", path)
+    except ToolError as error:
+        return [{"type": "text", "text": attached(path, str(error))}]
+
+
+async def _reader(sandbox: Sandbox, do: str, path: str, **arguments) -> list[dict]:
+    """reader.py's parts for the file. A recording without a view is transcribed here first."""
+    request = json.dumps({"do": do, "path": resolve(path), "shown": path, **arguments})
+    answer = await _run_reader(sandbox, request, path)
+    if "transcribe" in answer:
+        await _transcribe(sandbox, path, answer["transcribe"])
+        answer = await _run_reader(sandbox, request, path)
+    if "problem" in answer:
+        raise ToolError(answer["problem"])
+    return answer["content"]
+
+
+async def _run_reader(sandbox: Sandbox, request: str, path: str) -> dict:
     try:
         # -I keeps /workspace off the import path, so a json.py there can't replace the reader's
         code, stdout, stderr = await sandbox.exec("python", "-I", "-c", _READER, request, timeout=READ_TIMEOUT)
@@ -87,11 +132,18 @@ async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] 
     if code:  # a file its library couldn't open
         reason = stderr.decode(errors="replace").strip().splitlines() or ["unknown error"]
         raise ToolError(f"Could not read {path}: {reason[-1]}")
-    answer = json.loads(stdout)
-    if "problem" in answer:
-        raise ToolError(answer["problem"])
-    content = answer["content"]
-    return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
+    return json.loads(stdout)
+
+
+async def _transcribe(sandbox: Sandbox, path: str, view: str) -> None:
+    """A recording's view, which holds only its transcript, made as reader.py makes the others:
+    in a temp folder renamed into place."""
+    segments = await transcribe(posixpath.basename(path), await load(sandbox, path))
+    work = f"{view}.{uuid.uuid4().hex[:8]}"
+    await sandbox.write(f"{work}/transcript.jsonl",
+                        "".join(json.dumps(segment, ensure_ascii=False) + "\n" for segment in segments).encode())
+    # a parallel build that got there first wins
+    await sandbox.exec("bash", "-c", 'mv -T "$1" "$2" 2>/dev/null || rm -r "$1"', "bash", work, view, timeout=30)
 
 
 async def write(sandbox: Sandbox, path: str, content: str) -> str:

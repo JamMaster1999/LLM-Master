@@ -79,6 +79,16 @@ class Toolbox:
         question, or None when the user declined."""
         return Result(loop.answered(reply))
 
+    async def attach(self, name: str, data: bytes) -> list[dict]:
+        """Saves an upload under uploads/ and returns the user message's parts for it: its path, and
+        what the model gets within read's limits (TOOLS.md, Files). Raises ValueError over 50 MB."""
+        if len(data) > reader.MAX_FILE:
+            raise ValueError(f"{name} is {reader.format_size(len(data))}, over the "
+                             f"{reader.format_size(reader.MAX_FILE)} limit.")
+        async with self._serial:  # it changes the sandbox, like write
+            path = await files.upload(self.sandbox, name, data)
+        return await files.attach(self.sandbox, path)
+
     async def aclose(self) -> None:
         await self.web.aclose()
 

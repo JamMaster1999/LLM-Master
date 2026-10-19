@@ -1,40 +1,55 @@
-"""read's work, done inside the sandbox where Pillow, openpyxl, LibreOffice and poppler live: one
-call in, one JSON result out, so a read is one round trip and only its result leaves the sandbox.
-The host runs this file's source with `python -c` and imports it for pi's text limits."""
+"""read's and attach's work, done inside the sandbox where Pillow, openpyxl, LibreOffice, poppler, pandoc
+and Indra live: one call in, one JSON result out, so a read is one round trip and only its result leaves
+the sandbox. The host runs this file's source with `python -c` and imports it for pi's text limits."""
 import base64
 import codecs
-import csv
 import glob
+import hashlib
 import io
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 
 MAX_LINES, MAX_BYTES = 2000, 50 * 1024  # pi's cut for long text
-MAX_PAGES = 10
+MAX_PAGES = 10  # page images per read
+MAX_VIEW_PAGES = 100  # a longer file gets no view
 SHEET_BYTES = 25 * 1024  # a spreadsheet up to this much CSV comes back whole
 MAX_FILE = 50 * 1024 * 1024  # the most any tool pulls out of the sandbox at once
 IMAGE_SIDE = 1568  # px on the long side
 IMAGE_BYTES = 3_750_000  # an image passed through as is: 5 MB as base64, the strictest provider's cap
+VIEWS = "/workspace/.agent/views"
+VIEW_VERSION = b"1"  # hashed with each file's bytes: a change to what views hold builds them all anew
 
-IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"}
-PAGED = {".pdf", ".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".odp"}
-SHEETS = {".xlsx", ".xlsm", ".xls", ".ods", ".csv", ".tsv"}
-MEDIA = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".flac", ".opus", ".mp4", ".m4v", ".mov", ".webm",
-         ".mkv", ".avi"}
+FAMILIES = {
+    "image": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".avif"},
+    "pages": {".pdf", ".docx", ".doc", ".odt", ".rtf", ".pages", ".pptx", ".ppt", ".odp", ".key"},
+    "audio": {".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg", ".opus", ".webm"},
+    "book": {".epub", ".ipynb"},
+    "sheet": {".xlsx", ".xlsm", ".xls", ".ods", ".numbers"},
+    "email": {".eml", ".msg"},
+    "video": {".mp4", ".m4v", ".mov", ".mkv", ".avi"},
+    "archive": {".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar"},
+}  # anything else is text if it decodes, else binary
+UNSUPPORTED = {"email": "Email files", "video": "Video files", "archive": "Archives",
+               "text": "Binary files"}  # a text file that doesn't decode is binary
 
 
 class Problem(Exception):
     """Something about the file the model can fix; its message goes back as the result."""
 
 
-def read(path: str, shown: str, offset: int | None, limit: int | None) -> list[dict]:
+class Transcribe(Exception):
+    """A recording has no view yet. The host makes it, since the sandbox has no network; the
+    message is the view's folder."""
+
+
+def read(path: str, shown: str, offset: int | None, limit: int | None, pages: str | None) -> list[dict]:
     """The result's parts for the file at `path`, which the model calls `shown`."""
-    extension = os.path.splitext(path)[1].lower()
-    if extension in MEDIA:
-        raise Problem(f"read can't return audio or video. Use bash (ffprobe, ffmpeg) to work with {shown}.")
     if not os.path.exists(path):
         raise Problem(f"File not found: {shown}")
     if os.path.isdir(path):
@@ -42,18 +57,51 @@ def read(path: str, shown: str, offset: int | None, limit: int | None) -> list[d
     size = os.path.getsize(path)
     if size > MAX_FILE:
         raise Problem(f"{shown} is {format_size(size)}, over the {format_size(MAX_FILE)} limit. Use bash to work with it.")
-    with tempfile.TemporaryDirectory() as work:
-        if extension in IMAGES:
-            return _image(path)
-        if extension in PAGED:
-            return _pages(path, shown, offset or 1, min(limit or MAX_PAGES, MAX_PAGES), work)
-        if extension in SHEETS:
-            return [_text(_sheets(path, work))]
-        with open(path, "rb") as f:
-            data = f.read()
-        if not _utf8(data[:8192]):
-            raise Problem(f"{shown} is a binary file or not UTF-8 text. Use bash to inspect it.")
-        return [_text(page(data.decode(errors="replace"), shown, offset, limit))]
+    family = _family(path)
+    if pages and family != "pages":
+        raise Problem(f"{shown} has no pages. pages works on PDFs, documents and slides.")
+    if family == "image":
+        return _image(path)
+    if family == "sheet":
+        return [_text(_sheets(path))]
+    if family in ("pages", "audio", "book"):
+        view = _view(path, family, shown)
+        if pages:
+            return _page_images(view, pages, shown)
+        text, source = _transcript(view)
+        return [_text(page(text, _shown(source), offset, limit))]
+    if family == "text" and (text := _decode(path)) is not None:
+        return [_text(page(text, shown, offset, limit))]
+    raise Problem(f"read doesn't support {UNSUPPORTED[family].lower()} yet. Use bash to work with {shown}.")
+
+
+def attach(path: str, shown: str) -> list[dict]:
+    """The user message's parts for an upload: its path, and what read would show within read's limits."""
+    family = _family(path)
+    try:
+        if family == "image":
+            return [_text(attached(shown)), *_image(path)[1:]]
+        if family == "sheet":
+            return [_text(attached(shown))]
+        if family in ("pages", "audio"):
+            text, source = _transcript(_view(path, family, shown))
+            entries = _entries(source)
+            size = f"{len(entries)} pages" if family == "pages" else _clock(entries[-1]["end"] if entries else 0)
+            note = (f"Its transcript is too long to show here. Search {_shown(source)} with bash (rg, grep), and read "
+                    f"{shown} with offset and limit" + (", or with pages to see page images." if family == "pages" else "."))
+            return [_text(attached(f"{shown} ({size})", text if fits(text) else note))]
+        if family == "book":
+            text, source = _transcript(_view(path, family, shown))
+            return [_text(attached(shown, page(text, _shown(source), None, None)))]
+        if family == "text" and (text := _decode(path)) is not None:
+            return [_text(attached(shown, page(text, shown, None, None)))]
+        return [_text(attached(shown, f"{UNSUPPORTED[family]} aren't supported yet."))]
+    except Problem as problem:
+        return [_text(attached(shown, str(problem)))]
+
+
+def attached(shown: str, body: str = "") -> str:
+    return f"Attached file: {shown}" + (f"\n\n{body}" if body else "")
 
 
 def page(text: str, path: str, offset: int | None, limit: int | None) -> str:
@@ -81,10 +129,16 @@ def page(text: str, path: str, offset: int | None, limit: int | None) -> str:
     out = "\n".join(shown)
     if last < end:
         cap = "" if len(shown) == MAX_LINES else f" ({format_size(MAX_BYTES)} limit)"
-        out += f"\n\n[Showing lines {start + 1}-{last} of {total}{cap}. Use offset={last + 1} to continue.]"
+        out += (f"\n\n[Showing lines {start + 1}-{last} of {total}{cap}. Use offset={last + 1} to continue, "
+                f"or search {path} with bash (rg, grep).]")
     elif end < total:
         out += f"\n\n[{total - end} more lines in file. Use offset={end + 1} to continue.]"
     return out
+
+
+def fits(text: str) -> bool:
+    """Whether text comes back whole, within pi's limits."""
+    return text.count("\n") < MAX_LINES and len(text.encode()) <= MAX_BYTES
 
 
 def format_size(n: int) -> str:
@@ -94,6 +148,141 @@ def format_size(n: int) -> str:
     if n < 1024 * 1024:
         return f"{n / 1024:.1f}KB"
     return f"{n / 1024 / 1024:.1f}MB"
+
+
+def _family(path: str) -> str:
+    extension = os.path.splitext(path)[1].lower()
+    return next((family for family, extensions in FAMILIES.items() if extension in extensions), "text")
+
+
+def _decode(path: str) -> str | None:
+    """The file as text: UTF-8, UTF-16 with a BOM, or a legacy encoding charset-normalizer finds.
+    None for a binary file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16")
+    if re.search(rb"[\x00-\x08\x0e-\x1a\x1c-\x1f]", data[:8192]):  # control bytes no text holds
+        return None
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        import charset_normalizer  # pyright: ignore[reportMissingImports]  (the sandbox has it)
+        matches = charset_normalizer.from_bytes(data)
+        if not (best := matches.best()):
+            return None
+        # a tie goes to Windows' Western code page, the commonest legacy one; charset-normalizer
+        # would pick cp1250 and turn French è into č
+        return str(next((match for match in matches if match.encoding == "cp1252"
+                         and (match.chaos, match.coherence) == (best.chaos, best.coherence)), best))
+
+
+def _view(path: str, family: str, shown: str) -> str:
+    """The file's view folder, built if it's missing (TOOLS.md, Files). A build happens in a temp
+    folder renamed into place, so a crash leaves no half-made view and parallel builds don't collide."""
+    digest = hashlib.sha256(VIEW_VERSION)
+    with open(path, "rb") as f:
+        digest.update(f.read())
+    view = f"{VIEWS}/{digest.hexdigest()[:16]}"
+    if os.path.isdir(view):
+        return view
+    if family == "audio":
+        raise Transcribe(view)
+    work = f"{view}.{uuid.uuid4().hex[:8]}"
+    os.makedirs(work)
+    try:
+        (_pages_view if family == "pages" else _book_view)(path, shown, work)
+        try:
+            os.rename(work, view)
+        except OSError:  # a parallel build of the same file got there first
+            if not os.path.isdir(view):
+                raise
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return view
+
+
+def _pages_view(path: str, shown: str, out: str) -> None:
+    """source.pdf, pages/<n>.jpg and a transcript of each page's text, from Indra."""
+    import indra_ocr  # pyright: ignore[reportMissingImports]
+    import pypdfium2  # pyright: ignore[reportMissingImports]
+    pdf = f"{out}/source.pdf"
+    if path.lower().endswith(".pdf"):
+        shutil.copyfile(path, pdf)
+    else:
+        with tempfile.TemporaryDirectory() as work:
+            shutil.move(_convert(path, "pdf", work), pdf)
+    try:
+        total = len(pypdfium2.PdfDocument(pdf))
+    except pypdfium2.PdfiumError as error:
+        raise Problem(f"Could not open {shown}: {error}") from None
+    if total > MAX_VIEW_PAGES:
+        raise Problem(f"{shown} has {total} pages, too long for read, which takes {MAX_VIEW_PAGES} at most. "
+                      f"Use bash to work with it.")
+    os.mkdir(f"{out}/pages")
+    render = subprocess.Popen(["pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(IMAGE_SIDE), pdf,
+                               f"{out}/pages/p"], stderr=subprocess.PIPE, text=True)  # runs beside Indra
+    [(_, pages)] = indra_ocr.convert_many([pdf])
+    if isinstance(pages, Exception):
+        raise Problem(f"Could not read {shown}: {pages}")
+    with open(f"{out}/transcript.jsonl", "w") as f:
+        for index, result in pages:
+            text = result.markdown if result.markdown is not None else result.text
+            f.write(json.dumps({"page": index + 1, "text": text}, ensure_ascii=False) + "\n")
+    if render.wait():
+        raise Problem(f"pdftoppm failed: {render.stderr.read().strip() if render.stderr else 'no reason given'}")
+    for name in os.listdir(f"{out}/pages"):  # p-01.jpg, padded to the page count's digits
+        os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name[2:-4])}.jpg")
+
+
+def _book_view(path: str, shown: str, out: str) -> None:
+    """A plain-text copy of an ebook or notebook, through pandoc."""
+    _run("pandoc", path, "-t", "plain", "--wrap=none", "-o", f"{out}/text.txt")
+
+
+def _transcript(view: str) -> tuple[str, str]:
+    """A view's text as read shows it, and the file it comes from."""
+    if os.path.exists(f"{view}/text.txt"):
+        with open(f"{view}/text.txt") as f:
+            return f.read(), f"{view}/text.txt"
+    source = f"{view}/transcript.jsonl"
+    entries = _entries(source)
+    if entries and "page" in entries[0]:
+        return "\n\n".join(f"## Page {entry['page']}\n{entry['text']}" for entry in entries), source
+    return "\n".join(f"[{_clock(entry['start'])}] " + (f"Speaker {entry['speaker']}: " if entry["speaker"] else "")
+                     + entry["text"] for entry in entries), source
+
+
+def _entries(source: str) -> list[dict]:
+    with open(source) as f:
+        return [json.loads(line) for line in f]
+
+
+def _page_images(view: str, pages: str, shown: str) -> list[dict]:
+    """The pages' images, each after a `Page 3 of 14` part. pages is "3" or "2-5"."""
+    total = len(os.listdir(f"{view}/pages"))
+    match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+)\s*)?", pages)
+    first, last = (int(match[1]), int(match[2] or match[1])) if match else (0, 0)
+    if not 1 <= first <= last:
+        raise Problem(f'Invalid pages "{pages}". Use one page like "3" or a range like "2-5"; pages start at 1.')
+    if last - first >= MAX_PAGES:
+        raise Problem(f'pages "{pages}" asks for {last - first + 1} pages. Ask for at most {MAX_PAGES} per call.')
+    if first > total:
+        raise Problem(f"{shown} has {total} pages.")
+    parts = []
+    for number in range(first, min(last, total) + 1):
+        with open(f"{view}/pages/{number}.jpg", "rb") as f:
+            parts += [_text(f"Page {number} of {total}"), _image_part(f.read(), "image/jpeg")]
+    return parts
+
+
+def _clock(seconds: float) -> str:
+    minutes, second = divmod(int(seconds), 60)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}:{second:02d}"
+
+
+def _shown(path: str) -> str:
+    return path.removeprefix("/workspace/")
 
 
 def _image(path: str) -> list[dict]:
@@ -127,59 +316,35 @@ def _encoded(image, format: str) -> bytes:
     return out.getvalue()
 
 
-def _pages(path: str, shown: str, first: int, count: int, work: str) -> list[dict]:
-    if first < 1 or count < 1:
-        raise Problem("offset and limit start at 1.")
-    pdf = path if path.lower().endswith(".pdf") else _convert(path, "pdf", work)
-    info = _run("pdfinfo", pdf)
-    total = int(next(line.split()[1] for line in info.splitlines() if line.startswith("Pages:")))
-    if first > total:
-        raise Problem(f"Offset {first} is beyond the last page of {shown} ({total} pages)")
-    last = min(first + count - 1, total)
-    _run("pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(IMAGE_SIDE), "-f", str(first),
-         "-l", str(last), pdf, f"{work}/page")
-    header = f"Rendered {shown} [pages {first}-{last} of {total}]"
-    if last < total:
-        header += f" Use offset={last + 1} to continue."
-    images = []
-    for page_file in sorted(glob.glob(f"{work}/page*.jpg")):
-        with open(page_file, "rb") as f:
-            images.append(_image_part(f.read(), "image/jpeg"))
-    return [_text(header), *images]
-
-
-def _sheets(path: str, work: str) -> str:
+def _sheets(path: str) -> str:
     """Every sheet as CSV when it all fits in 25 KB, else a preview of each, cut at read's limits."""
-    name = os.path.basename(path)
-    if path.lower().endswith((".csv", ".tsv")):
-        with open(path, newline="", encoding="utf-8", errors="replace") as f:
-            sheets = {name: list(csv.reader(f, delimiter="\t" if path.lower().endswith(".tsv") else ","))}
-    else:
-        import warnings
-        import openpyxl  # pyright: ignore[reportMissingModuleSource]
-        warnings.simplefilter("ignore")  # openpyxl warns about every extension it skips
+    import csv
+    import warnings
+    import openpyxl  # pyright: ignore[reportMissingModuleSource]
+    warnings.simplefilter("ignore")  # openpyxl warns about every extension it skips
+    with tempfile.TemporaryDirectory() as work:
         book = path if path.lower().endswith((".xlsx", ".xlsm")) else _convert(path, "xlsx", work)
         values, formulas = openpyxl.load_workbook(book, data_only=True), openpyxl.load_workbook(book)
-        # a workbook built by code has formulas but no saved values: show the formula there
-        sheets = {sheet.title: [[value if value is not None else formula for value, formula in zip(row, formula_row)]
-                                for row, formula_row in zip(sheet.iter_rows(values_only=True),
-                                                            formulas[sheet.title].iter_rows(values_only=True))]
-                  for sheet in values.worksheets}
-    whole = "\n".join(f"## {title}\n{_csv(rows)}" for title, rows in sheets.items()).rstrip("\n")
+    # a workbook built by code has formulas but no saved values: show the formula there
+    sheets = {sheet.title: [[value if value is not None else formula for value, formula in zip(row, formula_row)]
+                            for row, formula_row in zip(sheet.iter_rows(values_only=True),
+                                                        formulas[sheet.title].iter_rows(values_only=True))]
+              for sheet in values.worksheets}
+
+    def as_csv(rows: list) -> str:
+        text = io.StringIO()
+        csv.writer(text, lineterminator="\n").writerows(["" if cell is None else cell for cell in row] for row in rows)
+        return text.getvalue()
+
+    whole = "\n".join(f"## {title}\n{as_csv(rows)}" for title, rows in sheets.items()).rstrip("\n")
     if len(whole.encode()) <= SHEET_BYTES:
         return whole
-    previews = "\n\n".join(f"## {title}\n{_csv(rows[:20])}[{len(rows)} rows x {max(map(len, rows), default=0)} "
+    previews = "\n\n".join(f"## {title}\n{as_csv(rows[:20])}[{len(rows)} rows x {max(map(len, rows), default=0)} "
                            f"columns; showing the first 20]" for title, rows in sheets.items())
     notice = (f"\n\n[The full data is {len(whole.encode()) // 1024} KB as CSV, over the {SHEET_BYTES // 1024} KB "
               f"limit. It stays at {path}; use bash or run_program to analyze it.]")
     lines = previews.split("\n")[:MAX_LINES - 2]  # the notice takes the last two lines
     return "\n".join(lines).encode()[:MAX_BYTES - len(notice.encode())].decode(errors="ignore") + notice
-
-
-def _csv(rows: list) -> str:
-    text = io.StringIO()
-    csv.writer(text, lineterminator="\n").writerows(["" if cell is None else cell for cell in row] for row in rows)
-    return text.getvalue()
 
 
 def _convert(path: str, to: str, work: str) -> str:
@@ -200,15 +365,6 @@ def _run(*args: str) -> str:
     return done.stdout
 
 
-def _utf8(head: bytes) -> bool:
-    """Whether the start of a file reads as UTF-8 text; a character cut at the end doesn't count."""
-    try:
-        codecs.getincrementaldecoder("utf-8")().decode(head)
-    except UnicodeDecodeError:
-        return False
-    return b"\0" not in head
-
-
 def _text(text: str) -> dict:
     return {"type": "text", "text": text}
 
@@ -220,6 +376,8 @@ def _image_part(data: bytes, mime: str) -> dict:
 if __name__ == "__main__":
     request = json.loads(sys.argv[1])
     try:
-        print(json.dumps({"content": read(**request)}))
+        print(json.dumps({"content": {"read": read, "attach": attach}[request.pop("do")](**request)}))
     except Problem as problem:
         print(json.dumps({"problem": str(problem)}))
+    except Transcribe as needed:
+        print(json.dumps({"transcribe": str(needed)}))

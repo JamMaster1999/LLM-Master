@@ -111,9 +111,12 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
   and nothing inside can be trusted to stop it. The next call starts a new one, with every file.
 - **Skills** appear at `/skills/<name>/`, added from the caller's folder as the sandbox starts.
   A running sandbox keeps the skills it started with.
-- **The image** is Debian slim with Python 3.13, LibreOffice, poppler, Pillow and openpyxl.
-  Nothing installs at run time, so a skill that needs a package adds it to the image. A new image
-  reaches a conversation when its sandbox next starts.
+- **The image** is Debian slim (bookworm) with Python 3.13, LibreOffice 25.2 from
+  bookworm-backports, fonts that match Calibri and Cambria, Noto, poppler, pandoc, Pillow, openpyxl,
+  charset-normalizer, and Indra OCR with its weights. Nothing installs at run time, so a skill that
+  needs a package adds it to the image. A new image reaches a conversation when its sandbox next
+  starts.
+- **4 CPUs**, so Indra reads a document's pages in parallel.
 
 ## Shared rules
 
@@ -135,19 +138,27 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 
 ### read
 
-`read(path, offset?, limit?)` is pi's read, extended to the files teachers work with. `offset` and
-`limit` count lines, or pages for PDFs and documents, 10 at most.
+`read(path, offset?, limit?, pages?)` is pi's read, extended to the files teachers work with.
+`offset` and `limit` count lines, as pi's do, whatever the file.
 
 | file | result |
 |---|---|
-| text, code | the text, without line numbers |
-| image | the image. HEIC, BMP and TIFF convert |
-| PDF | one image per page |
-| docx, pptx, odt, rtf and the like | LibreOffice renders it to PDF, then as a PDF. This is how the model checks the files it builds |
-| xlsx, xls, ods, csv, tsv | every sheet as CSV when the whole fits in 25 KB. Otherwise the first 20 rows of each sheet, and a pointer to bash. A formula cell without a saved value shows its formula |
-| audio, video, binary files, folders | an error |
+| text, code, csv | the text, without line numbers. UTF-16 with a BOM and legacy encodings decode too |
+| image | the image. HEIC, AVIF, BMP and TIFF convert |
+| PDF, docx, pptx and the like | the transcript: `## Page 3`, then that page's text |
+| audio | the transcript: `[00:12:31] Speaker 2: …` lines |
+| epub, ipynb | a plain-text copy |
+| xlsx, xls, ods, numbers | every sheet as CSV when the whole fits in 25 KB. Otherwise the first 20 rows of each sheet, and a pointer to bash. A formula cell without a saved value shows its formula |
+| email, video, archives, binary files, folders | an error that names what it is |
 
-PDFs come back as page images, not a PDF part, because any-llm puts only images into a Gemini tool
+- **`pages`** is Claude Code's Read parameter: `"3"` or `"2-5"`, at most 10 pages. Each page comes
+  back as an image after a `Page 3 of 14` part. This is how the model checks the files it builds.
+  Files without pages refuse it.
+- **Long text** gets pi's cut, and the notice also suggests searching with bash. A transcript's
+  search goes through its `transcript.jsonl`.
+- **A file without a view** gets one on its first read (Files).
+
+Pages come back as images, not a PDF part, because any-llm puts only images into a Gemini tool
 result.
 
 ### write
@@ -256,20 +267,41 @@ don't have.
 
 ## Files
 
-`box.attach(name, data)` saves an upload under `uploads/`. It returns the user message's parts:
-the path, and what the model gets within read's limits.
+`box.attach(name, data)` saves an upload unchanged under `uploads/`; a taken name gets a number, as
+in `notes (2).pdf`. It returns the user message's parts (IO.md): the path, and what the model gets
+within read's limits. A file is 50 MB at most, and the caller caps a message at 20 files.
 
-| upload | the model gets |
-|---|---|
-| image | the image |
-| PDF up to 10 pages and 5 MB | the PDF |
-| audio up to 10 minutes and 20 MB | the audio |
-| spreadsheet up to 25 KB | every sheet as CSV |
-| larger spreadsheet | a preview |
-| anything else | the path; read opens it |
-| video | not supported |
+| upload | made at upload | the model gets |
+|---|---|---|
+| text | nothing | the text, or its start and a note to search it with bash |
+| epub, ipynb | a plain-text copy, by pandoc | the same as text |
+| image | nothing | the image |
+| PDF, documents, slides | the view | the page count and the transcript, or a note to search it with bash and view pages with read |
+| audio | the view | the length and the transcript, or the same note |
+| spreadsheet | nothing, until a spreadsheet skill | the path |
+| email, video, archives, binary files | nothing | the path, and "not supported yet" |
 
-Longer audio gets the path only, and nothing can listen to it yet.
+A PDF, document, slide deck or recording gets a **view**: a folder at `.agent/views/<hash>/`, named
+for a hash of the file's bytes.
+
+- `source.pdf`: the PDF, or LibreOffice's rendering of a document or deck.
+- `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule.
+- `transcript.jsonl`: per page `{"page", "text"}`, or per segment of a recording
+  `{"start", "end", "speaker", "text"}`.
+
+Rules:
+
+- **Page text comes from Indra OCR.** It reads a PDF's own text layer and OCRs only what's missing,
+  so a 20-page document or scan takes a few seconds.
+- **Recordings are transcribed on the host**, since the sandbox has no network: Together's Whisper,
+  with speakers. The host needs `TOGETHER_API_KEY`.
+- **A view is built once**, in a temp folder renamed into place. A crash leaves nothing half-made,
+  and parallel builds don't collide. A changed file has a new hash and a new view, so nothing goes
+  stale.
+- **Over 100 pages**, a file gets no view. The model gets its path and a note that it's too long for
+  read.
+- **A view that can't be built**, from a broken document or a failed transcription, is a note in the
+  parts, not a failure. read tries again.
 
 ## Known limits
 
@@ -278,7 +310,8 @@ Longer audio gets the path only, and nothing can listen to it yet.
   would miss the prompt cache, so nothing drops them; read's paging keeps each render small.
 - Fireworks' text-only models reject an image in a tool result, so the first image a tool returns
   takes them out of the fallback chain.
-- An audio upload leaves only Gemini and OpenAI's audio models able to answer (IO.md).
+- Page text is fast extraction, not Uflo's ingestion: math and figures can come out wrong. The page
+  images show what the text misses.
 - A deploy that changes a skill updates its instructions at once, but a running sandbox keeps the
   old files until it stops. An idle one stops after 15 minutes, a busy one after 24 hours.
 - A planted instruction can still put data into a search query, which reaches Exa, not the

@@ -15,9 +15,18 @@ APP = "llm-master-agent"
 WORKSPACE = "/workspace"
 SCRATCH = f"{WORKSPACE}/.agent"  # where long output waits for read
 SKILLS = "/skills"  # the caller's skill folders, the Claude API's layout
-IMAGE = (modal.Image.debian_slim(python_version="3.13")
-         .apt_install("libreoffice-nogui", "poppler-utils", "fonts-liberation", "fonts-dejavu", "procps")
-         .uv_pip_install("pillow", "pillow-heif", "openpyxl"))
+INDRA_MODELS = "/opt/indra-ocr"
+IMAGE = (modal.Image.debian_slim(python_version="3.13")  # Debian bookworm
+         .run_commands("echo 'deb http://deb.debian.org/debian bookworm-backports main' "
+                       "> /etc/apt/sources.list.d/backports.list",
+                       "apt-get update && apt-get install -y -t bookworm-backports libreoffice-nogui")  # 25.2, not 7.4
+         .apt_install("poppler-utils", "pandoc", "fonts-liberation", "fonts-dejavu", "fonts-crosextra-carlito",
+                      "fonts-crosextra-caladea", "fonts-noto-core", "procps")
+         .uv_pip_install("pillow", "pillow-heif", "openpyxl", "charset-normalizer", "indra-ocr")
+         # the weights, since the sandbox can't download them
+         .run_commands(f"python -c 'import indra_ocr, shutil; shutil.copytree(indra_ocr.model_dir(), \"{INDRA_MODELS}\")'")
+         .env({"INDRA_OCR_MODEL_DIR": INDRA_MODELS}))
+CPUS = 4  # Indra reads pages in parallel
 IDLE_TIMEOUT = 15 * 60  # seconds without a command before Modal stops it
 LIFETIME = 24 * 60 * 60  # Modal's ceiling
 MAX_OUTPUT = 64 * 1024 * 1024  # bytes exec takes back; read's largest result, 10 pages as base64, is about 50 MB
@@ -125,7 +134,7 @@ async def _create(conversation_id: str, image: modal.Image) -> modal.Sandbox:
     volume = modal.Volume.from_name(_volume(conversation_id), create_if_missing=True)
     try:
         return await modal.Sandbox.create.aio(app=app, name=conversation_id, image=image,
-                                              volumes={WORKSPACE: volume}, workdir=WORKSPACE,
+                                              volumes={WORKSPACE: volume}, workdir=WORKSPACE, cpu=CPUS,
                                               block_network=True,  # model-written code can't send data out
                                               timeout=LIFETIME, idle_timeout=IDLE_TIMEOUT)
     except AlreadyExistsError:  # another process started it between our lookup and create
