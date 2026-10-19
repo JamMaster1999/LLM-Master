@@ -99,8 +99,8 @@ before anything else joins the history. A request without a reply declines it wi
 ## The loop
 
 `agent.turn.turn()` runs one request of a conversation. It takes the conversation's state, builds
-the toolbox, adds the request's message, and loops: it calls `query()`, runs the model's calls in
-parallel, and appends their results, until the model answers without a call.
+the toolbox, adds the request's message, and loops: it calls `query()`, runs the model's calls,
+and appends their results, until the model answers without a call.
 
 ```python
 conversation = Conversation()  # or the saved one
@@ -109,6 +109,9 @@ async for chunk in turn(llm, model, "conv_8f2", conversation, text="Make a quiz"
 save(conversation)
 ```
 
+- **Order**: a message's calls run in parallel, except that one that changes the sandbox (write,
+  edit, bash, run_program) runs alone, after the calls before it, as in Claude Code. A review_file
+  sent beside the bash that builds its file reviews the new file.
 - **Input**: `text` and `uploads` make a new user message; each upload goes through `box.attach`.
   `answers` finish waiting ask_user calls, by call id.
 - **Output**: `start`, llm_master's chunks for each step, a `tool-output-available` or

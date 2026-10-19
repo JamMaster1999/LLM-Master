@@ -1,0 +1,832 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "In a single message, call bash with `echo fresh > note.txt` and read on note.txt. Then say done."
+       }
+      ]
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "system": "Use the tools as the user asks.",
+    "tools": [
+     {
+      "name": "read",
+      "description": "Read the contents of a file. Supports text files, images (jpg, png, gif, webp, heic, avif, bmp, tiff), PDFs, documents and slides (docx, pptx and others) and audio (mp3, m4a, wav and others) as their transcript, ebooks and notebooks (epub, ipynb), and spreadsheets (xlsx, xls, ods, numbers, as CSV). Images are sent as attachments. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. To see pages of a PDF, document or slides, use pages.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to read (relative or absolute)"
+        },
+        "offset": {
+         "type": "integer",
+         "description": "Line number to start reading from (1-indexed)"
+        },
+        "limit": {
+         "type": "integer",
+         "description": "Maximum number of lines to read"
+        },
+        "pages": {
+         "type": "string",
+         "description": "Page range for PDFs, documents and slides (e.g., \"3\" or \"2-5\"), returned as page images. Maximum 10 pages per request."
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "write",
+      "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to write (relative or absolute)"
+        },
+        "content": {
+         "type": "string",
+         "description": "Content to write to the file"
+        }
+       },
+       "required": [
+        "path",
+        "content"
+       ]
+      }
+     },
+     {
+      "name": "edit",
+      "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to edit (relative or absolute)"
+        },
+        "edits": {
+         "type": "array",
+         "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
+         "items": {
+          "type": "object",
+          "properties": {
+           "oldText": {
+            "type": "string",
+            "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+           },
+           "newText": {
+            "type": "string",
+            "description": "Replacement text for this targeted edit."
+           }
+          },
+          "required": [
+           "oldText",
+           "newText"
+          ]
+         }
+        }
+       },
+       "required": [
+        "path",
+        "edits"
+       ]
+      }
+     },
+     {
+      "name": "bash",
+      "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a file you can read. Optionally provide a timeout in seconds (default 120, max 600). The sandbox has no network.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "command": {
+         "type": "string",
+         "description": "Shell command to execute"
+        },
+        "timeout": {
+         "type": "number",
+         "description": "Timeout in seconds (default 120, max 600)"
+        }
+       },
+       "required": [
+        "command"
+       ]
+      }
+     },
+     {
+      "name": "run_program",
+      "description": "Run a Python program that calls tools, so their results stay out of your context: only what the program prints comes back. Inside it, these tools are async functions that take one dict of arguments and return the result's text: web_search, fetch_url, deliver_file, generate_image, generate_audio. Use top-level await, and asyncio.gather to run calls in parallel. A failed call raises ToolError. At most 100 calls per program. Output is truncated like bash's. Optionally provide a timeout in seconds (default 120, max 600), inner calls included.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "code": {
+         "type": "string",
+         "description": "The Python program"
+        },
+        "timeout": {
+         "type": "number",
+         "description": "Timeout in seconds (default 120, max 600)"
+        }
+       },
+       "required": [
+        "code"
+       ]
+      }
+     },
+     {
+      "name": "web_search",
+      "description": "Search the web for up-to-date, relevant information. Describe the ideal page rather than listing keywords. Results are numbered; cite each one you use by its number, one number per bracket, as in [2] or [2][5].",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string",
+         "description": "Natural language search query. Should be a semantically rich description of the ideal page, not just keywords."
+        },
+        "objective": {
+         "type": "string",
+         "description": "Goal for this search turn; say which documents should rank first, which should be excluded, and what specific facts or figures to pull from them."
+        },
+        "type": {
+         "type": "string",
+         "enum": [
+          "auto",
+          "deep"
+         ],
+         "description": "auto (default) answers in about a second. deep runs a multi-step search, 4-15 seconds, for questions one search can't cover."
+        }
+       },
+       "required": [
+        "query",
+        "objective"
+       ]
+      }
+     },
+     {
+      "name": "fetch_url",
+      "description": "Read the full contents of web pages you already have URLs for, such as pages returned by a search or mentioned by the user. Only those URLs can be fetched; search for anything else. Pages are numbered like search results; cite them the same way, one number per bracket, as in [2] or [2][5].",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "urls": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Absolute URLs of the pages to read, including the scheme. Pass several URLs to read them in a single call."
+        }
+       },
+       "required": [
+        "urls"
+       ]
+      }
+     },
+     {
+      "name": "generate_image",
+      "description": "Generate an image from a text description, or edit an image by passing its path. The new image is saved under images/ and shown to you, and the user already has it: it needs no review_file or deliver_file. An edit starts from that image and your prompt alone, not from earlier prompts, so describe the change fully.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "prompt": {
+         "type": "string",
+         "description": "What the image should show, or for an edit, the change to make"
+        },
+        "image": {
+         "type": "string",
+         "description": "Path to the image to edit (relative or absolute). Omit it to make a new image"
+        }
+       },
+       "required": [
+        "prompt"
+       ]
+      }
+     },
+     {
+      "name": "generate_audio",
+      "description": "Turn text into speech. The audio is saved under audio/, and the user already has it: it needs no deliver_file. At most 4096 characters per call.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string",
+         "description": "The text to speak, at most 4096 characters"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      }
+     },
+     {
+      "name": "review_file",
+      "description": "Check a PDF, document, slides or image before sending it with deliver_file, which refuses one not reviewed since it last changed. Returns the page count, every page as a numbered thumbnail on one image, and each page's first line; for an image, the image. To see a page in detail, use read with pages.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to review (relative or absolute)"
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "deliver_file",
+      "description": "Send a file from the sandbox to the user, who can open or download it. Use it for every file the user asked for, once it is finished. A PDF, document, slides or image must be reviewed with review_file first. A document or slides also goes out as a PDF.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to send (relative or absolute)"
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "todo",
+      "description": "Updates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "explanation": {
+         "type": "string",
+         "description": "Optional explanation for this plan update."
+        },
+        "plan": {
+         "type": "array",
+         "description": "The list of steps",
+         "items": {
+          "type": "object",
+          "properties": {
+           "step": {
+            "type": "string",
+            "description": "Task step text."
+           },
+           "status": {
+            "type": "string",
+            "enum": [
+             "pending",
+             "in_progress",
+             "completed"
+            ],
+            "description": "Step status."
+           }
+          },
+          "required": [
+           "step",
+           "status"
+          ]
+         }
+        }
+       },
+       "required": [
+        "plan"
+       ]
+      }
+     },
+     {
+      "name": "ask_user",
+      "description": "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- Users will always be able to select \"Other\" to provide custom text input\n- Use multiSelect: true to allow multiple answers to be selected for a question\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "questions": {
+         "type": "array",
+         "minItems": 1,
+         "maxItems": 4,
+         "description": "Questions to ask the user (1-4 questions)",
+         "items": {
+          "type": "object",
+          "properties": {
+           "question": {
+            "type": "string",
+            "description": "The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: \"Which grade level is this for?\" If multiSelect is true, phrase it accordingly, e.g. \"Which sections should the quiz cover?\" Each question's text must be unique."
+           },
+           "header": {
+            "type": "string",
+            "description": "Very short label displayed as a chip/tag (max 12 chars). Examples: \"Grade\", \"Format\", \"Length\"."
+           },
+           "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "description": "The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no 'Other' option, that will be provided automatically.",
+            "items": {
+             "type": "object",
+             "properties": {
+              "label": {
+               "type": "string",
+               "description": "The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice."
+              },
+              "description": {
+               "type": "string",
+               "description": "Explanation of what this option means or what will happen if chosen."
+              }
+             },
+             "required": [
+              "label",
+              "description"
+             ]
+            }
+           },
+           "multiSelect": {
+            "type": "boolean",
+            "description": "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive."
+           }
+          },
+          "required": [
+           "question",
+           "header",
+           "options",
+           "multiSelect"
+          ]
+         }
+        }
+       },
+       "required": [
+        "questions"
+       ]
+      }
+     }
+    ],
+    "stream": true
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream; charset=utf-8",
+   "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-haiku-5-5\",\"id\":\"msg_011CgBUaDV2e5j2odzdr53bZ\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":4,\"cache_creation_input_tokens\":4006,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":4006,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":16,\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}           }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01GJwUuEzuxNKmEcyQLY3m2W\",\"name\":\"bash\",\"input\":{},\"caller\":{\"type\":\"direct\"}}             }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}               }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"comma\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"nd\\\": \\\"e\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"cho fre\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"sh > no\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"te.txt\\\"}\"}        }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0     }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01MXNiLuV76jHEpkryuApY88\",\"name\":\"read\",\"input\":{},\"caller\":{\"type\":\"direct\"}}    }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\"\"}     }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"note\"}              }\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\".txt\\\"}\"}       }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1   }\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":4,\"cache_creation_input_tokens\":4006,\"cache_read_input_tokens\":0,\"output_tokens\":100,\"output_tokens_details\":{\"thinking_tokens\":0}}     }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"       }\n\n"
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 64000,
+    "messages": [
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "In a single message, call bash with `echo fresh > note.txt` and read on note.txt. Then say done."
+       }
+      ]
+     },
+     {
+      "role": "assistant",
+      "content": [
+       {
+        "id": "toolu_01GJwUuEzuxNKmEcyQLY3m2W",
+        "caller": {
+         "type": "direct"
+        },
+        "input": {
+         "command": "echo fresh > note.txt"
+        },
+        "name": "bash",
+        "type": "tool_use"
+       },
+       {
+        "id": "toolu_01MXNiLuV76jHEpkryuApY88",
+        "caller": {
+         "type": "direct"
+        },
+        "input": {
+         "path": "note.txt"
+        },
+        "name": "read",
+        "type": "tool_use"
+       }
+      ]
+     },
+     {
+      "role": "user",
+      "content": [
+       {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01GJwUuEzuxNKmEcyQLY3m2W",
+        "content": "(no output)"
+       },
+       {
+        "type": "tool_result",
+        "tool_use_id": "toolu_01MXNiLuV76jHEpkryuApY88",
+        "content": "fresh"
+       }
+      ]
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "system": "Use the tools as the user asks.",
+    "tools": [
+     {
+      "name": "read",
+      "description": "Read the contents of a file. Supports text files, images (jpg, png, gif, webp, heic, avif, bmp, tiff), PDFs, documents and slides (docx, pptx and others) and audio (mp3, m4a, wav and others) as their transcript, ebooks and notebooks (epub, ipynb), and spreadsheets (xlsx, xls, ods, numbers, as CSV). Images are sent as attachments. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. To see pages of a PDF, document or slides, use pages.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to read (relative or absolute)"
+        },
+        "offset": {
+         "type": "integer",
+         "description": "Line number to start reading from (1-indexed)"
+        },
+        "limit": {
+         "type": "integer",
+         "description": "Maximum number of lines to read"
+        },
+        "pages": {
+         "type": "string",
+         "description": "Page range for PDFs, documents and slides (e.g., \"3\" or \"2-5\"), returned as page images. Maximum 10 pages per request."
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "write",
+      "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to write (relative or absolute)"
+        },
+        "content": {
+         "type": "string",
+         "description": "Content to write to the file"
+        }
+       },
+       "required": [
+        "path",
+        "content"
+       ]
+      }
+     },
+     {
+      "name": "edit",
+      "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to edit (relative or absolute)"
+        },
+        "edits": {
+         "type": "array",
+         "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
+         "items": {
+          "type": "object",
+          "properties": {
+           "oldText": {
+            "type": "string",
+            "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+           },
+           "newText": {
+            "type": "string",
+            "description": "Replacement text for this targeted edit."
+           }
+          },
+          "required": [
+           "oldText",
+           "newText"
+          ]
+         }
+        }
+       },
+       "required": [
+        "path",
+        "edits"
+       ]
+      }
+     },
+     {
+      "name": "bash",
+      "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a file you can read. Optionally provide a timeout in seconds (default 120, max 600). The sandbox has no network.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "command": {
+         "type": "string",
+         "description": "Shell command to execute"
+        },
+        "timeout": {
+         "type": "number",
+         "description": "Timeout in seconds (default 120, max 600)"
+        }
+       },
+       "required": [
+        "command"
+       ]
+      }
+     },
+     {
+      "name": "run_program",
+      "description": "Run a Python program that calls tools, so their results stay out of your context: only what the program prints comes back. Inside it, these tools are async functions that take one dict of arguments and return the result's text: web_search, fetch_url, deliver_file, generate_image, generate_audio. Use top-level await, and asyncio.gather to run calls in parallel. A failed call raises ToolError. At most 100 calls per program. Output is truncated like bash's. Optionally provide a timeout in seconds (default 120, max 600), inner calls included.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "code": {
+         "type": "string",
+         "description": "The Python program"
+        },
+        "timeout": {
+         "type": "number",
+         "description": "Timeout in seconds (default 120, max 600)"
+        }
+       },
+       "required": [
+        "code"
+       ]
+      }
+     },
+     {
+      "name": "web_search",
+      "description": "Search the web for up-to-date, relevant information. Describe the ideal page rather than listing keywords. Results are numbered; cite each one you use by its number, one number per bracket, as in [2] or [2][5].",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "query": {
+         "type": "string",
+         "description": "Natural language search query. Should be a semantically rich description of the ideal page, not just keywords."
+        },
+        "objective": {
+         "type": "string",
+         "description": "Goal for this search turn; say which documents should rank first, which should be excluded, and what specific facts or figures to pull from them."
+        },
+        "type": {
+         "type": "string",
+         "enum": [
+          "auto",
+          "deep"
+         ],
+         "description": "auto (default) answers in about a second. deep runs a multi-step search, 4-15 seconds, for questions one search can't cover."
+        }
+       },
+       "required": [
+        "query",
+        "objective"
+       ]
+      }
+     },
+     {
+      "name": "fetch_url",
+      "description": "Read the full contents of web pages you already have URLs for, such as pages returned by a search or mentioned by the user. Only those URLs can be fetched; search for anything else. Pages are numbered like search results; cite them the same way, one number per bracket, as in [2] or [2][5].",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "urls": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Absolute URLs of the pages to read, including the scheme. Pass several URLs to read them in a single call."
+        }
+       },
+       "required": [
+        "urls"
+       ]
+      }
+     },
+     {
+      "name": "generate_image",
+      "description": "Generate an image from a text description, or edit an image by passing its path. The new image is saved under images/ and shown to you, and the user already has it: it needs no review_file or deliver_file. An edit starts from that image and your prompt alone, not from earlier prompts, so describe the change fully.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "prompt": {
+         "type": "string",
+         "description": "What the image should show, or for an edit, the change to make"
+        },
+        "image": {
+         "type": "string",
+         "description": "Path to the image to edit (relative or absolute). Omit it to make a new image"
+        }
+       },
+       "required": [
+        "prompt"
+       ]
+      }
+     },
+     {
+      "name": "generate_audio",
+      "description": "Turn text into speech. The audio is saved under audio/, and the user already has it: it needs no deliver_file. At most 4096 characters per call.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "text": {
+         "type": "string",
+         "description": "The text to speak, at most 4096 characters"
+        }
+       },
+       "required": [
+        "text"
+       ]
+      }
+     },
+     {
+      "name": "review_file",
+      "description": "Check a PDF, document, slides or image before sending it with deliver_file, which refuses one not reviewed since it last changed. Returns the page count, every page as a numbered thumbnail on one image, and each page's first line; for an image, the image. To see a page in detail, use read with pages.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to review (relative or absolute)"
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "deliver_file",
+      "description": "Send a file from the sandbox to the user, who can open or download it. Use it for every file the user asked for, once it is finished. A PDF, document, slides or image must be reviewed with review_file first. A document or slides also goes out as a PDF.",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "path": {
+         "type": "string",
+         "description": "Path to the file to send (relative or absolute)"
+        }
+       },
+       "required": [
+        "path"
+       ]
+      }
+     },
+     {
+      "name": "todo",
+      "description": "Updates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "explanation": {
+         "type": "string",
+         "description": "Optional explanation for this plan update."
+        },
+        "plan": {
+         "type": "array",
+         "description": "The list of steps",
+         "items": {
+          "type": "object",
+          "properties": {
+           "step": {
+            "type": "string",
+            "description": "Task step text."
+           },
+           "status": {
+            "type": "string",
+            "enum": [
+             "pending",
+             "in_progress",
+             "completed"
+            ],
+            "description": "Step status."
+           }
+          },
+          "required": [
+           "step",
+           "status"
+          ]
+         }
+        }
+       },
+       "required": [
+        "plan"
+       ]
+      }
+     },
+     {
+      "name": "ask_user",
+      "description": "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- Users will always be able to select \"Other\" to provide custom text input\n- Use multiSelect: true to allow multiple answers to be selected for a question\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label",
+      "strict": false,
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "questions": {
+         "type": "array",
+         "minItems": 1,
+         "maxItems": 4,
+         "description": "Questions to ask the user (1-4 questions)",
+         "items": {
+          "type": "object",
+          "properties": {
+           "question": {
+            "type": "string",
+            "description": "The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: \"Which grade level is this for?\" If multiSelect is true, phrase it accordingly, e.g. \"Which sections should the quiz cover?\" Each question's text must be unique."
+           },
+           "header": {
+            "type": "string",
+            "description": "Very short label displayed as a chip/tag (max 12 chars). Examples: \"Grade\", \"Format\", \"Length\"."
+           },
+           "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "description": "The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). There should be no 'Other' option, that will be provided automatically.",
+            "items": {
+             "type": "object",
+             "properties": {
+              "label": {
+               "type": "string",
+               "description": "The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice."
+              },
+              "description": {
+               "type": "string",
+               "description": "Explanation of what this option means or what will happen if chosen."
+              }
+             },
+             "required": [
+              "label",
+              "description"
+             ]
+            }
+           },
+           "multiSelect": {
+            "type": "boolean",
+            "description": "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive."
+           }
+          },
+          "required": [
+           "question",
+           "header",
+           "options",
+           "multiSelect"
+          ]
+         }
+        }
+       },
+       "required": [
+        "questions"
+       ]
+      }
+     }
+    ],
+    "stream": true
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "text/event-stream; charset=utf-8",
+   "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-haiku-5-5\",\"id\":\"msg_011CgBUaYGPZeT4s4AWWBhyp\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":162,\"cache_read_input_tokens\":4006,\"cache_creation\":{\"ephemeral_5m_input_tokens\":162,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":1,\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}   }\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}   }\n\nevent: ping\ndata: {\"type\": \"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}        }\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0              }\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":162,\"cache_read_input_tokens\":4006,\"output_tokens\":3,\"output_tokens_details\":{\"thinking_tokens\":0}}     }\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"   }\n\n"
+  }
+ }
+]
