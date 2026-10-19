@@ -2,8 +2,10 @@
 
 The failures are crafted in front of recorded exchanges: providers don't fail on cue.
 """
+import gc
 import json
 import time
+import types
 
 import pytest
 from any_llm.exceptions import InvalidRequestError, ProviderError, RateLimitError
@@ -49,19 +51,38 @@ async def speech(llm, candidate):
     ((failed("openai_configured", "server_error"), "openai_configured"), plain, CONFIGURED["openai"], "server_error"),
     ((cut("anthropic_loop_stream", "content_block_start", OVERLOADED), exchanges("anthropic_loop_stream")[:1]),
      streamed, LOOPS["anthropic"], "Overloaded"),  # an error event inside a 200 stream
-    ((cut("anthropic_loop_stream", "message_delta"), exchanges("anthropic_loop_stream")[:1]),
-     streamed, LOOPS["anthropic"], "ended before"),  # no message_stop
     ((cut("fireworks_loop_stream", '"usage":{'), exchanges("fireworks_loop_stream")[:1]),
      streamed, LOOPS["fireworks"], "ended before"),  # no closing usage
     ((cut("openai_speech", "speech.audio.done"), "openai_speech"), speech, SPEECH, "ended before"),
-], ids=["500", "openai-failed-server-error", "overloaded-mid-stream", "cut-stream", "completion-without-closing-usage",
-        "cut-speech"])
+], ids=["500", "openai-failed-server-error", "overloaded-mid-stream", "completion-without-closing-usage",
+        "cut-speech"])  # a cut anthropic stream is the reset test's
 async def test_a_transient_failure_is_tried_again(steps, call, candidate, why, recorded, llm):
     recorded(*steps)
     made = await call(llm, candidate)
     [attempt] = made.attempts
     [error] = attempt.errors
     assert isinstance(error, ProviderError) and why in str(error)
+
+
+def bodies(root: object, text: str) -> list[bytes]:
+    """The bytes reachable from root that hold text: an encoded request, say."""
+    found, seen, todo = [], set(), [root]
+    while todo:
+        o = todo.pop()
+        if id(o) in seen or isinstance(o, (type, types.ModuleType)):
+            continue
+        seen.add(id(o))
+        if isinstance(o, bytes) and text.encode() in o:
+            found.append(o)
+        todo += gc.get_referents(o)
+    return found
+
+
+async def test_a_kept_error_holds_no_copy_of_its_request(recorded, llm):
+    recorded(failing("anthropic_configured", 500, SERVER_ERROR), "anthropic_configured")
+    r = await llm.query(CONFIGURED["anthropic"], GREET)
+    [error] = r.attempts[0].errors
+    assert not bodies(error, GREET[0]["content"]), "the error kept the request body"
 
 
 async def test_a_retried_stream_resets_and_starts_a_new_step(recorded, llm):
@@ -76,6 +97,12 @@ async def test_a_rate_limit_waits_for_its_retry_after(recorded, llm):
     r = await llm.query(CONFIGURED["anthropic"], GREET)
     assert isinstance(r.attempts[0].errors[0], RateLimitError)
     assert r.latency - r.attempts[0].latency >= 0.9, "the second try started before Retry-After passed"
+
+
+async def test_a_retry_after_past_a_minute_ends_the_candidate(recorded, llm):
+    recorded(failing("anthropic_configured", 429, RATE_LIMITED, headers={"retry-after": "61"}))  # one try only
+    with pytest.raises(RateLimitError):
+        await llm.query(CONFIGURED["anthropic"], GREET)
 
 
 async def test_a_rate_limit_without_retry_after_waits_a_minute_once(recorded, monkeypatch, llm):

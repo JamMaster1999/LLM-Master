@@ -71,9 +71,9 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
                         yield item
         except Exception as e:
             attempt.latency += time.monotonic() - began
-            traceback.clear_frames(e.__traceback__)  # the error stays on the attempt; its request needn't
+            _unload(e)  # the error stays on the attempt; its request needn't
             attempt.errors.append(e)
-            if (pause := _pause(e, n, attempt.errors)) is None:
+            if (pause := _pause(attempt.errors)) is None:
                 raise
             await asyncio.sleep(pause)
             continue
@@ -107,29 +107,44 @@ def _retryable(e: Exception) -> bool:
     return isinstance(e, ProviderError) and not isinstance(e, CutCall) and not 400 <= (e.status_code or 0) < 500
 
 
-def _pause(e: Exception, n: int, errors: list[Exception]) -> float | None:
-    """Seconds before try n + 1, or None when the candidate stops: its last try, an error a retry would
-    repeat, or a second 429 without Retry-After. errors holds the candidate's errors so far, e last."""
+def _pause(errors: list[Exception]) -> float | None:
+    """Seconds before the next try, or None when the candidate stops: its last try, an error a retry would
+    repeat, a Retry-After past a minute, or a second 429 without one. errors holds every try's error so far."""
+    e, n = errors[-1], len(errors)  # every earlier try failed too, or the call would have answered
     if n == TRIES or not _retryable(e):
         return None
     if not isinstance(e, RateLimitError):
         return random.uniform(0, 0.5 * 2 ** (n - 1))  # full jitter
     if (after := _after(e)) is not None:
-        return min(after, MINUTE)
+        return after if after <= MINUTE else None  # a limit that outlasts the minute won't clear in time
     blind = [x for x in errors if isinstance(x, RateLimitError) and _after(x) is None]
     return MINUTE if len(blind) == 1 else None  # a per-minute limit clears in a minute; a spend cap never
 
 
 def _after(e: RateLimitError) -> float | None:
-    return _seconds(e.retry_after) if e.retry_after else None
-
-
-def _seconds(retry_after: str) -> float | None:
-    """Retry-After is a number of seconds or an HTTP date."""
+    """The provider's Retry-After in seconds, a number or an HTTP date; None when it sent none."""
+    if not e.retry_after:
+        return None
     try:
-        return max(0.0, float(retry_after))
+        return max(0.0, float(e.retry_after))
     except ValueError:
         try:
-            return max(0.0, (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds())
+            return max(0.0, (parsedate_to_datetime(e.retry_after) - datetime.now(timezone.utc)).total_seconds())
         except (TypeError, ValueError):
             return None
+
+
+def _unload(e: BaseException) -> None:
+    """Drops what a kept error holds of its request: its frames' locals, and the HTTP exchange each error in its
+    chain keeps, the SDK's included, with the request body and its media. Request ids, statuses and codes stay."""
+    seen, todo = set(), [e]
+    while todo:
+        x = todo.pop()
+        if x is None or id(x) in seen:
+            continue
+        seen.add(id(x))
+        traceback.clear_frames(x.__traceback__)
+        for name in ("request", "_request", "response", "_response"):  # where SDK and httpx errors keep it
+            if name in vars(x):
+                setattr(x, name, None)
+        todo += [getattr(x, "original_exception", None), x.__cause__, x.__context__]

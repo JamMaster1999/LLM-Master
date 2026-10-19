@@ -275,7 +275,8 @@ call and never go into history:
   - provider, model and latency;
   - `errors`: one typed exception per failed try, in order, empty when the first try worked.
     Each carries any-llm's `message`, `status_code`, `code` and `error_type`, plus the SDK's
-    original exception with the provider's request id. The answering attempt can have errors
+    original exception with the provider's request id. The SDK's HTTP request and response are
+    dropped, so a kept error holds no copy of the request (SPEC.md Failures). The answering attempt can have errors
     too, when a retry succeeded.
 - `latency` — wall time of the whole call after the moderation pre-check, including waits between
   retries and for the rate limiter, so it can exceed the sum of the attempts.
