@@ -23,6 +23,7 @@ MAX_FILE = 50 * 1024 * 1024  # the most any tool pulls out of the sandbox at onc
 IMAGE_SIDE = 1568  # px on the long side
 IMAGE_BYTES = 3_750_000  # an image passed through as is: 5 MB as base64, the strictest provider's cap
 VIEWS = "/workspace/.agent/views"
+SOURCE, TRANSCRIPT, DURATION, TEXT = "source.pdf", "transcript.jsonl", "duration", "text.txt"  # in a view
 VIEW_VERSION = b"1"  # hashed with each file's bytes: a change to what views hold builds them all anew
 
 FAMILIES = {
@@ -44,8 +45,7 @@ class Problem(Exception):
 
 
 class Transcribe(Exception):
-    """A recording has no view yet. The host makes it, since the sandbox has no network; the
-    arguments are the snapshot to transcribe and the view's folder."""
+    """A recording has no view yet. The host makes it, since the sandbox has no network."""
 
 
 def read(path: str, shown: str, offset: int | None, limit: int | None, pages: str | None) -> list[dict]:
@@ -57,47 +57,45 @@ def read(path: str, shown: str, offset: int | None, limit: int | None, pages: st
     size = os.path.getsize(path)
     if size > MAX_FILE:
         raise Problem(f"{shown} is {format_size(size)}, over the {format_size(MAX_FILE)} limit. Use bash to work with it.")
-    family = _family(path)
+    family = family_of(path)
     if pages and family != "pages":
         raise Problem(f"{shown} has no pages. pages works on PDFs, documents and slides.")
     if family == "image":
-        return _image(path)
+        image = _image(_load(path))
+        return [_text(f"Read image file [{image['mime']}]"), image]
     if family == "sheet":
         return [_text(_sheets(path))]
     if family in ("pages", "audio", "book"):
         view = _view(path, family, shown)
         if pages:
             return _page_images(view, pages, shown)
-        text, source = _transcript(view)
+        text, source = _transcript(view, family)
         return [_text(page(text, _shown(source), offset, limit))]
-    if family == "text" and (text := _decode(path)) is not None:
+    if family == "text" and (text := _decode(_load(path))) is not None:
         return [_text(page(text, shown, offset, limit))]
     raise Problem(f"read doesn't support {UNSUPPORTED[family].lower()} yet. Use bash to work with {shown}.")
 
 
 def attach(path: str, shown: str) -> list[dict]:
     """The user message's parts for an upload: its path, and what read would show within read's limits."""
-    family = _family(path)
-    try:
-        if family == "image":
-            return [_text(attached(shown)), *_image(path)[1:]]
-        if family == "sheet":
-            return [_text(attached(shown))]
-        if family in ("pages", "audio"):
-            text, source = _transcript(_view(path, family, shown))
-            entries = _entries(source)
-            size = f"{len(entries)} pages" if family == "pages" else _clock(_duration(source))
-            note = (f"Its transcript is too long to show here. Search {_shown(source)} with bash (rg, grep), and read "
-                    f"{shown} with offset and limit" + (", or with pages to see page images." if family == "pages" else "."))
-            return [_text(attached(f"{shown} ({size})", text if fits(text) else note))]
-        if family == "book":
-            text, source = _transcript(_view(path, family, shown))
-            return [_text(attached(shown, page(text, _shown(source), None, None)))]
-        if family == "text" and (text := _decode(path)) is not None:
-            return [_text(attached(shown, page(text, shown, None, None)))]
-        return [_text(attached(shown, f"{UNSUPPORTED[family]} aren't supported yet."))]
-    except Problem as problem:
-        return [_text(attached(shown, str(problem)))]
+    family = family_of(path)
+    if family == "image":
+        return [_text(attached(shown)), _image(_load(path))]
+    if family == "sheet":
+        return [_text(attached(shown))]
+    if family in ("pages", "audio"):
+        view = _view(path, family, shown)
+        text, source = _transcript(view, family)
+        size = f"{len(os.listdir(f'{view}/pages'))} pages" if family == "pages" else _clock(_duration(view))
+        note = (f"Its transcript is too long to show here. Search {_shown(source)} with bash (rg, grep), and read "
+                f"{shown} with offset and limit" + (", or with pages to see page images." if family == "pages" else "."))
+        return [_text(attached(f"{shown} ({size})", text if fits(text) else note))]
+    if family == "book":
+        text, source = _transcript(_view(path, family, shown), family)
+        return [_text(attached(shown, page(text, _shown(source), None, None)))]
+    if family == "text" and (text := _decode(_load(path))) is not None:
+        return [_text(attached(shown, page(text, shown, None, None)))]
+    return [_text(attached(shown, f"{UNSUPPORTED[family]} aren't supported yet."))]
 
 
 def attached(shown: str, body: str = "") -> str:
@@ -150,60 +148,71 @@ def format_size(n: int) -> str:
     return f"{n / 1024 / 1024:.1f}MB"
 
 
-def _family(path: str) -> str:
+def family_of(path: str) -> str:
     extension = os.path.splitext(path)[1].lower()
     return next((family for family, extensions in FAMILIES.items() if extension in extensions), "text")
 
 
-def _decode(path: str) -> str | None:
-    """The file as text: UTF-8, UTF-16 with a BOM, or a legacy encoding charset-normalizer finds.
-    None for a binary file."""
+def view_hash(data: bytes) -> str:
+    """The name of a file's view folder."""
+    return hashlib.sha256(VIEW_VERSION + data).hexdigest()[:16]
+
+
+def _load(path: str) -> bytes:
     with open(path, "rb") as f:
-        data = f.read()
+        return f.read()
+
+
+def _decode(data: bytes) -> str | None:
+    """The bytes as text: UTF-8, UTF-16 with a BOM, or a legacy encoding charset-normalizer finds.
+    None for a binary file."""
     if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
         return data.decode("utf-16")
-    if re.search(rb"[\x00-\x08\x0e-\x1a\x1c-\x1f]", data[:8192]):  # control bytes no text holds
+    if re.search(rb"[\x00-\x08\x0e-\x19\x1c-\x1f]", data[:8192]):  # control bytes no text holds; DOS ends at \x1a
         return None
-    try:
-        return data.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        import charset_normalizer  # pyright: ignore[reportMissingImports]  (the sandbox has it)
-        matches = charset_normalizer.from_bytes(data)
-        if not (best := matches.best()):
-            return None
-        # a tie goes to Windows' Western code page, the commonest legacy one; charset-normalizer
-        # would pick cp1250 and turn French è into č
-        return str(next((match for match in matches if match.encoding == "cp1252"
-                         and (match.chaos, match.coherence) == (best.chaos, best.coherence)), best))
+    text = data.decode("utf-8", errors="replace").removeprefix("\ufeff")
+    stray = text.count("\ufffd")
+    if len(re.findall("[^\x00-\x7f\ufffd]", text)) >= stray:  # UTF-8, perhaps with a stray byte
+        return text
+    import charset_normalizer  # pyright: ignore[reportMissingImports]  (the sandbox has it)
+    matches = charset_normalizer.from_bytes(data)
+    if not (best := matches.best()):
+        return text
+    # a tie goes to Windows' Western code page, the commonest legacy one; charset-normalizer
+    # would pick cp1250 and turn French è into č
+    return str(next((match for match in matches if match.encoding == "cp1252"
+                     and (match.chaos, match.coherence) == (best.chaos, best.coherence)), best))
 
 
 def _view(path: str, family: str, shown: str) -> str:
-    """The file's view folder, built if it's missing (TOOLS.md, Files). One snapshot of the file is
-    hashed and built, so a file changed meanwhile can't land under another version's hash. A build
+    """The file's view folder, built if it's missing (TOOLS.md, Files). The build uses the bytes
+    that were hashed, so a file changed meanwhile can't land under another version's hash. It
     happens in a temp folder renamed into place, so a crash leaves no half-made view and parallel
     builds don't collide."""
-    local = tempfile.mkdtemp()  # off the volume; the host removes it after a transcription
-    snapshot = f"{local}/{os.path.basename(path)}"
-    shutil.copyfile(path, snapshot)
-    digest = hashlib.sha256(VIEW_VERSION)
-    with open(snapshot, "rb") as f:
-        digest.update(f.read())
-    view = f"{VIEWS}/{digest.hexdigest()[:16]}"
-    if family == "audio" and not os.path.isdir(view):
-        raise Transcribe(snapshot, view)
+    data = _load(path)
+    view = f"{VIEWS}/{view_hash(data)}"
+    if os.path.isdir(view):
+        return view
+    if family == "audio":
+        raise Transcribe()
     work = f"{view}.{uuid.uuid4().hex[:8]}"
+    os.makedirs(work)
     try:
-        if not os.path.isdir(view):
-            os.makedirs(work)
-            (_pages_view if family == "pages" else _book_view)(snapshot, shown, work)
-            try:
-                os.rename(work, view)
-            except OSError:  # a parallel build of the same file got there first
-                if not os.path.isdir(view):
-                    raise
+        with tempfile.TemporaryDirectory() as local:  # the snapshot, off the volume
+            snapshot = f"{local}/{os.path.basename(path)}"
+            with open(snapshot, "wb") as f:
+                f.write(data)
+            if family == "pages":
+                _pages_view(snapshot, shown, work)
+            else:  # an ebook or notebook: a plain-text copy
+                _run("pandoc", snapshot, "-t", "plain", "--wrap=none", "-o", f"{work}/{TEXT}")
+        try:
+            os.rename(work, view)
+        except OSError:  # a parallel build of the same file got there first
+            if not os.path.isdir(view):
+                raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
-        shutil.rmtree(local)
     return view
 
 
@@ -211,7 +220,7 @@ def _pages_view(path: str, shown: str, out: str) -> None:
     """source.pdf, pages/<n>.jpg and a transcript of each page's text, from Indra."""
     import indra_ocr  # pyright: ignore[reportMissingImports]
     import pypdfium2  # pyright: ignore[reportMissingImports]
-    pdf = f"{out}/source.pdf"
+    pdf = f"{out}/{SOURCE}"
     if path.lower().endswith(".pdf"):
         shutil.copyfile(path, pdf)
     else:
@@ -237,41 +246,31 @@ def _pages_view(path: str, shown: str, out: str) -> None:
         raise Problem(f"Could not read {shown}: {pages}")
     if render.returncode:
         raise Problem(f"pdftoppm failed: {errors.strip() or 'no reason given'}")
-    with open(f"{out}/transcript.jsonl", "w") as f:
+    with open(f"{out}/{TRANSCRIPT}", "w") as f:
         for index, result in pages:
             text = result.markdown if result.markdown is not None else result.text
             f.write(json.dumps({"page": index + 1, "text": text}, ensure_ascii=False) + "\n")
     for name in os.listdir(f"{out}/pages"):  # p-01.jpg, padded to the page count's digits
-        os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name[2:-4])}.jpg")
+        os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name.removeprefix('p-').removesuffix('.jpg'))}.jpg")
 
 
-def _book_view(path: str, shown: str, out: str) -> None:
-    """A plain-text copy of an ebook or notebook, through pandoc."""
-    _run("pandoc", path, "-t", "plain", "--wrap=none", "-o", f"{out}/text.txt")
-
-
-def _transcript(view: str) -> tuple[str, str]:
-    """A view's text as read shows it, and the file it comes from."""
-    if os.path.exists(f"{view}/text.txt"):
-        with open(f"{view}/text.txt") as f:
-            return f.read(), f"{view}/text.txt"
-    source = f"{view}/transcript.jsonl"
-    entries = _entries(source)
-    if entries and "page" in entries[0]:
-        return "\n\n".join(f"## Page {entry['page']}\n{entry['text']}" for entry in entries), source
+def _transcript(view: str, family: str) -> tuple[str, str]:
+    """A view's text as read shows it, and the file to search for it."""
+    if family == "book":
+        with open(f"{view}/{TEXT}") as f:
+            return f.read(), f"{view}/{TEXT}"
+    with open(f"{view}/{TRANSCRIPT}") as f:
+        entries = [json.loads(line) for line in f]
+    if family == "pages":
+        return "\n\n".join(f"## Page {entry['page']}\n{entry['text']}" for entry in entries), f"{view}/{TRANSCRIPT}"
     return "\n".join(f"[{_clock(entry['start'])}] " + (f"Speaker {entry['speaker']}: " if entry["speaker"] else "")
-                     + entry["text"] for entry in entries), source
+                     + entry["text"] for entry in entries), f"{view}/{TRANSCRIPT}"
 
 
-def _duration(source: str) -> float:
+def _duration(view: str) -> float:
     """A recording's length in seconds, as Together measured it."""
-    with open(f"{os.path.dirname(source)}/duration") as f:
+    with open(f"{view}/{DURATION}") as f:
         return float(f.read())
-
-
-def _entries(source: str) -> list[dict]:
-    with open(source) as f:
-        return [json.loads(line) for line in f]
 
 
 def _page_images(view: str, pages: str, shown: str) -> list[dict]:
@@ -301,29 +300,28 @@ def _shown(path: str) -> str:
     return path.removeprefix("/workspace/")
 
 
-def _image(path: str) -> list[dict]:
+def _image(data: bytes) -> dict:
+    """The image part, under the shared image rule."""
     from PIL import Image, ImageOps  # pyright: ignore[reportMissingImports]  (the sandbox has these)
     import pillow_heif  # pyright: ignore[reportMissingImports]
     pillow_heif.register_heif_opener()
-    image = Image.open(path)
+    image = Image.open(io.BytesIO(data))
     upright = image.getexif().get(0x0112, 1) == 1  # models read no EXIF, so a turned photo must be turned
     if (image.format in ("PNG", "JPEG", "GIF", "WEBP") and max(image.size) <= IMAGE_SIDE and upright
-            and os.path.getsize(path) <= IMAGE_BYTES):
-        mime = Image.MIME[image.format]
-        with open(path, "rb") as f:
-            data = f.read()
-    else:  # too big, turned, or a format providers don't take: redraw it, JPEG unless it's transparent
-        image = ImageOps.exif_transpose(image)
-        image.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
-        data, mime = b"", "image/png"
-        if image.mode in ("RGBA", "LA") or "transparency" in image.info:
-            image = image.convert("RGBA")
-            data = _encoded(image, "PNG")
-        if not data or len(data) > IMAGE_BYTES:  # a transparent photo can top 9 MB as PNG: JPEG it on white
-            if image.mode == "RGBA":  # dropping alpha alone would show whatever color the clear areas hide
-                image = Image.alpha_composite(Image.new("RGBA", image.size, "white"), image)
-            data, mime = _encoded(image.convert("RGB"), "JPEG"), "image/jpeg"
-    return [_text(f"Read image file [{mime}]"), _image_part(data, mime)]
+            and len(data) <= IMAGE_BYTES):
+        return _image_part(data, Image.MIME[image.format])
+    # too big, turned, or a format providers don't take: redraw it, JPEG unless it's transparent
+    image = ImageOps.exif_transpose(image)
+    image.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+    data, mime = b"", "image/png"
+    if image.mode in ("RGBA", "LA") or "transparency" in image.info:
+        image = image.convert("RGBA")
+        data = _encoded(image, "PNG")
+    if not data or len(data) > IMAGE_BYTES:  # a transparent photo can top 9 MB as PNG: JPEG it on white
+        if image.mode == "RGBA":  # dropping alpha alone would show whatever color the clear areas hide
+            image = Image.alpha_composite(Image.new("RGBA", image.size, "white"), image)
+        data, mime = _encoded(image.convert("RGB"), "JPEG"), "image/jpeg"
+    return _image_part(data, mime)
 
 
 def _encoded(image, format: str) -> bytes:
@@ -374,11 +372,10 @@ def _convert(path: str, to: str, work: str) -> str:
     return converted[0]
 
 
-def _run(*args: str) -> str:
+def _run(*args: str) -> None:
     done = subprocess.run(args, capture_output=True, text=True)
     if done.returncode:
         raise Problem(f"{args[0]} failed: {done.stderr.strip() or 'no reason given'}")
-    return done.stdout
 
 
 def _text(text: str) -> dict:
@@ -395,5 +392,5 @@ if __name__ == "__main__":
         print(json.dumps({"content": {"read": read, "attach": attach}[request.pop("do")](**request)}))
     except Problem as problem:
         print(json.dumps({"problem": str(problem)}))
-    except Transcribe as needed:
-        print(json.dumps({"transcribe": needed.args}))
+    except Transcribe:
+        print(json.dumps({"transcribe": True}))

@@ -22,7 +22,7 @@ IMAGE = (modal.Image.debian_slim(python_version="3.13")  # Debian bookworm
                        "apt-get update && apt-get install -y -t bookworm-backports libreoffice-nogui")  # 25.2, not 7.4
          .apt_install("poppler-utils", "pandoc", "fonts-liberation", "fonts-dejavu", "fonts-crosextra-carlito",
                       "fonts-crosextra-caladea", "fonts-noto-core", "procps")
-         .uv_pip_install("pillow", "pillow-heif", "openpyxl", "charset-normalizer", "indra-ocr")
+         .uv_pip_install("pillow", "pillow-heif", "openpyxl", "charset-normalizer", "indra-ocr==0.3.2", "pypdfium2")
          # the weights, since the sandbox can't download them
          .run_commands(f"python -c 'import indra_ocr, shutil; shutil.copytree(indra_ocr.model_dir(), \"{INDRA_MODELS}\")'")
          .env({"INDRA_OCR_MODEL_DIR": INDRA_MODELS}))

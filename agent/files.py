@@ -12,13 +12,15 @@ from modal.types import FileType
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
-from agent.reader import MAX_FILE, attached, format_size
+from agent.reader import DURATION, MAX_FILE, TRANSCRIPT, VIEWS, attached, format_size, view_hash
 from agent.result import Result, ToolError, UserFile
 from agent.sandbox import Sandbox, resolve
+from agent.shell import MAX_ARGUMENT
 from agent.transcribe import transcribe
 
 READ_TIMEOUT = 300  # a view's first build: LibreOffice and Indra on up to 100 pages
 _READER = resources.files("agent").joinpath("reader.py").read_text()
+assert len(_READER.encode()) <= MAX_ARGUMENT, "reader.py goes to the sandbox as one exec argument"
 
 READ = {"type": "function", "function": {
     "name": "read",
@@ -82,15 +84,19 @@ _EDITS: TypeAdapter[list[Edit] | Edit] = TypeAdapter(list[Edit] | Edit)
 
 
 async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] | None = None,
-               limit: Annotated[int, Field(ge=1)] | None = None, pages: str | None = None) -> Result:
-    content = await _reader(sandbox, "read", path, offset=offset, limit=limit, pages=pages)
+               limit: Annotated[int, Field(ge=1)] | None = None, pages: str | int | None = None) -> Result:
+    content = await _reader(sandbox, "read", path, offset=offset, limit=limit,
+                            pages=None if pages is None else str(pages))
     return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
 
 
 async def upload(sandbox: Sandbox, name: str, data: bytes) -> str:
     """Saves an upload unchanged under uploads/; a taken name gets a number, as in `notes (2).pdf`.
     Returns its path. Run one at a time, so two uploads can't take one name."""
-    stem, extension = posixpath.splitext(posixpath.basename(name))
+    name = posixpath.basename(name)
+    if not name.strip("."):  # "", "." and ".." would name the folder itself
+        name = "upload"
+    stem, extension = posixpath.splitext(name)
     number = 1
     while True:
         path = f"uploads/{stem}{f' ({number})' if number > 1 else ''}{extension}"
@@ -116,10 +122,12 @@ async def _reader(sandbox: Sandbox, do: str, path: str, **arguments) -> list[dic
     request = json.dumps({"do": do, "path": resolve(path), "shown": path, **arguments})
     answer = await _run_reader(sandbox, request, path)
     if "transcribe" in answer:
-        await _transcribe(sandbox, path, *answer["transcribe"])
+        await _transcribe(sandbox, path)
         answer = await _run_reader(sandbox, request, path)
-    if "content" not in answer:  # a problem, or a recording that changed while it was transcribed
-        raise ToolError(answer.get("problem") or f"{path} changed while it was being read. Read it again.")
+        if "transcribe" in answer:
+            raise ToolError(f"{path} changed while it was being transcribed. Read it again.")
+    if "problem" in answer:
+        raise ToolError(answer["problem"])
     return answer["content"]
 
 
@@ -135,19 +143,21 @@ async def _run_reader(sandbox: Sandbox, request: str, path: str) -> dict:
     return json.loads(stdout)
 
 
-async def _transcribe(sandbox: Sandbox, path: str, snapshot: str, view: str) -> None:
-    """A recording's view, its transcript and length, made from the reader's snapshot of it as
-    reader.py makes the others: in a temp folder renamed into place."""
-    try:
-        duration, lines = await transcribe(posixpath.basename(path), await sandbox.read(snapshot))
-    finally:
-        await sandbox.exec("rm", "-r", posixpath.dirname(snapshot), timeout=30)
+async def _transcribe(sandbox: Sandbox, path: str) -> None:
+    """A recording's view, its transcript and length, under the hash of the bytes sent to Together.
+    Like reader.py's views, it's made in a temp folder renamed into place."""
+    data = await load(sandbox, path)
+    view = f"{VIEWS}/{view_hash(data)}"
+    duration, lines = await transcribe(posixpath.basename(path), data)
     work = f"{view}.{uuid.uuid4().hex[:8]}"
-    await sandbox.write(f"{work}/transcript.jsonl",
+    await sandbox.write(f"{work}/{TRANSCRIPT}",
                         "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines).encode())
-    await sandbox.write(f"{work}/duration", str(duration).encode())
+    await sandbox.write(f"{work}/{DURATION}", str(duration).encode())
     # a parallel build that got there first wins
-    await sandbox.exec("bash", "-c", 'mv -T "$1" "$2" 2>/dev/null || rm -r "$1"', "bash", work, view, timeout=30)
+    code, _, stderr = await sandbox.exec("bash", "-c", 'mv -T "$1" "$2" || { [ -d "$2" ] && rm -r "$1"; }', "bash",
+                                         work, view, timeout=30)
+    if code:
+        raise ToolError(f"Could not save the transcript of {path}: {stderr.decode(errors='replace').strip()}")
 
 
 async def write(sandbox: Sandbox, path: str, content: str) -> str:

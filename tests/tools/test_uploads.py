@@ -58,6 +58,7 @@ async def test_a_text_upload_shows_its_text_and_a_taken_name_gets_a_number(box):
     assert long.startswith("Attached file: uploads/notes (2).txt\n\n1\n2\n")
     assert long.endswith("[Showing lines 1-2000 of 3000. Use offset=2001 to continue, "
                          "or search uploads/notes (2).txt with bash (rg, grep).]")
+    assert texts(await box.attach("", b"hi")) == ["Attached file: uploads/upload\n\nhi"]  # not the folder itself
 
 
 async def test_text_decodes_from_utf16_and_legacy_encodings_and_binary_is_not_supported(box):
@@ -65,6 +66,8 @@ async def test_text_decodes_from_utf16_and_legacy_encodings_and_binary_is_not_su
     assert texts(await box.attach("names.txt", "Zoë\n".encode("utf-16"))) == ["Attached file: uploads/names.txt\n\nZoë"]
     assert texts(await box.attach("marks.csv", french.encode("cp1252"))) == [
         f"Attached file: uploads/marks.csv\n\n{french.strip()}"]
+    assert texts(await box.attach("names.csv", "Élève,Note\nZoë,9\nO".encode() + b"\x92Brien,8\n")) == [
+        "Attached file: uploads/names.csv\n\nÉlève,Note\nZoë,9\nO\ufffdBrien,8"]  # UTF-8 with a stray byte
     assert texts(await box.attach("blob.bin", b"PK\x03\x04\xff\xfe")) == [
         "Attached file: uploads/blob.bin\n\nBinary files aren't supported yet."]
 
@@ -105,7 +108,7 @@ async def test_a_long_transcript_is_searched_rather_than_shown(box):
 
 async def test_read_shows_pages_as_images(box):
     await bash(box, DOCUMENT + " && echo hi > notes.txt")
-    label, image = (await box.run("read", {"path": "pages.pdf", "pages": "2"})).content
+    label, image = (await box.run("read", {"path": "pages.pdf", "pages": 2})).content  # a number works too
     assert label == {"type": "text", "text": "Page 2 of 2"}
     assert base64.b64decode(image["data"])[:2] == b"\xff\xd8"
     for path, pages, message in [("pages.pdf", "1-11", 'pages "1-11" asks for 11 pages. Ask for at most 10 per call.'),
@@ -148,16 +151,12 @@ async def test_a_notebook_reads_as_text(box):
 
 @pytest.fixture
 def together(monkeypatch, request):
-    """Stands in for Together: keeps each request's form fields and answers with a teacher and a
-    student, whose answer shares the teacher's second segment."""
-    teacher = [("Good", 0.1), ("morning,", 0.4), ("class.", 1.0), ("What", 4.3), ("gas", 4.6), ("do", 4.9),
-               ("plants", 5.1), ("give", 5.5), ("off?", 5.8)]
+    """Stands in for Together: keeps each request's form fields and answers with two speakers."""
     reply = {"duration": 12.5,
              "segments": [{"start": 0.0, "end": 4.2, "text": " Good morning, class."},
-                          {"start": 4.2, "end": 9.8, "text": " What gas do plants give off? Oxygen."}],
-             "words": [{"word": word, "start": start, "end": start + 0.3, "speaker_id": "SPEAKER_03"}
-                       for word, start in teacher] + [
-                       {"word": "Oxygen.", "start": 8.0, "end": 8.6, "speaker_id": "SPEAKER_00"}]}
+                          {"start": 4.2, "end": 9.8, "text": " Morning!"}],
+             "words": [{"word": "Good", "start": 0.1, "end": 0.4, "speaker_id": "SPEAKER_03"},
+                       {"word": "Morning!", "start": 4.6, "end": 5.1, "speaker_id": "SPEAKER_00"}]}
     received = []
 
     class Answer(BaseHTTPRequestHandler):
@@ -165,9 +164,9 @@ def together(monkeypatch, request):
             body = self.rfile.read(int(self.headers["Content-Length"]))
             form = email.message_from_bytes(f"Content-Type: {self.headers['Content-Type']}\r\n\r\n".encode() + body,
                                             policy=email.policy.HTTP)
-            received.append({"path": self.path, "authorization": self.headers["Authorization"],
-                             **{part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
-                                for part in form.iter_parts()}})
+            received.append([("path", self.path), ("authorization", self.headers["Authorization"])] + [
+                (part.get_param("name", header="content-disposition"), part.get_payload(decode=True))
+                for part in form.iter_parts()])
             data = json.dumps(reply).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(data)))
@@ -185,24 +184,28 @@ def together(monkeypatch, request):
 
 async def test_a_recording_is_transcribed_on_the_host(box, together):
     [text] = texts(await box.attach("talk.mp3", b"ID3 recording"))
-    assert text == ("Attached file: uploads/talk.mp3 (00:00:12)\n\n[00:00:00] Speaker 1: Good morning, class.\n"
-                    "[00:00:04] Speaker 1: What gas do plants give off?\n[00:00:08] Speaker 2: Oxygen.")
-    assert together == [{"path": "/v1/audio/transcriptions", "authorization": "Bearer test", "file": b"ID3 recording",
-                         "model": b"openai/whisper-large-v3", "response_format": b"verbose_json",
-                         "timestamp_granularities": b"segment", "diarize": b"true", "language": b"auto"}]
-    assert await bash(box, "cat .agent/views/*/transcript.jsonl") == (
+    assert text == ("Attached file: uploads/talk.mp3 (00:00:12)\n\n"
+                    "[00:00:00] Speaker 1: Good morning, class.\n[00:00:04] Speaker 2: Morning!")
+    assert together == [[("path", "/v1/audio/transcriptions"), ("authorization", "Bearer test"),
+                         ("model", b"openai/whisper-large-v3"), ("response_format", b"verbose_json"),
+                         ("timestamp_granularities", b"segment"), ("timestamp_granularities", b"word"),
+                         ("diarize", b"true"), ("language", b"auto"), ("file", b"ID3 recording")]]
+    assert await bash(box, "cat .agent/views/*/transcript.jsonl .agent/views/*/duration") == (
         '{"start": 0.0, "end": 4.2, "speaker": "1", "text": "Good morning, class."}\n'
-        '{"start": 4.3, "end": 6.1, "speaker": "1", "text": "What gas do plants give off?"}\n'
-        '{"start": 8.0, "end": 8.6, "speaker": "2", "text": "Oxygen."}')
+        '{"start": 4.2, "end": 9.8, "speaker": "2", "text": "Morning!"}\n12.5')
     assert (await box.run("read", {"path": "uploads/talk.mp3"})).content == text.split("\n\n", 1)[1]
     assert len(together) == 1  # read found the view
 
 
 async def test_a_failed_transcription_is_a_note_and_read_tries_again(box, together, monkeypatch):
+    monkeypatch.delenv("TOGETHER_API_KEY")
+    assert texts(await box.attach("talk.mp3", b"ID3 recording")) == [
+        "Attached file: uploads/talk.mp3\n\ntalk.mp3 can't be transcribed: the host has no TOGETHER_API_KEY."]
+    monkeypatch.setenv("TOGETHER_API_KEY", "test")
     stand_in = transcribe.TOGETHER_API
     monkeypatch.setattr(transcribe, "TOGETHER_API", "http://127.0.0.1:1/v1")  # nothing listens there
-    assert texts(await box.attach("talk.mp3", b"ID3 recording")) == [
-        "Attached file: uploads/talk.mp3\n\nTogether couldn't transcribe talk.mp3 (ConnectError). Read it to try again."]
+    failed = await box.run("read", {"path": "uploads/talk.mp3"})
+    assert (failed.error, failed.text()) == (True, "Together couldn't transcribe talk.mp3 (ConnectError). Read it to try again.")
     monkeypatch.setattr(transcribe, "TOGETHER_API", stand_in)
     assert (await box.run("read", {"path": "uploads/talk.mp3"})).text().startswith("[00:00:00] Speaker 1: Good morning")
 
