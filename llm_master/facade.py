@@ -1,5 +1,5 @@
 """The facade: one held any-llm client per provider, so every call reuses its connection pool."""
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
 from typing import Literal, get_args, overload
 
 import anthropic
@@ -68,7 +68,7 @@ class LLM:
         """
         return await run(self, candidates, messages, stream, moderation)
 
-    def async_query(self, candidates: Model | Sequence[Model], requests: Sequence[fanout.Request], *,
+    def async_query(self, candidates: Model | Sequence[Model], requests: Iterable[fanout.Request], *,
                     concurrency: int | None = None) -> AsyncGenerator[tuple[int, Response | Exception], None]:
         """Many query() calls at once, at most concurrency in flight (128 when unset). Yields (index, result) as
         each request finishes: its Response, or the error it raised. One failure never stops the others.

@@ -15,9 +15,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 import aiohttp
-import anthropic
-import openai
-from any_llm import AnyLLM
 
 from llm_master.facade import LLM
 from llm_master.fanout import Request
@@ -33,7 +30,6 @@ HAIKU = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(thin
 BAD_KEY = "sk-bench-not-a-key"  # luna answers every call with a 401, so each one fails over
 
 _connectors: list[aiohttp.BaseConnector] = []
-_direct: list = []  # the any-llm clients' transports, closed at the end
 _init = aiohttp.BaseConnector.__init__
 
 
@@ -60,8 +56,9 @@ class Run:
         p95 = statistics.quantiles(self.latencies, n=20)[18] if len(self.latencies) > 1 else float("nan")
         errors = ", ".join(f"{e} ×{self.errors.count(e)}" for e in sorted(set(self.errors))) or "none"
         limits = "/".join(str(n) for n in sorted(self.limits)) or "?"
-        return (f"| {self.name} | {self.wall:.1f} | {p50:.2f} | {p95:.2f} | {errors} | {self.failed_tries} "
-                f"| {self.peak} (limit {limits}) |")
+        slowest = max(self.latencies, default=float("nan"))
+        return (f"| {self.name} | {self.wall:.1f} | {p50:.2f} | {p95:.2f} | {slowest:.2f} | {errors} "
+                f"| {self.failed_tries} | {self.peak} (limit {limits}) |")
 
 
 def history(n: int) -> list[Message]:
@@ -75,7 +72,7 @@ async def watched(run: Run, work: Awaitable[None]) -> Run:
     async def sample():
         while True:
             pools = [c for c in _connectors[first:] if not c.closed]
-            run.peak = max(run.peak, sum(len(c._acquired) for c in pools))
+            run.peak = max(run.peak, sum(len(c._acquired) for c in pools))  # aiohttp's private in-use set
             run.limits |= {c.limit for c in pools}
             await asyncio.sleep(0.01)
 
@@ -89,13 +86,19 @@ async def watched(run: Run, work: Awaitable[None]) -> Run:
     return run
 
 
+def facade(*, per_minute: int | None = None, bad_openai: bool = False) -> LLM:
+    """A fresh LLM, so its pools start cold. bad_openai builds its openai client on a bad key: luna fails fast."""
+    llm = LLM(per_minute=per_minute, update_prices=False)  # no price fetch inside the measured burst
+    if bad_openai:
+        key, os.environ["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"], BAD_KEY
+        llm.client("openai")  # the client reads the key once, when it's built
+        os.environ["OPENAI_API_KEY"] = key
+    return llm
+
+
 async def llm_master(name: str, candidates: list[Model], *, per_minute: int | None = None,
                      bad_openai: bool = False) -> Run:
-    llm, run = LLM(per_minute=per_minute), Run(name)
-    if bad_openai:  # the client reads the key once, when it's built
-        key, os.environ["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"], BAD_KEY
-        llm.client("openai")
-        os.environ["OPENAI_API_KEY"] = key
+    llm, run = facade(per_minute=per_minute, bad_openai=bad_openai), Run(name)
 
     async def work():
         requests: list[Request] = [{"messages": history(n)} for n in range(N)]
@@ -111,21 +114,15 @@ async def llm_master(name: str, candidates: list[Model], *, per_minute: int | No
         await llm.aclose()
 
 
-def client(provider: str, **kwargs) -> AnyLLM:
-    """any-llm's client on the transport the facade gives it."""
-    http = openai.DefaultAioHttpClient() if provider == "openai" else anthropic.DefaultAioHttpClient()
-    _direct.append(http)
-    return AnyLLM.create(provider, unified_exceptions=True, max_retries=0, http_client=http, **kwargs)
-
-
-async def direct(name: str, send: Callable[[int, Run], Awaitable[object]]) -> Run:
-    run, gate = Run(name), asyncio.Semaphore(N)
+async def direct(name: str, send: Callable[[LLM, int, Run], Awaitable[object]], *, bad_openai: bool = False) -> Run:
+    """The same requests through the facade's own any-llm clients, so the transport is the same."""
+    llm, run, gate = facade(bad_openai=bad_openai), Run(name), asyncio.Semaphore(N)
 
     async def one(n: int):
         async with gate:
             began = time.monotonic()
             try:
-                await send(n, run)
+                await send(llm, n, run)
             except Exception as e:
                 run.errors.append(type(e).__name__)
                 return
@@ -133,31 +130,37 @@ async def direct(name: str, send: Callable[[int, Run], Awaitable[object]]) -> Ru
 
     async def work():
         await asyncio.gather(*(one(n) for n in range(N)))
-    return await watched(run, work())
+    try:
+        return await watched(run, work())
+    finally:
+        await llm.aclose()
 
 
 def luna_request(n: int, stream: bool = False) -> dict:
     return build(LUNA, history(n), stream)[1]
 
 
+async def luna(llm: LLM, n: int, run: Run):
+    return await llm.client("openai").aresponses(model=LUNA.model, **luna_request(n))
+
+
+async def failover(llm: LLM, n: int, run: Run):
+    try:
+        return await luna(llm, n, run)
+    except Exception:
+        run.failed_tries += 1
+        return await llm.client("anthropic").amessages(model=HAIKU.model, **build(HAIKU, history(n), False)[1])
+
+
 async def fan_out() -> list[Run]:
     def ours():
         return llm_master("luna answers · llm_master, per_minute=250", [LUNA], per_minute=N)
 
-    def theirs():  # a new client, so its pool starts cold, as each LLM's does
-        luna = client("openai")
-        return direct("luna answers · any-llm", lambda n, run: luna.aresponses(model=LUNA.model, **luna_request(n)))
+    def theirs():
+        return direct("luna answers · any-llm", luna)
     runs = [await ours(), await theirs(), await theirs(), await ours()]  # ABBA, so drift hits both alike
     runs.append(await llm_master("luna fails, Haiku answers · llm_master", [LUNA, HAIKU], bad_openai=True))
-    bad, haiku = client("openai", api_key=BAD_KEY), client("anthropic")
-
-    async def failover(n: int, run: Run):
-        try:
-            return await bad.aresponses(model=LUNA.model, **luna_request(n))
-        except Exception:
-            run.failed_tries += 1
-            return await haiku.amessages(model=HAIKU.model, **build(HAIKU, history(n), False)[1])
-    runs.append(await direct("luna fails, Haiku answers · any-llm", failover))
+    runs.append(await direct("luna fails, Haiku answers · any-llm", failover, bad_openai=True))
     runs.append(await llm_master("luna fails, Haiku answers · llm_master, per_minute=250", [LUNA, HAIKU],
                                  per_minute=N, bad_openai=True))
     return runs
@@ -165,7 +168,7 @@ async def fan_out() -> list[Run]:
 
 async def first_tokens() -> tuple[list[float], list[float]]:
     """Seconds to the first text, per stream, alternating the paths so drift hits both alike."""
-    llm, luna = LLM(), client("openai")
+    llm, held = facade(), facade()
     ours, theirs = [], []
     try:
         for n in range(FIRST_TOKENS):
@@ -175,12 +178,14 @@ async def first_tokens() -> tuple[list[float], list[float]]:
                     first = time.monotonic() - began
             ours.append(first or float("nan"))
             began, first = time.monotonic(), None
-            async for event in await luna.aresponses(model=LUNA.model, **luna_request(n, stream=True)):
+            events = await held.client("openai").aresponses(model=LUNA.model, **luna_request(n, stream=True))
+            async for event in events:
                 if first is None and event.type == "response.output_text.delta":
                     first = time.monotonic() - began
             theirs.append(first or float("nan"))
     finally:
         await llm.aclose()
+        await held.aclose()
     return ours, theirs
 
 
@@ -190,8 +195,8 @@ async def main():
         if sep:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     print(f"## async_query, {N} requests, all in flight\n")
-    print("| run | wall (s) | p50 (s) | p95 (s) | errors | failed tries | peak connections |")
-    print("|---|---|---|---|---|---|---|")
+    print("| run | wall (s) | p50 (s) | p95 (s) | max (s) | errors | failed tries | peak connections |")
+    print("|---|---|---|---|---|---|---|---|")
     for run in await fan_out():
         print(run.row())
     ours, theirs = await first_tokens()
@@ -199,8 +204,6 @@ async def main():
     print("| path | p50 (s) | p95 (s) |\n|---|---|---|")
     for name, times in (("llm_master", ours), ("any-llm", theirs)):
         print(f"| {name} | {statistics.median(times):.2f} | {statistics.quantiles(times, n=20)[18]:.2f} |")
-    for http in _direct:
-        await http.aclose()
 
 
 if __name__ == "__main__":

@@ -97,11 +97,16 @@ async def test_closing_early_cancels_the_requests_still_running(echo, llm):
     assert await asyncio.to_thread(echo.until, lambda seen: seen["hung up"] == 2), "a slow request ran on"
 
 
-async def test_a_v1_request_key_sends_nothing(recorded, llm):
+@pytest.mark.parametrize("candidates, requests, concurrency", [
+    (HAIKU, [*ask("hi"), {**ask("hi")[0], "kwargs": {"temperature": 0}}], None),  # v1's config key
+    (HAIKU, [*ask("hi"), {"moderation": True}], None),
+    ([], ask("hi"), None),
+    (HAIKU, ask("hi"), 0),
+], ids=["v1-key", "no-messages", "no-candidate", "no-concurrency"])
+async def test_a_malformed_batch_sends_nothing(candidates, requests, concurrency, recorded, llm):
     recorded("nothing_sent")
-    with pytest.raises(ValueError, match="kwargs"):
-        async for _ in llm.async_query(HAIKU, [*ask("hi"), {"messages": [{"role": "user", "content": "hi"}],
-                                                             "kwargs": {"temperature": 0}}]):  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError):
+        async for _ in llm.async_query(candidates, requests, concurrency=concurrency):
             pass
 
 
