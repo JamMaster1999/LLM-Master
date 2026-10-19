@@ -1,0 +1,45 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 30,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Set rating to 9, exactly 9."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "output_config": {
+     "format": {
+      "type": "json_schema",
+      "schema": {
+       "type": "object",
+       "title": "Rating",
+       "properties": {
+        "rating": {
+         "type": "integer",
+         "title": "Rating",
+         "description": "{maximum: 5, minimum: 1}"
+        }
+       },
+       "additionalProperties": false,
+       "required": [
+        "rating"
+       ]
+      }
+     }
+    },
+    "thinking": {
+     "type": "disabled"
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "type": "application/json",
+   "body": "{\"model\": \"claude-haiku-5-5\", \"id\": \"msg_011CgAohgXdTs1A9mxMBcJKj\", \"type\": \"message\", \"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"{\\\"rating\\\": 9}\"}], \"container\": null, \"stop_reason\": \"end_turn\", \"stop_sequence\": null, \"stop_details\": null, \"usage\": {\"input_tokens\": 251, \"cache_creation_input_tokens\": 0, \"cache_read_input_tokens\": 0, \"cache_creation\": {\"ephemeral_5m_input_tokens\": 0, \"ephemeral_1h_input_tokens\": 0}, \"output_tokens\": 9, \"output_tokens_details\": {\"thinking_tokens\": 0}, \"service_tier\": \"standard\", \"inference_geo\": \"us\", \"speed\": \"standard\"}, \"diagnostics\": null}"
+  }
+ }
+]

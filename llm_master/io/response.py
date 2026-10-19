@@ -144,12 +144,15 @@ def _responses(raw: OpenAIResponse, origin: Origin, ids: dict[str, str]) -> tupl
 
 
 def _parse(fmt: Format | None, message: Message, finish: Finish) -> Any:
-    """The response_format object, from the same text a stream or a plain call produced."""
+    """The response_format object, or None when there's none to give: the caller decides what that means."""
     if fmt is None or fmt.type == "text" or finish != "stop" or not isinstance(message.content, str):
         return None
-    if isinstance(fmt.schema_, type):
-        return TypeAdapter(fmt.schema_).validate_json(message.content)
-    return json.loads(message.content)
+    try:
+        if isinstance(fmt.schema_, type):
+            return TypeAdapter(fmt.schema_).validate_json(message.content)
+        return json.loads(message.content)
+    except ValueError:  # pydantic's ValidationError and json's JSONDecodeError are both ValueErrors
+        return None
 
 
 def _call(ids: dict[str, str], wire_id: str, name: str, args: dict) -> Call:

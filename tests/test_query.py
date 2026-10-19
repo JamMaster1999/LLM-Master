@@ -8,7 +8,7 @@ from typing import Literal
 
 import pytest
 from any_llm.exceptions import ProviderError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llm_master.config import UnsupportedField
 from llm_master.config.moderation import Flagged
@@ -198,12 +198,20 @@ class Essay(BaseModel):
     body: str
 
 
-async def test_a_schema_answer_cut_by_max_tokens_parses_to_none(recorded, llm):
-    recorded("anthropic_parsed_cut")  # a schema class once raised here, from the SDK's parse
+class Rating(BaseModel):
+    rating: int = Field(ge=1, le=5)  # anthropic can't enforce the range: it rides in the description
+
+
+@pytest.mark.parametrize("name, schema, ask, finish", [
+    ("anthropic_parsed_cut", Essay, "Write a 300-word essay about rivers.", "length"),
+    ("anthropic_parsed_misfit", Rating, "Set rating to 9, exactly 9.", "stop"),  # its reply edited from 1 to 9
+], ids=["cut", "misfit"])
+async def test_an_answer_with_no_valid_object_keeps_its_text(name, schema, ask, finish, recorded, llm):
+    recorded(name)
     candidate = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
-        response_format=Format(type="schema", schema=Essay), thinking="none", max_tokens=30))
-    r = await llm.query(candidate, [{"role": "user", "content": "Write a 300-word essay about rivers."}])
-    assert r.finish == "length" and r.parsed is None and r.message.content
+        response_format=Format(type="schema", schema=schema), thinking="none", max_tokens=30))
+    r = await llm.query(candidate, [{"role": "user", "content": ask}])
+    assert r.finish == finish and r.parsed is None and r.message.content
 
 
 @pytest.fixture
