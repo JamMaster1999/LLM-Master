@@ -1,5 +1,5 @@
 """The facade: one held any-llm client per provider, so every call reuses its connection pool."""
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import Literal, get_args, overload
 
 import anthropic
@@ -68,16 +68,15 @@ class LLM:
         """
         return await run(self, candidates, messages, stream, moderation)
 
-    async def async_query(self, candidates: Model | Sequence[Model], requests: Sequence[fanout.Request], *,
-                          concurrency: int | None = None,
-                          progress_callback: Callable[[int, int], None] | None = None
-                          ) -> list[Response]:
-        """Many query() calls at once, at most concurrency in flight (128 when unset, as in v1); the Responses
-        in request order.
+    def async_query(self, candidates: Model | Sequence[Model], requests: Sequence[fanout.Request], *,
+                    concurrency: int | None = None) -> AsyncGenerator[tuple[int, Response | Exception], None]:
+        """Many query() calls at once, at most concurrency in flight (128 when unset). Yields (index, result) as
+        each request finishes: its Response, or the error it raised. One failure never stops the others.
 
-        progress_callback(done, total) runs after each request finishes. See SPEC.md Fan-out.
+        Leaving the loop early cancels the requests still running; inside contextlib.aclosing, the exit also
+        waits for them. See SPEC.md Fan-out.
         """
-        return await fanout.run(self, candidates, requests, concurrency, progress_callback)
+        return fanout.run(self, candidates, requests, concurrency)
 
     async def image(self, candidates: Model | Sequence[Model], prompt: str, images: Sequence[Image] = ()) -> Media:
         """A new image, or an edit of the parent images. See SPEC.md Media."""

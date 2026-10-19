@@ -19,7 +19,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 5. **Rate limiter** — a local sliding window per (provider, model), its per-minute cap set by the caller on `LLM`, wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
-8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it. Done.
+8. **async_query fan-out** — a semaphore over the finished single-call machinery, yielding each result as its request finishes. Done.
 9. **Telemetry** — PostHog events over the finished pipeline.
 
 ## Decisions
@@ -142,21 +142,33 @@ Fallback (step 7), the same for every call and stream:
 - When every candidate fails, the call raises the last candidate's last error, typed as a single
   candidate's would be. Notes on it list every earlier error, one per try.
 
-**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=None, progress_callback=None)`
-runs many `query()` calls at once and returns their `Response`s in request order. It keeps v1's
-signature, with v2's candidates in place of v1's model name.
+**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=None)` runs many `query()`
+calls at once. It yields `(index, result)` as each request finishes: the request's position, and
+its `Response` or the error it raised after its last candidate. One failure never stops the
+others, so one unreadable image can't sink a batch.
+
+```python
+async for index, result in llm.async_query(candidates, requests, concurrency=50):
+    if isinstance(result, Exception):
+        ...  # this request failed; the rest go on
+```
 
 - Each request is a dict: `messages`, and `moderation`, False by default. Any other key raises
-  `ValueError` before anything is sent: a v1 request's `kwargs` and `fallback_*` now live on the
-  candidates, and dropping them silently would change the answers.
-- Every request's messages validate before the first request is sent.
-- At most `concurrency` requests run at once, 128 when it's None or 0, as in v1. The rate limiter
-  still gates every try.
-- Each request runs the whole pipeline: moderation, retries, fallback and cost.
-- `progress_callback(done, total)` runs after each request finishes.
-- When a request fails, the others are cancelled and its error raises, as a single call's would.
-  The responses already made are lost with them.
-- An empty list returns `[]` and sends nothing.
+  `ValueError` before anything is sent: config and fallbacks live on the candidates, and a v1
+  request's `kwargs` or `fallback_*` dropped silently would change the answers.
+- At most `concurrency` requests run at once, 128 when it's None; below 1 raises `ValueError`. The
+  rate limiter still gates every try.
+- Each request runs the whole pipeline: moderation, retries, fallback and cost. Its errors,
+  validation and moderation included, are its result.
+- Results come in the order requests finish. v1's list in request order and its
+  `progress_callback` are gone: the loop itself shows progress, and the index places each result.
+- Leaving the loop early cancels the requests still running. Inside `contextlib.aclosing`, the
+  exit also waits for them; after a bare `break`, Python closes the iterator, and so cancels and
+  waits, one event-loop turn later.
+- An empty list yields nothing and sends nothing.
+- Each request in flight holds one pooled connection, since aiohttp speaks HTTP/1.1. The OpenAI
+  and Anthropic SDKs' aiohttp clients allow 1000 connections each (Fireworks rides OpenAI's), and
+  google-genai's has no limit, so the pool never caps `concurrency` below 1000.
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
