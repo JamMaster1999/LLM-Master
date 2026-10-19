@@ -36,17 +36,20 @@ class LLM:
 
     @overload
     async def query(self, candidates: Model | Sequence[Model], messages: Sequence[Message | dict], *,
-                    stream: Literal[False] = False) -> Response: ...
+                    stream: Literal[False] = False, moderation: bool = False) -> Response: ...
     @overload
     async def query(self, candidates: Model | Sequence[Model], messages: Sequence[Message | dict], *,
-                    stream: Literal[True]) -> Stream: ...
+                    stream: Literal[True], moderation: bool = False) -> Stream: ...
     @overload
     async def query(self, candidates: Model | Sequence[Model], messages: Sequence[Message | dict], *,
-                    stream: bool) -> Response | Stream: ...
+                    stream: bool, moderation: bool = False) -> Response | Stream: ...
 
-    async def query(self, candidates, messages, *, stream=False):
-        """The model's answer to messages, from the first candidate that gives one. See IO.md."""
-        return await run(self, candidates, messages, stream)
+    async def query(self, candidates, messages, *, stream=False, moderation=False):
+        """The model's answer to messages, from the first candidate that gives one. See IO.md.
+
+        moderation checks the newest user message once, before any candidate (CONFIG.md field 12).
+        """
+        return await run(self, candidates, messages, stream, moderation)
 
     async def aclose(self) -> None:
         http, self._http, self._clients = self._http, [], {}

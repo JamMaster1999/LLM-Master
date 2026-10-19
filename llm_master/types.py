@@ -34,4 +34,3 @@ class Config(BaseModel, extra="forbid"):
     max_tokens: int | None = Field(default=None, gt=0)
     timeout: float | None = Field(default=None, gt=0)
     cache: Cache = "auto"  # int = minutes, 5-60
-    moderation: bool = False

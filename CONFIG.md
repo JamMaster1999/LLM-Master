@@ -233,8 +233,10 @@ save → reload → next call is lossless by construction.
 
 ## 12. `moderation` — `bool`, default False
 
+- A `query()` option, like `stream`, not a candidate field: it checks the caller's input, which is
+  the same for every candidate.
 - Not a translation but a pre-step: when on, the newest user message's text runs through openai's
-  `omni-moderation-latest` before dispatch, as in v1. A flagged input raises our typed refusal
-  before any model is called or billed — same behavior on every dialect, every candidate.
+  `omni-moderation-latest` once, before any candidate, as in v1. A flagged input raises our typed
+  refusal before any model is called or billed.
 - The moderation call is free (openai prices it at zero; 1000 rpm in our registry).
 - v1 had this exact flag on `query()`; the chat platform is its consumer.

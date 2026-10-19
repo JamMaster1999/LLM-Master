@@ -140,9 +140,9 @@ async def test_parsed_holds_the_schema_object(candidate, schema, recorded, llm):
 
 async def test_flagged_input_never_reaches_the_model(recorded, llm):
     recorded("moderation_flagged")  # one exchange: the moderation call; teardown fails on a second
-    candidate = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(moderation=True))
     with pytest.raises(Flagged):
-        await llm.query(candidate, [{"role": "user", "content": "I will hunt you down and kill you."}])
+        await llm.query(Model(provider="anthropic", model="claude-haiku-5-5"),
+                        [{"role": "user", "content": "I will hunt you down and kill you."}], moderation=True)
 
 
 async def test_a_call_that_cant_be_built_sends_nothing(recorded, llm):
