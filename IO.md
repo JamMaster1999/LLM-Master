@@ -310,7 +310,8 @@ For each model call, llm_master yields:
 - `text-start` / `-delta` / `-end`: the answer, a refusal's text included.
 - `tool-input-start` / `-delta` / `-available`: each call's name, then its arguments as they
   arrive, then the complete arguments. A call cut off mid-arguments never reaches `-available`:
-  the step resets and the stream raises `CutCall`. `toolCallId` is our `lm_` id, created when the
+  the step resets, and the next candidate streams from the start, or the stream raises `CutCall`
+  when none is left. `toolCallId` is our `lm_` id, created when the
   call starts streaming, so it matches `response.message.calls`.
 - `reset-step` when an attempt fails mid-stream. The browser removes that attempt's output, and
   the next attempt (a retry or the next candidate) streams from the start under a new

@@ -18,7 +18,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate. Done.
-7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
+7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
 9. **Telemetry** — PostHog events over the finished pipeline.
 
@@ -51,9 +51,10 @@ speech get their own calls, `image(candidates, prompt, images)` and `speech(cand
 on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns a
 `Media`: the file's bytes, its mime type, the candidate that made it, usage, cost, attempts and
 latency. Gemini, Vertex AI and OpenAI make both; Anthropic and Fireworks raise
-`UnsupportedField`. A media candidate takes only `timeout` from its config; the provider's own
-options (size, quality, format, voice) ride its `extra`, and OpenAI speech uses the `alloy` voice
-unless `extra` names one. A candidate that answers without the media raises `MissingMedia`, so
+`UnsupportedField`. A media candidate takes only `timeout` from its config. One that sets another
+field fails with `UnsupportedField`, and fallback moves on. The provider's own options (size,
+quality, format, voice) ride its `extra`, and OpenAI speech uses the `alloy` voice unless `extra`
+names one. A candidate that answers without the media raises `MissingMedia`, so
 fallback moves on.
 
 An edit is lineage, not a conversation: the parent image plus the new instruction, one
@@ -77,9 +78,8 @@ Live-checked 2026-10-18:
 - A model without a row of its own still gets its own window, at the provider's default limit.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
-providers); the wrapper owns all retries. Any typed error hands off to the next candidate, and a
-fallback hop just re-runs assembly. A timeout expiry is a typed `ProviderError`, retryable like the
-rest.
+providers); the wrapper owns all retries and fallback, below. A timeout expiry is a typed
+`ProviderError`, retryable like the rest.
 
 Retries (step 6), the same for every call and stream:
 
