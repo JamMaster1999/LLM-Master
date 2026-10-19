@@ -79,8 +79,8 @@ save → reload → next call is lossless by construction.
 - responses: `stream=True` on the event stream.
 - Return type changes: off → one `Response`; on → a stream of AI SDK protocol chunks whose
   `response` holds the same `Response` once it ends (IO.md, Streams).
-- Known limit: a stream the caller kills mid-flight never builds its `Response`, so that one
-  generation logs no usage and no cost.
+- Known limit: a stream the caller leaves early has no `Response`, so that generation logs no
+  usage and no cost.
 
 ## 4. `temperature` — `float | None`, default None
 
@@ -100,9 +100,8 @@ save → reload → next call is lossless by construction.
   models that only run with thinking on (gemini 3.x, gemini-2.5-pro) reject it before the wire
   with any-llm's typed `UnsupportedParameterError`. `xhigh` maps to gemini's top tier.
 - messages: `none` → `thinking: {"type": "disabled"}`; levels → `thinking: {"type": "adaptive",
-  "display": "summarized"}` plus `output_config: {"effort": level}`. Claude 5.x defaults `display` to
-  `"omitted"`, which returns thinking blocks with empty text; the signature is the same either way
-  ([thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)). Anthropic's named tiers map 1:1, no budget table.
+  "display": "summarized"}` plus `output_config: {"effort": level}`. Without `display`, Claude 5.x
+  returns empty thought text. Anthropic's named tiers map 1:1, no budget table.
   Live-verified on claude-sonnet-5: adaptive levels produce thinking blocks, disabled produces
   none. Most of the 5.5 generation can't turn thinking off: Opus 5.5 and Fable 5.1 reject
   `disabled`, Sonnet 5.5 too (its floor is `between_tools`, via `extra`), Haiku 5.5 takes it at
@@ -114,8 +113,9 @@ save → reload → next call is lossless by construction.
 - Thought text is always fetched when thinking is on: gemini via any-llm's hardwired
   `include_thoughts=True`, anthropic via `display: "summarized"`, openai via `summary: "auto"`.
   It lands on `message.reasoning`; whether a user sees it is the caller's choice at render time.
-  Cost is the same either way — thought tokens are billed whether or not anyone reads them. Live note, openai: a summary only materializes when there's enough reasoning to
-  summarize; an empty summary list is not an error.
+  Cost is the same either way — thought tokens are billed whether or not anyone reads them. Live
+  note, openai: a summary only materializes when there's enough reasoning to summarize; an empty
+  summary list is not an error.
 - No capability list: providers that map a tier clamp to nearest, providers that reject fail
   typed, and consumer smoke runs catch config rot in CI. Adoption note: any-llm sometimes
   silently drops `none` (xai does), so "does none really disable" is a one-time check when
@@ -174,18 +174,13 @@ save → reload → next call is lossless by construction.
   responses; messages raises typed (anthropic has no schema-less JSON mode). Live note: json mode
   guarantees syntax only — gemini returns numbers as strings about a third of runs, so live tests
   assert parseability and key presence, never value types.
-- The schema goes in each API's own format object:
-  `{"type": "json_schema", "json_schema": {"name": ..., "schema": ...}}` on completion,
-  `{"type": "json_schema", "name": ..., "schema": ...}` on responses, and `output_config.format` on
-  messages, where it merges with thinking's `output_config.effort`. completion leaves the rest to
-  each provider's converter (gemini rides `response_json_schema`).
-- A schema dict rides as written, named `response`. A schema class goes out as the JSON schema its
-  provider's own SDK would send: openai's strict schema, named after the class, with
-  `strict: true` on completion and responses; anthropic's `transform_schema` on messages. No SDK
-  parse path runs, so a class streams on every API, and a cut or refused answer returns its
-  `finish` with `parsed=None` instead of raising inside the SDK.
-- The parsed object is `response.parsed`, read by llm_master from `message.content` (IO.md, The
-  response), so a stream and a plain call parse the same way.
+- The schema goes in each API's own format object: a `json_schema` `response_format` on
+  completion and responses, `output_config.format` on messages, where it merges with thinking's
+  effort.
+- A schema dict rides as written. A schema class goes out as the strict JSON schema its provider's
+  SDK would send, so it behaves like a dict: it streams, and a cut or refused answer gives
+  `parsed=None`.
+- The parsed object is `response.parsed` (IO.md, The response).
 
 ## 9. `max_tokens` — `int | None`, default None
 
@@ -195,9 +190,8 @@ save → reload → next call is lossless by construction.
   applies. anthropic requires the field, so its candidates get `64000` — the sonnet-line output
   ceiling, big enough that the default never clips. Models with smaller ceilings reject it with a
   typed 400; fallback moves on.
-- 64k trips the anthropic SDK's long-request guard on plain non-streaming calls unless a timeout is
-  passed, so an unset `timeout` on messages sends `600`, anthropic's own 10-minute request ceiling
-  (field 10). Caller-set values always win. Live-verified both ways.
+- An unset `timeout` on messages sends `600`, anthropic's own 10-minute ceiling (field 10): with
+  a 64k `max_tokens`, the anthropic SDK refuses a plain call without one. Caller-set values win.
 - Net meaning of None: "model's max" everywhere — by absence where the API allows it, by
   anthropic's own maxima where it demands a number.
 - Truncation live-verified on all three: `finish_reason="length"` (completion),
@@ -208,9 +202,7 @@ save → reload → next call is lossless by construction.
 
 - All three dialects take any-llm's `timeout` param. Enforcement live-verified on all three: a
   1ms timeout raises the typed error (test_trivials).
-- None → the SDK's own default applies. One exception: messages sends `timeout=600`, anthropic's
-  own 10-minute ceiling said aloud, so the SDK's long-request guard accepts the 64k `max_tokens`
-  default (field 9).
+- None → the SDK's own default applies, except on messages, which sends `600` (field 9).
 - An expiry surfaces as the typed timeout error, a retryable failure — the retry and fallback
   layers decide what happens next, not this field.
 
@@ -220,34 +212,29 @@ save → reload → next call is lossless by construction.
   gemini auto-cache. On openai 5.6+, auto-caching bills writes at 1.25x by default; that's their
   default, not our opinion.
 - `"none"`: openai sends `prompt_cache_options={"mode": "explicit"}` with no breakpoints — skips
-  the cache, no write fee. It rides any-llm's `extra_body`, since any-llm's Responses params don't
-  name it yet. Anthropic sends nothing (already off). Gemini quiet no-op: its
+  the cache, no write fee. Anthropic sends nothing (already off). Gemini quiet no-op: its
   auto-cache has no off switch and no write fee.
 - minutes: a real lifetime, passed through — if it fails it fails. Anthropic: top-level
   `cache_control={"type": "ephemeral", "ttl": ...}`, which marks the last cacheable block; `5` →
   `"5m"`, `60` → `"1h"`, anything between goes literally and their API rejects unknown tiers.
   Openai: explicit mode plus ttl — only `"30m"` exists today (live-verified: other values 400
-  naming the supported set) — with one breakpoint placed at the end of the prompt, since explicit
-  mode caches nothing without one. Assembly puts `prompt_cache_breakpoint: {"mode": "explicit"}`
-  on the last block of the last item (IO.md). Live-verified: a saved and reloaded conversation
-  reads the cache on its next turn, with only the new end marked. Gemini: implicit caching only,
-  so minutes raise typed. any-llm
-  can turn a `cache_control` breakpoint into an explicit gemini context cache; this field never
-  emits one.
+  naming the supported set) — with one breakpoint at the end of the prompt (IO.md), since
+  explicit mode caches nothing without one. Gemini: implicit caching only, so minutes raise typed.
+  any-llm can turn a `cache_control` breakpoint into an explicit gemini context cache; this field
+  never emits one.
 - Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on
   one-shot prompts, which is why `"none"` exists. Anthropic writes 1.25x at 5m and 2x at 1h;
   reads 0.1x everywhere. any-llm's usage reports reads as `cached_tokens` and writes as
   `cache_write_tokens`, with anthropic's 5m/1h split in `cache_creation_token_details`, so the
   cost step has every count it needs. genai-prices carries a single cache-write price, so
   anthropic's 1h-tier 2x needs our own multiplier — noted for the cost step.
-- Pre-5.6 openai models reject `prompt_cache_options`: gpt-5.5 returns a typed 400 for `"none"` and
-  for minutes (live-verified). As with temperature, that's the provider's call; use `"auto"` there.
+- Pre-5.6 openai models reject `"none"` and minutes with a typed 400; use `"auto"` there.
 - Lifetime exotics beyond the field ride the candidate's `extra`.
 
 ## 12. `moderation` — `bool`, default False
 
 - Not a translation but a pre-step: when on, the newest user message's text runs through openai's
-  `omni-moderation-latest` before dispatch, as in v1. A flagged input raises our typed refusal before any
-  model is called or billed — same behavior on every dialect, every candidate.
+  `omni-moderation-latest` before dispatch, as in v1. A flagged input raises our typed refusal
+  before any model is called or billed — same behavior on every dialect, every candidate.
 - The moderation call is free (openai prices it at zero; 1000 rpm in our registry).
 - v1 had this exact flag on `query()`; the chat platform is its consumer.
