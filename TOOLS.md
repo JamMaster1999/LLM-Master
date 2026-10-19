@@ -123,7 +123,9 @@ save(conversation)
   user typed. A waiting ask_user call is the last assistant message's unanswered call, so nothing
   else records it. The turn appends to the state as it goes.
 - **ask_user** ends the turn once the other calls finish. The next request's answers resume it,
-  and a new message instead declines it.
+  and a new message instead declines it. URLs the user types into an answer join the allowlist; a
+  picked option's don't, since the model wrote them.
+- **Nothing new**, an empty message or answers sent twice, ends the turn without calling the model.
 - **Stopping**: closing or cancelling the turn cancels the running tools and answers every open
   call with `Stopped by the user.` A stop while the model answers keeps the text it streamed as
   the step's message, then adds a user message, `[Request interrupted by user]`, as Claude Code
@@ -165,7 +167,8 @@ blocking calls are fine there. `server/cli.py` drives one conversation from the 
   `Authorization: Bearer wk-….ws-…`. `AGENT_PUBLIC=1` drops it, for the test apps, which live minutes
   under random names.
 - **Deploying**: `modal deploy --env dev server/app.py` ships the prompt in `prompts/system.md`
-  and the skills in `skills/`; `AGENT_PROMPT`, `AGENT_SKILLS` and `AGENT_APP` point elsewhere.
+  and the skills in `skills/`; `AGENT_PROMPT`, `AGENT_SKILLS` and `AGENT_APP` point elsewhere. The
+  deploy also builds the sandbox image, so a package that won't install fails it.
 
 ## The sandbox
 
