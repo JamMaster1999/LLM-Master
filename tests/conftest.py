@@ -29,6 +29,16 @@ UPSTREAM = {"openai": ("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_KEY")
 
 
+def pytest_xdist_auto_num_workers(config):
+    """Live tests mostly wait on the network, so they get more workers than cores."""
+    return os.cpu_count() if config.option.markexpr == "not live" else 32
+
+
+def pytest_collection_modifyitems(items):
+    """Live tests first, so no parallel worker starts a slow one last."""
+    items.sort(key=lambda item: item.get_closest_marker("live") is None)
+
+
 @pytest.fixture
 async def llm():
     from llm_master.facade import LLM

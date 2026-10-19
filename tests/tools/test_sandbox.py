@@ -21,6 +21,8 @@ async def test_one_sandbox_per_conversation_across_parallel_calls_and_processes(
     other_process = Sandbox(sandbox.conversation_id)
     boxes = await asyncio.gather(sandbox.running(), sandbox.running(), other_process.running())
     assert len({box.object_id for box in boxes}) == 1
+    await other_process.write("shared.txt", b"seen")
+    assert await sandbox.read("shared.txt") == b"seen"
 
 
 async def test_workspace_outlives_the_sandbox(sandbox):
@@ -43,7 +45,8 @@ async def test_exec_timeout_kills_everything_the_command_started(sandbox):
     assert code == 1
 
 
-async def test_exec_stops_a_command_that_floods_its_output(sandbox):
+async def test_exec_stops_a_command_that_floods_its_output(sandbox, monkeypatch):
+    monkeypatch.setattr("agent.sandbox.MAX_OUTPUT", 1024 * 1024)  # streaming the real 64 MB takes 20 s
     with pytest.raises(OverflowError):
         await sandbox.exec("yes", timeout=600)
     assert await sandbox.exec("echo", "back", timeout=30) == (0, b"back\n", b"")

@@ -1,5 +1,6 @@
 """The facade's held clients, driven against a local server standing in for each provider."""
 import gc
+import random
 import warnings
 from typing import get_args
 
@@ -62,7 +63,8 @@ async def test_sdk_retries_are_off(provider, serve, llm):
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "fireworks",
                                       pytest.param("gemini", marks=GENAI_RETRIES_DROPS)])
-async def test_dropped_connection_is_not_retried(provider, serve, llm):
+async def test_dropped_connection_is_not_retried(provider, serve, llm, monkeypatch):
+    monkeypatch.setattr(random, "randint", lambda a, b: a)  # genai waits 1 + randint(0, 9) s before its retry
     hits = serve(None)
     with pytest.raises(ProviderError):
         await ask(llm, provider)

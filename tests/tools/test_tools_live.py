@@ -159,10 +159,11 @@ print(results.count("Sent note.txt to the user."), {str(r) for r in results if i
     assert result.content == "100 {'run_program allows at most 100 tool calls.'}"
 
 
-async def test_run_program_sends_the_user_at_most_50_mb_of_files(box):
+async def test_run_program_caps_the_files_it_sends_the_user(box, monkeypatch):
+    monkeypatch.setattr("agent.shell.MAX_FILE", 1024 * 1024)  # pulling 60 MB out of the sandbox takes 10-20 s
     code = """
 with open("big.bin", "wb") as f:
-    f.write(bytes(30 * 1024 * 1024))
+    f.write(bytes(600 * 1024))
 for _ in range(2):
     try:
         print(await deliver_file({"path": "big.bin"}))
@@ -170,7 +171,7 @@ for _ in range(2):
         print(error)
 """
     result = await run(box, "run_program", code=code)
-    assert result.content == "Sent big.bin to the user.\nrun_program sends the user at most 50.0MB of files."
+    assert result.content == "Sent big.bin to the user.\nrun_program sends the user at most 1.0MB of files."
     assert [file.name for file in result.files] == ["big.bin"]
 
 
