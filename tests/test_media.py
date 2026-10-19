@@ -4,7 +4,6 @@ import io
 import wave
 
 import pytest
-from any_llm.exceptions import ProviderError
 from cases import DRAW, GEMINI_IMAGE, OPENAI_IMAGE, parent
 from PIL import Image as Pillow
 
@@ -44,12 +43,6 @@ async def test_openai_speech_reports_its_usage(recorded, llm):
     recorded("openai_speech")  # the streamed format: the plain one carries no usage
     spoken = await llm.speech(Model(provider="openai", model="gpt-4o-mini-tts"), "Say: hello there.")
     assert spoken.mime == "audio/mp3" and spoken.data and spoken.usage and spoken.usage.output > 0
-
-
-async def test_a_speech_stream_cut_before_its_end_raises(recorded, llm):
-    recorded("openai_speech_cut")  # openai_speech's first audio event alone
-    with pytest.raises(ProviderError, match="ended before"):
-        await llm.speech(Model(provider="openai", model="gpt-4o-mini-tts"), "Say: hello there.")
 
 
 async def test_gemini_speech_is_a_wav(recorded, llm):

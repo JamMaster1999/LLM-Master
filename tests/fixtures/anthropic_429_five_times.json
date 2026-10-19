@@ -1,0 +1,272 @@
+[
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 429,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"Rate limited\"}}",
+   "headers": {
+    "retry-after": "0"
+   }
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 429,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"Rate limited\"}}",
+   "headers": {
+    "retry-after": "0"
+   }
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 429,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"Rate limited\"}}",
+   "headers": {
+    "retry-after": "0"
+   }
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 429,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"Rate limited\"}}",
+   "headers": {
+    "retry-after": "0"
+   }
+  }
+ },
+ {
+  "request": {
+   "path": "/v1/messages",
+   "body": {
+    "max_tokens": 2000,
+    "messages": [
+     {
+      "role": "user",
+      "content": "Say good morning to Toronto."
+     }
+    ],
+    "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
+    "output_config": {
+     "effort": "low"
+    },
+    "system": "Answer in French.",
+    "thinking": {
+     "type": "adaptive",
+     "display": "summarized"
+    },
+    "tool_choice": {
+     "type": "none"
+    },
+    "tools": [
+     {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "input_schema": {
+       "type": "object",
+       "properties": {
+        "city": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "city"
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "response": {
+   "status": 429,
+   "type": "application/json",
+   "body": "{\"type\": \"error\", \"error\": {\"type\": \"rate_limit_error\", \"message\": \"Rate limited\"}}",
+   "headers": {
+    "retry-after": "0"
+   }
+  }
+ }
+]

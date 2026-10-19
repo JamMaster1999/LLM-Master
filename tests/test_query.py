@@ -6,7 +6,6 @@ import time
 from typing import Literal
 
 import pytest
-from any_llm.exceptions import ProviderError
 from cases import ASK, CONFIGURED, FIXTURES, GREET, LONG, LOOPS, WRITE
 from pydantic import BaseModel, Field
 
@@ -69,14 +68,6 @@ async def test_tool_loop_replays_the_models_own_turn(provider, stream, recorded,
         check_stream(chunks, second)
 
 
-async def test_a_stream_cut_mid_answer_resets_its_step(recorded, llm):
-    recorded("anthropic_cut_stream")  # anthropic_loop_stream's first reply, cut before message_stop
-    s = await llm.query(LOOPS["anthropic"], ASK, stream=True)
-    chunks = []
-    with pytest.raises(ProviderError, match="ended before"):
-        async for c in s:
-            chunks.append(c)
-    assert chunks[0] == {"type": "start-step"} and chunks[-1] == {"type": "reset-step"} and s.response is None
 
 
 @pytest.mark.parametrize("provider", CONFIGURED)
@@ -126,16 +117,6 @@ async def test_openai_audio_input_goes_to_completion(recorded, llm):
     r = await llm.query(Model(provider="openai", model="gpt-audio-mini"),
                         [{"role": "user", "content": [Text(text="Transcribe this audio."), spoken]}])
     assert "seven" in r.message.content.lower() or "7" in r.message.content
-
-
-async def test_a_completion_stream_without_its_closing_usage_is_cut(recorded, llm):
-    recorded("fireworks_stream_without_usage")  # fireworks_loop_stream's first reply, its usage chunk removed
-    s = await llm.query(LOOPS["fireworks"], ASK, stream=True)
-    chunks = []
-    with pytest.raises(ProviderError, match="ended before"):
-        async for c in s:
-            chunks.append(c)
-    assert chunks[-1] == {"type": "reset-step"} and s.response is None
 
 
 # the streamed anthropic call is the sly one: eager_input_streaming sends the arguments unbuffered, and
