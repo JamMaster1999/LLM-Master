@@ -211,8 +211,9 @@ comes back whole, numbered like a search result, and a failed page doesn't fail 
 ### generate_image
 
 `generate_image(prompt, image?)` makes an image with `image()`, or edits the image at `image`. An
-edit sends the parent and the prompt together (SPEC.md, Media). The image is saved under `images/`
-with a record beside it naming its parent, prompt and candidate. Openai makes it alone until
+edit sends the parent and the prompt together (SPEC.md, Media). A parent the edit endpoint doesn't
+take, such as HEIC or BMP, goes as JPEG, or as PNG when it's transparent. The image is saved under
+`images/` with a record beside it naming its parent, prompt and candidate. Openai makes it alone until
 llm_master falls back (SPEC.md step 7); then gemini is the fallback.
 
 ### generate_audio

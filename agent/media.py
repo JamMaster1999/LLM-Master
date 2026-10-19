@@ -1,5 +1,6 @@
 """The generate pair on llm_master: generate_image calls image(), generate_audio calls speech(). Each
 saves what it made in the sandbox and sends it to the user."""
+import asyncio
 import base64
 import io
 import json
@@ -46,7 +47,7 @@ GENERATE_AUDIO = {"type": "function", "function": {
 
 
 async def generate_image(sandbox: Sandbox, llm: LLM, prompt: str, image: str | None = None) -> Result:
-    parents = [Image(_editable(await files.load(sandbox, image), image))] if image else []
+    parents = [await asyncio.to_thread(_editable, await files.load(sandbox, image), image)] if image else []
     made = await llm.image(IMAGE_MODELS, prompt, parents)
     path, sent = await _save(sandbox, "images", made)
     record = {"parent": image, "prompt": prompt, "candidate": made.origin.model_dump()}
@@ -63,18 +64,21 @@ async def generate_audio(sandbox: Sandbox, llm: LLM, text: Annotated[str, Field(
     return Result(f"Saved {path} and sent it to the user.", files=[sent])
 
 
-def _editable(data: bytes, path: str) -> str:
-    """The parent as a data URI the edit endpoint takes: PNG, JPEG and WebP as they are, any other
-    image redrawn as PNG."""
+def _editable(data: bytes, path: str) -> Image:
+    """The parent as the edit endpoint takes it: PNG, JPEG and WebP as they are, a phone's MPO as the
+    JPEG it is, any other image redrawn as JPEG unless it's transparent. Seconds on a big photo, so
+    it runs in a thread."""
     try:
         with Pillow.open(io.BytesIO(data)) as picture:
-            if picture.format not in EDITABLE:
+            kind = "JPEG" if picture.format == "MPO" else picture.format
+            if kind not in EDITABLE:
+                kind = "PNG" if picture.has_transparency_data else "JPEG"
                 redrawn = io.BytesIO()
-                picture.convert("RGBA").save(redrawn, "PNG")
+                picture.convert("RGBA" if kind == "PNG" else "RGB").save(redrawn, kind, quality=90)
                 data = redrawn.getvalue()
     except UnidentifiedImageError:
         raise ToolError(f"{path} is not an image.") from None
-    return "data:;base64," + base64.b64encode(data).decode()
+    return Image(data=base64.b64encode(data).decode(), mime=Pillow.MIME[kind])
 
 
 async def _save(sandbox: Sandbox, folder: str, made: Media) -> tuple[str, UserFile]:

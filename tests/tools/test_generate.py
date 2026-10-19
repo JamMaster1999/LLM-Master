@@ -1,8 +1,11 @@
-"""The generate pair: listed only with llm, and live through Toolbox.run on real providers and Modal."""
+"""The generate pair: listed only with llm, and live through Toolbox.run on Modal, with real or stand-in providers."""
+import base64
+import io
 import json
 import uuid
 
 import pytest
+from PIL import Image as Pillow
 
 from agent import Result, Toolbox, media
 from agent.sandbox import delete
@@ -41,7 +44,7 @@ async def record(box: Toolbox, image: str) -> dict:
 @pytest.mark.live
 async def test_an_image_is_made_then_edited_with_its_parent_on_record(box):
     made = await box.run("generate_image", {"prompt": DRAW})
-    # a BMP parent, which the edit endpoint doesn't take, is redrawn as PNG on the way
+    # a BMP parent, which the edit endpoint doesn't take, is redrawn as JPEG on the way
     await box.run("bash", {"command": f"python -c \"from PIL import Image; Image.open('{saved(made)}').save('a.bmp')\""})
     edited = await box.run("generate_image", {"prompt": "Make the circle blue.", "image": "a.bmp"})
     candidate = media.IMAGE_MODELS[0].model_dump(include={"provider", "model"})
@@ -52,6 +55,30 @@ async def test_an_image_is_made_then_edited_with_its_parent_on_record(box):
         [file] = result.files
         assert saved(result) == f"images/{file.name}" and file.name.endswith("." + file.mime.split("/")[1])
         assert [part["type"] for part in result.content] == ["text", "image"]
+
+
+@pytest.mark.live  # on Modal; a stand-in answers for OpenAI, to show what the edit sent
+async def test_an_edit_sends_the_parent_with_the_prompt(provider_server, box):
+    red, blue = Pillow.new("RGB", (64, 64), "red"), Pillow.new("RGB", (64, 64), "blue")
+    photo, made = io.BytesIO(), io.BytesIO()
+    red.save(photo, "MPO", save_all=True, append_images=[blue])  # a phone's multi-picture JPEG
+    blue.save(made, "PNG")
+    edits = []
+
+    def answer(handler, provider, path, body):
+        edits.append((path, body))
+        reply = json.dumps({"created": 0, "data": [{"b64_json": base64.b64encode(made.getvalue()).decode()}]}).encode()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(reply)))
+        handler.end_headers()
+        handler.wfile.write(reply)
+    provider_server(answer)
+    await box.run("bash", {"command": f"echo {base64.b64encode(photo.getvalue()).decode()} | base64 -d > photo.jpg"})
+    saved(await box.run("generate_image", {"prompt": "Make the circle blue.", "image": "photo.jpg"}))
+    [(path, body)] = edits
+    assert path == "/images/edits" and b'name="prompt"\r\n\r\nMake the circle blue.\r\n' in body
+    assert b"Content-Type: image/jpeg\r\n\r\n" + photo.getvalue() + b"\r\n" in body  # as it is, not redrawn
 
 
 @pytest.mark.live
