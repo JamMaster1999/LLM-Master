@@ -136,6 +136,10 @@ save → reload → next call is lossless by construction.
   message (IO.md).
 - responses: same information, flattened — two three-line reshapes at build (tool schemas, and
   results as `function_call_output` items).
+- Strict mode: when a tool leaves `strict` unset, openai's Responses API makes its schema strict
+  where it can, and strict mode marks every parameter required, optional ones included. A caller
+  who wants optional parameters sets `"strict": false` on the tool, as the tools do (TOOLS.md),
+  and the pass-through law carries it. Completion stays non-strict unless asked.
 - Scope boundary: `query()` never runs a tool. It returns the model's tool calls; executing and
   looping is the caller's job.
 - Recorded tool loops verify the loop end to end per provider (tests/test_query.py) — we read
