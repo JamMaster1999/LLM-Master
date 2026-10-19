@@ -248,8 +248,9 @@ don't have.
 - **Reading.** A call returns the skill's instructions, wrapped as agentskills.io suggests, with
   its folder and its other files listed. The model reads those with read and runs them with bash.
 - **Skill folders** follow the Agent Skills spec. SKILL.md's `name` matches its folder, and its
-  `description` is at most 1024 characters. A broken skill fails the toolbox's construction. The
-  frontmatter is read as `key: value` lines, not YAML.
+  `description` is at most 1024 characters. The frontmatter is one-line `key: value` pairs, not
+  YAML, and a folder holds real files, no symlinks. A broken skill fails the toolbox's
+  construction.
 
 ## Files
 
@@ -276,6 +277,8 @@ Longer audio gets the path only, and nothing can listen to it yet.
 - Fireworks' text-only models reject an image in a tool result, so the first image a tool returns
   takes them out of the fallback chain.
 - An audio upload leaves only Gemini and OpenAI's audio models able to answer (IO.md).
+- A deploy that changes a skill updates its instructions at once, but a running sandbox keeps the
+  old files until it restarts, after 15 idle minutes at most.
 - A planted instruction can still put data into a search query, which reaches Exa, not the
   attacker. Routes that need the user remain: a link the user clicks, and a downloaded HTML file
   the user opens.

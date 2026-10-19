@@ -49,6 +49,8 @@ class Skills:
 def _load(folder: Path) -> tuple[str, str]:
     """A skill's description and instructions. Its frontmatter is read as `key: value` lines, not
     YAML: PyYAML isn't a dependency, and our skills keep frontmatter that simple."""
+    if folder.is_symlink() or any(path.is_symlink() for path in folder.rglob("*")):
+        raise ValueError(f"Skill {folder}: holds a symlink; the sandbox gets real files only")
     lines = (folder / "SKILL.md").read_text().splitlines()
     if lines[:1] != ["---"] or "---" not in lines[1:]:
         raise ValueError(f"Skill {folder}: SKILL.md must start with frontmatter between --- lines")
@@ -58,6 +60,8 @@ def _load(folder: Path) -> tuple[str, str]:
         key, colon, value = line.partition(":")
         if colon and not line[0].isspace():  # a nested map's lines, such as metadata's, are skipped
             value = value.strip()
+            if value[:1] in (">", "|"):
+                raise ValueError(f"Skill {folder}: write {key.strip()} on one line, not as a YAML block")
             quoted = len(value) > 1 and value[0] == value[-1] and value[0] in "\"'"
             fields[key.strip()] = value[1:-1] if quoted else value
     if fields.get("name") != folder.name:

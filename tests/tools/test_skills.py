@@ -39,11 +39,20 @@ async def test_an_unknown_skill_is_an_error_result():
     "# Broken\n",
     "---\nname: other\ndescription: Named for another folder.\n---\n",
     f"---\nname: broken\ndescription: {'x' * 1025}\n---\n",
+    "---\nname: broken\ndescription: >-\n  Folded over\n  two lines.\n---\n",
 ])
 def test_a_broken_skill_fails_construction(tmp_path, skill_md):
     (tmp_path / "broken").mkdir()
     (tmp_path / "broken" / "SKILL.md").write_text(skill_md)
     with pytest.raises(ValueError, match="^Skill .*/broken: "):
+        Toolbox("c", skills=tmp_path)
+
+
+def test_a_skill_holding_a_symlink_fails_construction(tmp_path):
+    (tmp_path / "linked").mkdir()
+    (tmp_path / "linked" / "SKILL.md").write_text("---\nname: linked\ndescription: Links out.\n---\n")
+    (tmp_path / "linked" / "secrets").symlink_to("/etc/hosts")
+    with pytest.raises(ValueError, match="symlink"):
         Toolbox("c", skills=tmp_path)
 
 
