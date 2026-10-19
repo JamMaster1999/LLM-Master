@@ -73,8 +73,9 @@ async def test_an_answer_without_the_image_raises_typed(name, why, recorded, llm
 
 
 @pytest.mark.parametrize("candidate", [Model(provider="anthropic", model="claude-haiku-5-5"),
-                                       Model(provider="openai", model="gpt-image-2", config=Config(system="x"))],
-                         ids=["no-image-api", "conversation-config"])
+                                       Model(provider="openai", model="gpt-image-2", config=Config(system="x")),
+                                       Model(provider="openai", model="gpt-image-2", extra={"n": 2})],
+                         ids=["no-image-api", "conversation-config", "two-images"])
 async def test_a_media_call_that_cant_be_made_sends_nothing(candidate, recorded, llm):
     recorded("nothing_sent")
     with pytest.raises(UnsupportedField):
