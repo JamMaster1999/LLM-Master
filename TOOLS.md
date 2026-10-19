@@ -96,6 +96,34 @@ A waiting call has no result yet. The loop ends the turn, and the browser asks t
 client-side tools). The next request brings the reply, and `box.resume(reply)` finishes the call
 before anything else joins the history. A request without a reply declines it with None.
 
+## The loop
+
+`agent.turn.turn()` runs one request of a conversation. It takes the conversation's state, builds
+the toolbox, adds the request's message, and loops: it calls `query()`, runs the model's calls in
+parallel, and appends their results, until the model answers without a call.
+
+```python
+conversation = Conversation()  # or the saved one
+async for chunk in turn(llm, model, "conv_8f2", conversation, text="Make a quiz", skills="skills"):
+    ...  # AI SDK chunks, and UserFiles to host
+save(conversation)
+```
+
+- **Input**: `text` and `uploads` make a new user message; each upload goes through `box.attach`.
+  `answers` finish waiting ask_user calls, by call id.
+- **Output**: `start`, llm_master's chunks for each step, a `tool-output-available` or
+  `tool-output-error` per result as it lands, each new source part, and `finish`. Files come out
+  as `UserFile`s, for the caller to host. A tool's output chunk carries the result's text; images
+  stay with the model.
+- **State** is a `Conversation`: the messages, the source parts already sent, and the URLs the
+  user typed. A waiting ask_user call is the last assistant message's unanswered call, so nothing
+  else records it. The turn appends to the state as it goes.
+- **ask_user** ends the turn once the other calls finish. The next request's answers resume it,
+  and a new message instead declines it.
+- **Stopping**: closing or cancelling the turn cancels the running tools and answers every open
+  call with `Stopped by the user.`
+- **Failure**: a provider's error raises, as in llm_master, and the caller sends the `error` chunk.
+
 ## The sandbox
 
 Each conversation gets one Modal sandbox, named after it and started on its first sandbox call.
