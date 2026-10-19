@@ -25,5 +25,5 @@ build-backend = "hatchling.build"
 packages = ["llm_master"]
 
 [tool.uv.sources]
-# fixes until released: fork PRs #17, #18 and #19 (mozilla-ai/any-llm#1513-1515), #20 and #21
+# fixes until released: fork PRs #17, #18 and #19 (mozilla-ai/any-llm#1513-1515), #20, #21 and #22
 any-llm-sdk = { git = "https://github.com/JamMaster1999/any-llm", branch = "llm-master" }
