@@ -14,7 +14,7 @@ from llm_master.facade import LLM
 DRAW = "A small red circle on a white background, flat."
 
 
-@pytest.mark.parametrize("llm", [None, LLM()], ids=["without-llm", "with-llm"])
+@pytest.mark.parametrize("llm", [None, LLM(update_prices=False)], ids=["without-llm", "with-llm"])
 def test_the_generate_pair_comes_with_llm(llm):
     tools = {spec["function"]["name"]: spec["function"] for spec in Toolbox("c", llm=llm).specs}
     listed = llm is not None

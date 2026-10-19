@@ -19,13 +19,21 @@ Finish = Literal["stop", "length", "tool_calls", "content_filter"]  # any-llm's 
 
 @dataclass
 class Usage:
-    """input counts every prompt token, cache reads and writes included; output counts reasoning."""
+    """input counts every prompt token, cache reads and writes included; output counts reasoning.
+
+    The rest are parts of those two that providers price apart (SPEC.md Money).
+    """
 
     input: int = 0
     output: int = 0
     reasoning: int = 0
     cache_read: int = 0
     cache_write: int = 0
+    cache_write_1h: int = 0  # anthropic's 1-hour writes, part of cache_write
+    input_audio: int = 0
+    input_image: int = 0
+    output_audio: int = 0
+    output_image: int = 0
 
 
 @dataclass
@@ -46,9 +54,9 @@ class Response:
     parsed: Any
     finish: Finish
     usage: Usage | None  # None when the provider reported none: unknown, never zero
-    attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these two
+    attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these three
     latency: float = 0.0
-    cost: float | None = None  # SPEC.md step 4
+    cost: float | None = None  # dollars; None when unknown (SPEC.md Money)
 
 
 class CutCall(ProviderError):
@@ -88,7 +96,9 @@ def completion_usage(u: CompletionUsage | None) -> Usage | None:
         return None
     sent, made = u.prompt_tokens_details, u.completion_tokens_details
     return Usage(input=u.prompt_tokens, output=u.completion_tokens, reasoning=made and made.reasoning_tokens or 0,
-                 cache_read=sent and sent.cached_tokens or 0, cache_write=sent and sent.cache_write_tokens or 0)
+                 cache_read=sent and sent.cached_tokens or 0, cache_write=sent and sent.cache_write_tokens or 0,
+                 input_audio=sent and sent.audio_tokens or 0, input_image=sent and sent.image_tokens or 0,
+                 output_audio=made and made.audio_tokens or 0, output_image=made and made.image_tokens or 0)
 
 
 def _completion(raw: ChatCompletion, origin: Origin, ids: dict[str, str]) -> tuple[Message, Finish, Usage | None]:
@@ -114,7 +124,8 @@ def _messages(raw: MessageResponse, origin: Origin, ids: dict[str, str]) -> tupl
     cache_read, cache_write = u.cache_read_input_tokens or 0, u.cache_creation_input_tokens or 0
     usage = Usage(input=u.input_tokens + cache_read + cache_write, output=u.output_tokens,
                   reasoning=u.output_tokens_details.thinking_tokens if u.output_tokens_details else 0,
-                  cache_read=cache_read, cache_write=cache_write)
+                  cache_read=cache_read, cache_write=cache_write,
+                  cache_write_1h=u.cache_creation.ephemeral_1h_input_tokens if u.cache_creation else 0)
     finish = ANTHROPIC_STOP_REASON_TO_FINISH_REASON.get(raw.stop_reason or "end_turn", "stop")
     return _message(text, calls, thinking, origin, native), finish, usage
 

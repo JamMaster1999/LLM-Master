@@ -1,8 +1,8 @@
 """The pipeline every call runs through: query(), image() and speech() hand it one try per candidate.
 
 A try is an async generator: a streamed try yields its chunks, and every try yields its Final last. The
-pipeline stamps every attempt and the whole call's latency on that CallReturn. Steps 5 to 7 grow this loop in
-place: the rate limiter, retries, then fallback over the candidates.
+pipeline stamps every attempt, the whole call's latency and its cost on that CallReturn. Steps 5 to 7 grow this
+loop in place: the rate limiter, retries, then fallback over the candidates.
 """
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
@@ -10,15 +10,18 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Generic, Protocol, TypeVar
 
-from llm_master.io.response import Attempt
+from llm_master.cost import price
+from llm_master.io.response import Attempt, Usage
 from llm_master.types import Model
 
 
 class CallReturn(Protocol):
-    """What a call returns, a Response or a Media: the pipeline sets these two on it."""
+    """What a call returns, a Response or a Media: the pipeline prices its usage and sets the rest."""
 
+    usage: Usage | None
     attempts: list[Attempt]
     latency: float
+    cost: float | None
 
 
 A = TypeVar("A", bound=CallReturn)
@@ -52,6 +55,7 @@ async def stream(chain: list[Model], tries: Callable[[Model], AsyncGenerator[dic
     assert final is not None, "a try yields its Final last"
     final.value.latency = time.monotonic() - started
     final.value.attempts = [Attempt(candidate.provider, candidate.model, final.value.latency)]
+    final.value.cost = price(final.value.usage, candidate.provider, candidate.model)
     yield final
 
 

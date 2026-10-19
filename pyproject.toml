@@ -12,6 +12,7 @@ dependencies = [
     "pillow>=13.0.0",
     "pillow-heif>=1.8.1",
     "httpx>=0.28.1",
+    "genai-prices>=0.1.13",
 ]
 
 [project.optional-dependencies]

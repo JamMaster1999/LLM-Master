@@ -6,6 +6,7 @@ import anthropic
 import openai
 from any_llm import AnyLLM
 from any_llm.providers.fireworks.fireworks import FireworksProvider
+from genai_prices import UpdatePrices
 
 from llm_master import media
 from llm_master.io.messages import Message
@@ -27,9 +28,13 @@ assert set(_AIOHTTP) == set(get_args(SDK)), "every SDK needs an aiohttp decision
 class LLM:
     """Hold one per process and aclose it at shutdown. Async-only: sync callers run asyncio.run once."""
 
-    def __init__(self) -> None:
+    def __init__(self, update_prices: bool = True) -> None:
+        """update_prices starts genai-prices' hourly price refresh (SPEC.md Money); off, nothing is fetched."""
         self._clients: dict[ProviderName, AnyLLM] = {}
         self._closers: list[Callable[[], Awaitable[None]]] = []
+        self._prices = UpdatePrices()  # one refresh thread per process, however many LLMs start it
+        if update_prices:
+            self._prices.start()
 
     def client(self, provider: ProviderName) -> AnyLLM:
         if provider not in self._clients:
@@ -68,6 +73,7 @@ class LLM:
         return await media.speech(self, candidates, text)
 
     async def aclose(self) -> None:
+        self._prices.stop()
         closers, self._closers, self._clients = self._closers, [], {}
         for close in closers:
             await close()
