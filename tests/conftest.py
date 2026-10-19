@@ -3,7 +3,6 @@ import base64
 import json
 import os
 import pathlib
-import secrets
 import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler
@@ -13,12 +12,7 @@ import httpx
 import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
-os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
-# server/app.py reads these at import: each worker's own app, public while the tests run, with a short
-# prompt and the fixture skills
-os.environ.update(AGENT_APP=f"llm-master-test-{secrets.token_hex(4)}", AGENT_PUBLIC="1",
-                  AGENT_PROMPT=str(pathlib.Path(__file__).parent / "fixtures" / "prompt.md"),
-                  AGENT_SKILLS=str(pathlib.Path(__file__).parent / "tools" / "skills"))
+os.environ["MODAL_ENVIRONMENT"] = "dev"  # sandboxes and apps never run beside production's
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():
@@ -88,8 +82,9 @@ def recorded(provider_server, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
     that each request body matches the recorded one: the goldens of the same-bytes rule.
     RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys).
-    A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
-    def serve(name: str) -> None:
+    A multipart body (an image edit) is pinned as base64 with its random boundary blanked. `unpinned`
+    names JSON body keys neither checked nor kept, such as tools pinned elsewhere."""
+    def serve(name: str, unpinned: tuple[str, ...] = ()) -> None:
         path, live = FIXTURES / f"{name}.json", os.environ.get("RECORD") == "1"
         exchanges = [] if live else json.loads(path.read_text())
         received: list[dict] = []
@@ -99,7 +94,7 @@ def recorded(provider_server, request):
             if kind.startswith("multipart/"):
                 pinned = base64.b64encode(body.replace(kind.split("boundary=")[1].encode(), b"BOUNDARY")).decode()
             else:
-                pinned = json.loads(body)
+                pinned = {key: value for key, value in json.loads(body).items() if key not in unpinned}
             received.append({"path": path, "body": pinned})
             if live:
                 headers = {k: v for k, v in handler.headers.items()

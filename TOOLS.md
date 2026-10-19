@@ -46,7 +46,8 @@ code it writes. Three rules keep the conversation's data in:
 ## Running tools
 
 The caller installs `llm-master[agent]` and builds a `Toolbox` for each request of a
-conversation. It lists the tools for the config and runs the model's calls:
+conversation. It lists the tools for the config and runs the model's calls; `turn()` (The loop) is
+the full version of this sketch:
 
 ```python
 box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, urls=user_urls, llm=llm)
@@ -146,18 +147,23 @@ blocking calls are fine there. `server/cli.py` drives one conversation from the 
   sandbox has no network and no Modal token, so model-written code can't forge the history.
 - **Files**: the backend never mounts a workspace volume. Every file it reads or writes goes through
   the conversation's sandbox, so the sandbox is the volume's only writer.
-- **One request per conversation**: a lock in the `llm-master-locks` Dict, holding the time it
-  lapses. The request pushes it back every 20 seconds while it runs, so a container that dies frees
-  its conversation within a minute. A second request waits up to 30 seconds, then gets an `error`
-  chunk.
+- **One request per conversation**: a lock in the `llm-master-locks` Dict, naming its holder and
+  when it lapses. The holder pushes the time back every 20 seconds while it runs, so a container
+  that dies frees its conversation within a minute. A lapsed lock passes to the first request that
+  claims it under a key named for it, so two can't both take it. A second request waits up to 30
+  seconds, then gets an `error` chunk.
 - **Stopping**: the user stops a turn by closing the stream. Modal tells the app only when a write
   fails, so the backend pings with an SSE comment after 5 quiet seconds. The turn then stops and
   saves, and only then does the next request get the lock.
 - **Delivered files** go as `file` chunks holding data URLs until the files origin exists. The AI
   SDK's file chunk has no name field, so the name rides in `providerMetadata.agent.filename`.
+- **Models**: `server/__init__.py` lists the four the backend offers, each at its own thinking level.
 - **Keys** reach the backend as the `llm-master-keys` Modal Secret. The sandbox gets none.
+- **Preemption** would rerun a request with nobody left to stream to, so the function is
+  nonpreemptible, at 3x the container's CPU and memory price.
 - **Auth**: Modal's proxy auth guards the endpoint; a client sends a proxy token as
-  `Authorization: Bearer wk-….ws-…`. `AGENT_PUBLIC=1` drops it, for test apps that live minutes.
+  `Authorization: Bearer wk-….ws-…`. `AGENT_PUBLIC=1` drops it, for the test apps, which live minutes
+  under random names.
 - **Deploying**: `modal deploy --env dev server/app.py` ships the prompt in `prompts/system.md`
   and the skills in `skills/`; `AGENT_PROMPT`, `AGENT_SKILLS` and `AGENT_APP` point elsewhere.
 

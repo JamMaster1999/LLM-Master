@@ -4,10 +4,11 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
-from agent.result import Result, UserFile
+from agent.result import Result, UserFile, whole
 from agent.toolbox import SERIAL, Toolbox
 from llm_master.facade import LLM
 from llm_master.io.messages import Call, Message
@@ -15,7 +16,7 @@ from llm_master.types import Model
 
 STOPPED = "Stopped by the user."
 INTERRUPTED = "[Request interrupted by user]"  # what Claude Code tells the model after a stop mid-answer
-URL = re.compile(r"https?://[^\s<>\"'`]+")
+URL = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 
 
 class Conversation(BaseModel):
@@ -41,17 +42,21 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
     `conversation` as it goes. A stopped one answers each open call with "Stopped by the user.", and
     one stopped mid-answer keeps the text so far, then "[Request interrupted by user]", so the
     conversation is always ready for the next request."""
-    if text:
-        conversation.urls += [url for url in typed_urls(text) if url not in conversation.urls]
+    typed = [text or "", *(value for call in _open(conversation.messages) for value in _typed(call, answers.get(call.id)))]
+    conversation.urls += [url for url in typed_urls("\n".join(typed)) if url not in conversation.urls]
     box = Toolbox(conversation_id, sources=conversation.sources, urls=conversation.urls, skills=skills, llm=llm)
     model = model.model_copy(update={"config": model.config.model_copy(update={"tools": box.specs})})
     ended = False
     try:
         yield {"type": "start"}
+        if not (text or uploads or _open(conversation.messages)):  # an empty message, or answers sent twice
+            ended = True
+            yield {"type": "finish"}
+            return
         for call in _open(conversation.messages):
             conversation.messages.append(_answer(call, box.resume(answers.get(call.id))))
         if text or uploads:
-            parts = [{"type": "text", "text": text}] if text else []
+            parts = [{"type": "text", "text": whole(text)}] if text else []
             for name, data in uploads:
                 parts += await box.attach(name, data)
             conversation.messages.append(Message.model_validate({"role": "user", "content": parts}))
@@ -72,8 +77,8 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
             conversation.messages.append(message)
             asking = False
             for batch in _batches(message.calls or []):
-                async with asyncio.TaskGroup() as group:
-                    runs = [group.create_task(_run(box, call)) for call in batch]
+                runs = [asyncio.create_task(_run(box, call)) for call in batch]
+                try:
                     for run in asyncio.as_completed(runs):
                         call, result = await run
                         if result.waiting:  # the browser asks the user; the answers come with the next request
@@ -82,6 +87,10 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
                         conversation.messages.append(_answer(call, result))
                         for chunk in _shown(call, result, conversation.sources):
                             yield chunk
+                finally:  # a stop cancels the calls still running, and they end before the turn does
+                    for run in runs:
+                        run.cancel()
+                    await asyncio.wait(runs)
             if asking or not message.calls:
                 break
         ended = True
@@ -99,10 +108,19 @@ def typed_urls(text: str) -> list[str]:
     urls = []
     for url in URL.findall(text):
         url = url.rstrip(".,;:!?*")
-        if url.endswith(")") and url.count(")") > url.count("("):
-            url = url[:-1]
+        for opener, closer in ("()", "[]"):
+            if url.endswith(closer) and url.count(closer) > url.count(opener):
+                url = url[:-1]
         urls.append(url)
     return urls
+
+
+def _typed(call: Call, answer: dict[str, str] | None) -> list[str]:
+    """The answers to an ask_user call the user typed. A picked option is the model's words, so its
+    URL mustn't reach fetch_url's allowlist."""
+    questions: Any = call.arguments["questions"]
+    labels = {option["label"] for question in questions for option in question["options"]}
+    return [value for value in (answer or {}).values() if not set(value.split(", ")) <= labels]
 
 
 def _batches(calls: list[Call]) -> list[list[Call]]:
@@ -126,8 +144,11 @@ def _shown(call: Call, result: Result, sent: list[dict]) -> list[dict | UserFile
     """What the user sees of a result: its text as the call's output, its new sources and its files."""
     output = ({"type": "tool-output-error", "toolCallId": call.id, "errorText": result.text()} if result.error
               else {"type": "tool-output-available", "toolCallId": call.id, "output": result.text()})
-    new = [part for part in result.sources if part not in sent]
-    sent += new
+    new = []
+    for part in result.sources:  # a program's searches can return one page twice
+        if part not in sent:
+            sent.append(part)
+            new.append(part)
     return [output, *new, *result.files]
 
 

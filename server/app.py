@@ -14,24 +14,28 @@ import contextlib
 import io
 import json
 import logging
+import mimetypes
 import os
-import re
 import time
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
+import fastapi
 import modal
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, TypeAdapter, ValidationError
+from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
 from agent import UserFile, sandbox
 from agent.turn import Conversation, turn
 from llm_master.facade import LLM
-from llm_master.types import Config, Model
+from llm_master.types import Model
+from server import APP, MODELS
 
 log = logging.getLogger(__name__)
 
@@ -44,13 +48,6 @@ WAIT = 30  # seconds a request waits for the one before it to wind up
 PING = 5  # seconds of quiet before a ping: Modal tells the app a client left only when a write fails
 MAX_FILES = 20  # per message (TOOLS.md, Files)
 
-MODELS = {model.model: model for model in [
-    Model(provider="anthropic", model="claude-sonnet-5-5", config=Config(thinking="medium")),
-    Model(provider="openai", model="gpt-6.1-sol", config=Config(thinking="high")),
-    Model(provider="gemini", model="gemini-3.8-flash", config=Config(thinking="high")),
-    Model(provider="gemini", model="gemini-4-argon", config=Config(thinking="medium")),
-]}
-
 image = (modal.Image.debian_slim(python_version="3.13")
          .apt_install("git")  # uv fetches any-llm from its fork
          .uv_sync(str(ROOT), extras=["agent", "server"], extra_options="--no-dev")
@@ -59,17 +56,24 @@ image = (modal.Image.debian_slim(python_version="3.13")
 if (skills := Path(os.environ.get("AGENT_SKILLS", ROOT / "skills"))).is_dir():
     image = image.add_local_dir(skills, str(SKILLS))
 
-app = modal.App(os.environ.get("AGENT_APP", "llm-master-server"))
+app = modal.App(os.environ.get("AGENT_APP", APP))
 llm = LLM()  # one per container, so requests reuse its connections
 history = modal.Volume.from_name("llm-master-history", create_if_missing=True, version=2)
 locks = modal.Dict.from_name("llm-master-locks", create_if_missing=True)
 api = FastAPI()
 
 
-@app.function(image=image, secrets=[modal.Secret.from_name("llm-master-keys")], timeout=TIMEOUT)
+# nonpreemptible, at 3x the container's price: a preempted request reruns with no client to stream to
+@app.function(image=image, secrets=[modal.Secret.from_name("llm-master-keys")], timeout=TIMEOUT, nonpreemptible=True)
 @modal.asgi_app(requires_proxy_auth=os.environ.get("AGENT_PUBLIC") != "1")
 def web() -> FastAPI:
     return api
+
+
+@app.function(image=sandbox.image(skills) if skills.is_dir() else sandbox.IMAGE)
+def sandbox_image() -> None:
+    """Never called: it makes the deploy build the sandbox's image, so a package list that doesn't
+    install fails the deploy, and the first sandbox after it starts without a build."""
 
 
 class Part(BaseModel):
@@ -78,6 +82,7 @@ class Part(BaseModel):
     type: str
     text: str = ""
     url: str = ""
+    mediaType: str = ""
     filename: str | None = None
     toolCallId: str = ""
     state: str = ""
@@ -89,34 +94,58 @@ class UIMessage(BaseModel):
     parts: list[Part]
 
 
+def _offered(model: str) -> str:
+    if model not in MODELS:
+        raise ValueError(f"the backend offers {', '.join(MODELS)}")
+    return model
+
+
 class Chat(BaseModel):
     """The body the AI SDK sends when it sends only the last message, and the model to answer it."""
 
     id: str = Field(pattern=NAME)
     message: UIMessage
-    model: str
+    model: Annotated[str, AfterValidator(_offered)]
+
+
+class Said(TypedDict, total=False):
+    """turn()'s arguments for one message."""
+
+    text: str
+    uploads: list[tuple[str, bytes]]
+    answers: dict[str, dict[str, str] | None]
 
 
 Answers: TypeAdapter[dict[str, str] | None] = TypeAdapter(dict[str, str] | None)
 
 
+class _Closing(StreamingResponse):
+    """A StreamingResponse that closes its events however it ends. Starlette leaves them open when the
+    client leaves mid-write, and then the turn would wind up and save only when the garbage collector
+    got to it, after the request, when Modal no longer runs the event loop."""
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            assert isinstance(self.body_iterator, AsyncGenerator)
+            with anyio.CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 @api.post("/chat")
 async def chat(request: Chat) -> StreamingResponse:
     """One turn: a user message, or the assistant message that carries ask_user's answers."""
-    if request.model not in MODELS:
-        raise HTTPException(422, f"Unknown model {request.model}. Models: {', '.join(MODELS)}.")
     model = MODELS[request.model]
     model = model.model_copy(update={"config": model.config.model_copy(update={"system": PROMPT.read_text()})})
-    return StreamingResponse(_events(request.id, model, _input(request.message)), media_type="text/event-stream",
-                             headers={"x-vercel-ai-ui-message-stream": "v1"})
+    return _Closing(_events(request.id, model, _input(request.message)), media_type="text/event-stream",
+                    headers={"x-vercel-ai-ui-message-stream": "v1"})
 
 
 @api.delete("/conversations/{id}")
-async def forget(id: str) -> None:
+async def forget(id: Annotated[str, fastapi.Path(pattern=NAME)]) -> None:
     """Deletes a conversation for good: its sandbox, its files and its history. Uflo calls it when
     the user deletes the conversation."""
-    if not re.match(NAME, id):
-        raise HTTPException(422, "Not a conversation id.")
     try:
         async with _locked(id):
             await sandbox.delete(id)
@@ -126,7 +155,7 @@ async def forget(id: str) -> None:
         raise HTTPException(409, str(error)) from None
 
 
-def _input(message: UIMessage) -> dict:
+def _input(message: UIMessage) -> Said:
     """turn()'s arguments for the message: a user message's text and uploads, or ask_user's answers
     by call id. An answer is the answers by question, or null when the user declined."""
     if message.role == "assistant":
@@ -139,7 +168,8 @@ def _input(message: UIMessage) -> dict:
     if len(files) > MAX_FILES:
         raise HTTPException(422, f"A message takes at most {MAX_FILES} files.")
     return {"text": "\n\n".join(part.text for part in message.parts if part.type == "text"),
-            "uploads": [(part.filename or "upload", _decoded(part.url)) for part in files]}
+            "uploads": [(part.filename or f"upload{mimetypes.guess_extension(part.mediaType) or ''}", _decoded(part.url))
+                        for part in files]}
 
 
 def _decoded(url: str) -> bytes:
@@ -153,11 +183,11 @@ def _decoded(url: str) -> bytes:
         raise HTTPException(422, "A file part's url holds broken base64.") from None
 
 
-async def _events(id: str, model: Model, kwargs: dict) -> AsyncGenerator[str, None]:
+async def _events(id: str, model: Model, said: Said) -> AsyncGenerator[str, None]:
     """The turn as server-sent events, ending in [DONE]."""
     try:
         async with _conversation(id) as conversation:
-            turned = turn(llm, model, id, conversation, skills=SKILLS if SKILLS.is_dir() else None, **kwargs)
+            turned = turn(llm, model, id, conversation, skills=SKILLS if SKILLS.is_dir() else None, **said)
             async with aclosing(_pinged(turned)) as events:
                 async for event in events:
                     yield event
@@ -169,7 +199,8 @@ async def _events(id: str, model: Model, kwargs: dict) -> AsyncGenerator[str, No
 async def _pinged(chunks: AsyncGenerator[dict | UserFile, None]) -> AsyncGenerator[str, None]:
     """The chunks as events, with a ping after PING quiet seconds. The turn runs in a task of its own,
     so the pings go on while it waits on a tool. A client that leaves cancels it, and the events end
-    once it has wound up."""
+    once it has wound up. FastAPI's EventSourceResponse pings only every 15 seconds, and cancels
+    in anyio's way inside the turn's cleanup."""
     queue: asyncio.Queue[dict | UserFile | None] = asyncio.Queue()
 
     async def pump() -> None:
@@ -207,7 +238,7 @@ def _event(chunk: dict | UserFile) -> str:
         chunk = {"type": "file", "mediaType": chunk.mime,
                  "url": f"data:{chunk.mime};base64,{base64.b64encode(chunk.data).decode()}",
                  "providerMetadata": {"agent": {"filename": chunk.name}}}
-    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(chunk)}\n\n"  # ASCII, so a lone UTF-16 half from a model can't break it
 
 
 class Busy(Exception):
@@ -216,22 +247,34 @@ class Busy(Exception):
 
 @asynccontextmanager
 async def _locked(id: str) -> AsyncIterator[None]:
-    """One request per conversation at a time (TOOLS.md). The lock is a Dict entry holding the time it
-    lapses, which the request pushes back while it runs, so a container that dies frees it soon."""
-    deadline = time.monotonic() + WAIT
-    while not await locks.put.aio(id, time.time() + LEASE, skip_if_exists=True):
-        lapses = await locks.get.aio(id)
-        if lapses is not None and lapses < time.time():
-            await locks.pop.aio(id, None)
-        elif time.monotonic() > deadline:
+    """One request per conversation at a time (TOOLS.md). The lock is a Dict entry naming its holder
+    and when it lapses, which the holder pushes back while it runs, so a container that dies frees the
+    conversation soon. A lapsed lock passes to the first request to claim it, under a key named for it,
+    so two can't both take it."""
+    me, deadline = uuid.uuid4().hex, time.monotonic() + WAIT
+    while not await locks.put.aio(id, (me, time.time() + LEASE), skip_if_exists=True):
+        held = await locks.get.aio(id)
+        if held and held[1] < time.time() and await locks.put.aio(f"{id}/{held[0]}", me, skip_if_exists=True):
+            await locks.put.aio(id, (me, time.time() + LEASE))
+            break
+        if time.monotonic() > deadline:
             raise Busy("Another request is still running in this conversation.")
-        else:
-            await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)
+
+    async def mine() -> bool:
+        held = await locks.get.aio(id)
+        return bool(held) and held[0] == me
 
     async def renew() -> None:
         while True:
             await asyncio.sleep(LEASE / 3)
-            await locks.put.aio(id, time.time() + LEASE)
+            try:
+                if not await mine():
+                    log.error("lost the lock on %s", id)
+                    return
+                await locks.put.aio(id, (me, time.time() + LEASE))
+            except Exception:  # Modal blinked; the lease has two more renewals before it lapses
+                log.exception("couldn't renew the lock on %s", id)
 
     renewing = asyncio.create_task(renew())
     try:
@@ -240,7 +283,8 @@ async def _locked(id: str) -> AsyncIterator[None]:
         renewing.cancel()
         with anyio.CancelScope(shield=True):
             await asyncio.wait([renewing])
-            await locks.pop.aio(id, None)
+            if await mine():
+                await locks.pop.aio(id, None)
 
 
 @asynccontextmanager

@@ -12,7 +12,7 @@ from PIL import Image as Pillow
 from agent import UserFile, media
 from agent.sandbox import delete
 from agent.turn import Conversation, turn
-from server.app import MODELS
+from server import MODELS
 
 pytestmark = [pytest.mark.live, pytest.mark.parametrize("model", list(MODELS))]
 

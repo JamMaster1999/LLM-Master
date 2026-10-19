@@ -1,8 +1,11 @@
 """The backend on Modal at its entry points, the HTTP endpoint and the CLI, on an app of each test
-worker's own (tests/conftest.py names it)."""
+worker's own."""
 import asyncio
+import os
+import secrets
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -13,12 +16,19 @@ import pytest
 from modal.exception import NotFoundError
 
 from agent.turn import STOPPED, Conversation
-from server.app import app, load, web
-from server.cli import chunks
-
-pytestmark = pytest.mark.live
+from server import MODELS
 
 ROOT = Path(__file__).parent.parent.parent
+# server/app.py reads these at import: each test worker deploys its own app, public while the tests
+# run, with a short prompt and the fixture skills
+os.environ.update(AGENT_APP=f"llm-master-test-{secrets.token_hex(4)}", AGENT_PUBLIC="1",
+                  AGENT_PROMPT=str(ROOT / "tests" / "fixtures" / "prompt.md"),
+                  AGENT_SKILLS=str(ROOT / "tests" / "tools" / "skills"))
+
+from server.app import app, load, locks, web  # noqa: E402
+from server.cli import chunks  # noqa: E402
+
+pytestmark = pytest.mark.live
 MODEL = "claude-sonnet-5-5"
 
 
@@ -43,7 +53,8 @@ def said(url: str, conversation: str, text: str) -> list[dict]:
         return list(chunks(client, url, body))
 
 
-def test_the_cli_uploads_asks_and_saves_what_the_agent_sends(url, conversation, tmp_path):
+@pytest.mark.parametrize("model", list(MODELS))  # each provider's key and stream through the deployed app
+def test_the_cli_uploads_asks_and_saves_what_the_agent_sends(url, conversation, tmp_path, model):
     (tmp_path / "notes.txt").write_text("The secret word is tangerine.\n")
     script = [f"/attach {tmp_path / 'notes.txt'}",
               "Use ask_user to ask me one question: which file name to use, with the options word.txt and "
@@ -52,7 +63,7 @@ def test_the_cli_uploads_asks_and_saves_what_the_agent_sends(url, conversation, 
               "1",  # the first option
               "/quit"]
     run = subprocess.run([sys.executable, "-m", "server.cli", "--url", url, "--conversation", conversation,
-                          "--model", MODEL, "--files", str(tmp_path / "files")],
+                          "--model", model, "--files", str(tmp_path / "files")],
                          input="\n".join(script) + "\n", capture_output=True, text=True, timeout=600, cwd=ROOT)
     saved = tmp_path / "files" / "word.txt"
     assert f"Saved {saved}" in run.stdout and "tangerine" in saved.read_text(), run.stdout + run.stderr
@@ -72,7 +83,14 @@ def test_a_stopped_turn_answers_its_open_call_and_the_next_request_waits_for_it(
 
 def test_delete_removes_the_files_and_the_history(url, conversation):
     said(url, conversation, "Write keep.txt containing hi.")
+    modal.Volume.from_name(f"workspace-{conversation}").hydrate()  # there are files to delete
     httpx.delete(f"{url}/conversations/{conversation}", timeout=120).raise_for_status()
     assert asyncio.run(load(conversation)) == Conversation()
     with pytest.raises(NotFoundError):
         modal.Volume.from_name(f"workspace-{conversation}").hydrate()
+
+
+def test_a_lock_whose_holder_died_is_taken_over(url, conversation):
+    locks.put(conversation, ("a dead container", time.time() - 1))
+    answer = "".join(c["delta"] for c in said(url, conversation, "Reply with the word ok.") if c["type"] == "text-delta")
+    assert "ok" in answer.lower()
