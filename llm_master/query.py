@@ -40,14 +40,14 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequenc
     if moderation:
         await moderating.check(llm, history)
     if stream:
-        return Stream(pipeline.stream(llm, chain, lambda c: _streamed(llm, c, history)))
+        return Stream(pipeline.stream(llm, "query", chain, lambda c: _streamed(llm, c, history)))
 
     async def once(candidate: Model) -> Response:
         api, request = build(candidate, history, stream=False)
         raw = await _send(llm, candidate, api, request)
         return read(api, raw, _origin(candidate), {}, candidate.config.response_format)
 
-    return await pipeline.run(llm, chain, once)
+    return await pipeline.run(llm, "query", chain, once)
 
 
 async def _streamed(llm: "LLM", candidate: Model, history: list[Message]

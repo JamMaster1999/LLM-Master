@@ -18,6 +18,7 @@ if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
         _key, _sep, _value = _line.partition("=")
         if _sep:
             os.environ.setdefault(_key.strip(), _value.strip().strip('"').strip("'"))
+POSTHOG_KEY = os.environ.pop("POSTHOG_API_KEY", None)  # no call sends telemetry unless its test sets the key
 
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -47,25 +48,34 @@ async def llm():
     await llm.aclose()
 
 
+def local_server(request, answer: Callable[[BaseHTTPRequestHandler, bytes], None]) -> int:
+    """A server on localhost for one test: answer(handler, body) writes each POST's reply. Returns its port."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            answer(self, self.rfile.read(int(self.headers["Content-Length"])))
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingTCPServer(("127.0.0.1", 0), Handler)  # HTTPServer would reverse-DNS the host
+    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+    request.addfinalizer(server.server_close)
+    request.addfinalizer(server.shutdown)
+    return server.server_address[1]
+
+
 @pytest.fixture
 def provider_server(monkeypatch, request):
     """Points every provider at a local server; answer(handler, provider, path, body) writes each reply.
     The keys are fake unless RECORD=1, which forwards each request to the real provider."""
     def start(answer: Callable[[BaseHTTPRequestHandler, str, str, bytes], None]) -> None:
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                provider, _, rest = self.path[1:].partition("/")
-                answer(self, provider, "/" + rest, self.rfile.read(int(self.headers["Content-Length"])))
+        def route(handler: BaseHTTPRequestHandler, body: bytes) -> None:
+            provider, _, rest = handler.path[1:].partition("/")
+            answer(handler, provider, "/" + rest, body)
 
-            def log_message(self, format, *args):
-                pass
-
-        server = ThreadingTCPServer(("127.0.0.1", 0), Handler)  # HTTPServer would reverse-DNS the host
-        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
-        request.addfinalizer(server.server_close)
-        request.addfinalizer(server.shutdown)
+        port = local_server(request, route)
         for provider, (var, _) in UPSTREAM.items():
-            monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_address[1]}/{provider}")
+            monkeypatch.setenv(var, f"http://127.0.0.1:{port}/{provider}")
         for key in KEYS if os.environ.get("RECORD") != "1" else ():
             monkeypatch.setenv(key, "test")
     return start

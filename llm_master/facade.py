@@ -16,6 +16,7 @@ from llm_master.limiter import Limiter
 from llm_master.media import Media
 from llm_master.providers import PROVIDERS, SDK, ProviderName
 from llm_master.query import run
+from llm_master.telemetry import Telemetry
 from llm_master.types import Model
 
 # genai picks aiohttp by itself and closes its own session on garbage collection
@@ -32,6 +33,7 @@ class LLM:
         self._clients: dict[ProviderName, AnyLLM] = {}
         self._http: list = []
         self.limiter = Limiter()  # every call through this LLM shares its windows (SPEC.md Rate limits)
+        self.telemetry = Telemetry()  # on when POSTHOG_API_KEY is set (SPEC.md Telemetry)
         self._prices = UpdatePrices()  # one refresh thread per process, however many LLMs start it
         if update_prices:
             self._prices.start()
@@ -85,3 +87,4 @@ class LLM:
         http, self._http, self._clients = self._http, [], {}
         for client in http:
             await client.aclose()
+        await self.telemetry.aclose()  # last: a slow PostHog can't keep the providers' connections open

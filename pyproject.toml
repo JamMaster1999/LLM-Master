@@ -13,6 +13,7 @@ dependencies = [
     "pillow-heif>=1.8.1",
     "httpx>=0.28.1",
     "genai-prices>=0.1.13",
+    "posthog[async]>=7.71.0",
 ]
 
 [project.optional-dependencies]
