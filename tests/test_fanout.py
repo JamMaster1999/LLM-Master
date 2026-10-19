@@ -1,7 +1,7 @@
 """async_query(): many query() calls at once, against a stand-in Anthropic that echoes each prompt."""
+import asyncio
 import json
 import threading
-import time
 
 import pytest
 from any_llm.exceptions import InvalidRequestError
@@ -12,32 +12,45 @@ HAIKU = Model(provider="anthropic", model="claude-haiku-5-5")
 
 
 @pytest.fixture
-def echo(provider_server):
-    """Answers each request with its own prompt after `hold` seconds, and counts the requests in flight.
-    The prompt "bad" gets a 400 at once."""
-    seen = {"hold": 0.05, "now": 0, "most": 0}
+def echo(provider_server, request):
+    """Answers each request with its own prompt, and counts the requests in flight. Ordinary prompts
+    pass in pairs, so two are in flight together; "slow" waits for teardown; "bad" gets a 400 once
+    both slow requests are in."""
+    seen = {"now": 0, "most": 0, "slow": 0}
     lock = threading.Lock()
+    arrived, pair, release = threading.Condition(lock), threading.Barrier(2, timeout=5), threading.Event()
+    request.addfinalizer(release.set)
 
     def answer(handler, provider, path, body):
         prompt = json.loads(body)["messages"][-1]["content"]
-        if prompt == "bad":
-            reply, status = {"type": "error", "error": {"type": "invalid_request_error", "message": "bad"}}, 400
+        status, reply = 200, {"id": "msg", "type": "message", "role": "assistant", "model": HAIKU.model,
+                              "content": [{"type": "text", "text": prompt}], "stop_reason": "end_turn",
+                              "usage": {"input_tokens": 1, "output_tokens": 1}}
+        if prompt == "slow":
+            with arrived:
+                seen["slow"] += 1
+                arrived.notify_all()
+            release.wait(10)
+        elif prompt == "bad":
+            with arrived:
+                arrived.wait_for(lambda: seen["slow"] == 2, timeout=5)
+            status, reply = 400, {"type": "error", "error": {"type": "invalid_request_error", "message": "bad"}}
         else:
             with lock:
                 seen["now"] += 1
                 seen["most"] = max(seen["most"], seen["now"])
-            time.sleep(seen["hold"])
+            pair.wait()
             with lock:
                 seen["now"] -= 1
-            reply, status = {"id": "msg", "type": "message", "role": "assistant", "model": HAIKU.model,
-                             "content": [{"type": "text", "text": prompt}], "stop_reason": "end_turn",
-                             "usage": {"input_tokens": 1, "output_tokens": 1}}, 200
         data = json.dumps(reply).encode()
-        handler.send_response(status)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(data)))
-        handler.end_headers()
-        handler.wfile.write(data)
+        try:
+            handler.send_response(status)
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(data)))
+            handler.end_headers()
+            handler.wfile.write(data)
+        except OSError:  # a cancelled request's client hung up
+            pass
     provider_server(answer)
     return seen
 
@@ -55,11 +68,9 @@ async def test_at_most_concurrency_run_at_once_and_answers_keep_request_order(ec
 
 
 async def test_a_failing_request_cancels_the_rest_and_raises_its_error(echo, llm):
-    echo["hold"] = 1
-    started = time.monotonic()
-    with pytest.raises(InvalidRequestError):
-        await llm.async_query(HAIKU, ask("slow", "bad", "slow"))
-    assert time.monotonic() - started < 0.8, "the call waited for the slow requests"
+    with pytest.raises(InvalidRequestError):  # had it waited for the slow requests, wait_for would time out
+        await asyncio.wait_for(llm.async_query(HAIKU, ask("slow", "bad", "slow")), 5)
+    assert echo["slow"] == 2, "the slow requests weren't in flight when bad failed"
 
 
 async def test_a_v1_request_key_sends_nothing(recorded, llm):
