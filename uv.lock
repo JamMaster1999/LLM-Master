@@ -1198,6 +1198,7 @@ dependencies = [
 agent = [
     { name = "exa-py" },
     { name = "modal" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -1215,6 +1216,7 @@ requires-dist = [
     { name = "google-genai", extras = ["aiohttp"] },
     { name = "modal", marker = "extra == 'agent'", specifier = ">=1.6.2" },
     { name = "openai", extras = ["aiohttp"] },
+    { name = "pydantic", marker = "extra == 'agent'", specifier = ">=2.11" },
 ]
 provides-extras = ["agent"]
 
