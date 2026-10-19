@@ -261,8 +261,9 @@ call and never go into history:
   schema class, the parsed JSON for a schema dict or `type="json"`. None otherwise, and when the
   text isn't JSON or a schema class rejects it; the text stays in `message.content` for the caller
   to judge. A schema dict is the provider's to enforce: its JSON comes back unchecked.
-- `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
-  any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
+- `finish` — why the model stopped, in any-llm's words: `stop`, `length`, `tool_calls` or
+  `content_filter`. A model's own refusal reads as `content_filter` too; its text, if any, is in
+  `message.content`. Errors raise a typed exception, so `finish` never says error.
 - `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
   prompt token, cache reads and writes included; `output` counts reasoning. None when the provider
   reported no usage: unknown, never zero.
