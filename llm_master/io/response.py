@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, assert_never
 
 from any_llm.exceptions import ProviderError
+from any_llm.providers.anthropic.utils import ANTHROPIC_STOP_REASON_TO_FINISH_REASON
 from any_llm.types.completion import ChatCompletion, CompletionUsage
 from any_llm.types.messages import MessageResponse
 from openai.types.responses import Response as OpenAIResponse
@@ -16,9 +17,6 @@ from llm_master.providers import API, ProviderName
 Finish = Literal["stop", "length", "calls", "refusal"]
 _CHAT_FINISH: dict[str, Finish] = {"stop": "stop", "length": "length", "tool_calls": "calls",
                                    "content_filter": "refusal"}
-_ANTHROPIC_FINISH: dict[str, Finish] = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length",
-                                        "model_context_window_exceeded": "length", "tool_use": "calls",
-                                        "refusal": "refusal"}
 
 
 @dataclass
@@ -118,7 +116,8 @@ def _messages(raw: MessageResponse, origin: Origin, ids: dict[str, str]) -> tupl
     usage = Usage(input=u.input_tokens + cache_read + cache_write, output=u.output_tokens,
                   reasoning=u.output_tokens_details.thinking_tokens if u.output_tokens_details else 0,
                   cache_read=cache_read, cache_write=cache_write)
-    return _message(text, calls, thinking, origin, native), _ANTHROPIC_FINISH[raw.stop_reason or "end_turn"], usage
+    finish = _CHAT_FINISH[ANTHROPIC_STOP_REASON_TO_FINISH_REASON.get(raw.stop_reason or "end_turn", "stop")]
+    return _message(text, calls, thinking, origin, native), finish, usage
 
 
 def _responses(raw: OpenAIResponse, origin: Origin, ids: dict[str, str]) -> tuple[Message, Finish, Usage | None]:

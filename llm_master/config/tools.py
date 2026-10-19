@@ -17,7 +17,7 @@ Tool = Annotated[Any, AfterValidator(_function_only)]  # an openai-format functi
 
 
 def translate(tools: list[Any] | None, api: API) -> dict:
-    specs = [tool if isinstance(tool, dict) else callable_to_tool(tool) for tool in map(_function_only, tools or [])]
+    specs = [tool if isinstance(tool, dict) else callable_to_tool(tool) for tool in tools or []]
     match api:
         case "completion":
             return {} if tools is None else {"tools": specs}  # openai nested form as-is; any-llm converts per provider
