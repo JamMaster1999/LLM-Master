@@ -1,7 +1,7 @@
 """The Response a call returns, read from each API's output. See IO.md."""
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal, assert_never
+from typing import Any, Literal, assert_never, cast
 
 from any_llm.exceptions import ProviderError
 from any_llm.providers.anthropic.utils import ANTHROPIC_STOP_REASON_TO_FINISH_REASON
@@ -14,9 +14,7 @@ from llm_master.config.response_format import Format
 from llm_master.io.messages import Call, Message, Origin, new_id
 from llm_master.providers import API, ProviderName
 
-Finish = Literal["stop", "length", "calls", "refusal"]
-_CHAT_FINISH: dict[str, Finish] = {"stop": "stop", "length": "length", "tool_calls": "calls",
-                                   "content_filter": "refusal"}
+Finish = Literal["stop", "length", "tool_calls", "content_filter"]  # any-llm's words
 
 
 @dataclass
@@ -68,7 +66,7 @@ def read(api: API, raw: Any, origin: Origin, ids: dict[str, str], fmt: Format | 
             message, finish, usage = _responses(raw, origin, ids)
         case _:
             assert_never(api)
-    if message.calls and finish in ("length", "refusal"):  # the last call stopped mid-arguments
+    if message.calls and finish in ("length", "content_filter"):  # the last call stopped mid-arguments
         raise CutCall(f"the answer stopped ({finish}) inside its tool calls, so they can't run")
     return Response(message=message, parsed=_parse(fmt, message, finish), finish=finish, usage=usage)
 
@@ -101,8 +99,9 @@ def _completion(raw: ChatCompletion, origin: Origin, ids: dict[str, str]) -> tup
     calls = [_call(ids, tc["id"], tc["function"]["name"], arguments(tc["function"]["arguments"]))
              for tc in native.get("tool_calls", [])]
     text = native.get("content") or native.get("refusal") or ""
-    # openai reports a refusal as a normal stop; only the refusal field tells
-    finish: Finish = "refusal" if native.get("refusal") else _CHAT_FINISH[choice.finish_reason]
+    # openai reports a refusal as a normal stop; only the refusal field tells. function_call never
+    # comes back: it answers the legacy functions parameter, which llm_master never sends
+    finish = "content_filter" if native.get("refusal") else cast(Finish, choice.finish_reason)
     return _message(text, calls, native.get("reasoning"), origin, native), finish, completion_usage(raw.usage)
 
 
@@ -116,7 +115,7 @@ def _messages(raw: MessageResponse, origin: Origin, ids: dict[str, str]) -> tupl
     usage = Usage(input=u.input_tokens + cache_read + cache_write, output=u.output_tokens,
                   reasoning=u.output_tokens_details.thinking_tokens if u.output_tokens_details else 0,
                   cache_read=cache_read, cache_write=cache_write)
-    finish = _CHAT_FINISH[ANTHROPIC_STOP_REASON_TO_FINISH_REASON.get(raw.stop_reason or "end_turn", "stop")]
+    finish = ANTHROPIC_STOP_REASON_TO_FINISH_REASON.get(raw.stop_reason or "end_turn", "stop")
     return _message(text, calls, thinking, origin, native), finish, usage
 
 
@@ -131,9 +130,9 @@ def _responses(raw: OpenAIResponse, origin: Origin, ids: dict[str, str]) -> tupl
              for i in native if i["type"] == "function_call"]
     if raw.status == "incomplete":
         cut = raw.incomplete_details.reason if raw.incomplete_details else None
-        finish: Finish = "refusal" if cut == "content_filter" else "length"
+        finish: Finish = "content_filter" if cut == "content_filter" else "length"
     else:
-        finish = "calls" if calls else "refusal" if any(p["type"] == "refusal" for p in parts) else "stop"
+        finish = "tool_calls" if calls else "content_filter" if any(p["type"] == "refusal" for p in parts) else "stop"
     u = raw.usage
     usage = Usage(input=u.input_tokens, output=u.output_tokens, reasoning=u.output_tokens_details.reasoning_tokens,
                   cache_read=u.input_tokens_details.cached_tokens,

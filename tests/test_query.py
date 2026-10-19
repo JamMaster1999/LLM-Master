@@ -72,7 +72,7 @@ async def test_tool_loop_replays_the_models_own_turn(provider, stream, recorded,
     candidate = LOOPS[provider]
     first, chunks = await ask(llm, candidate, ASK, stream)
     calls = first.message.calls or []
-    assert first.finish == "calls" and sorted(str(c.arguments["city"]) for c in calls) == ["Paris", "Toronto"]
+    assert first.finish == "tool_calls" and sorted(str(c.arguments["city"]) for c in calls) == ["Paris", "Toronto"]
     assert all(c.id.startswith("lm_") and c.wire_id for c in calls)
     assert first.message.origin and first.message.origin.model == candidate.model and first.message.native
     assert first.usage and first.message.reasoning and first.usage.reasoning > 0
