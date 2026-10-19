@@ -1,5 +1,8 @@
 """The loop tools: todo is Codex's update_plan; ask_user is Claude Code's AskUserQuestion."""
-from typing import Literal, TypedDict
+from typing import Annotated, Literal
+
+from pydantic import Field
+from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
 from agent.result import Result
 
@@ -64,7 +67,7 @@ class Option(TypedDict):
 class Question(TypedDict):
     question: str
     header: str
-    options: list[Option]
+    options: Annotated[list[Option], Field(min_length=2, max_length=4)]
     multiSelect: bool
 
 
@@ -72,7 +75,7 @@ def todo(plan: list[Step], explanation: str | None = None) -> str:
     return "Plan updated"  # the UI draws the plan from the call's arguments
 
 
-def ask_user(questions: list[Question]) -> Result:
+def ask_user(questions: Annotated[list[Question], Field(min_length=1, max_length=4)]) -> Result:
     return Result("", waiting="question")
 
 

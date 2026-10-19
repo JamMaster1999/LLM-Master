@@ -25,6 +25,13 @@ async def test_ask_user_waits_for_the_users_answers():
     assert (await box.resume("ask_user", {"questions": QUESTIONS}, None)).content == "User declined to answer questions"
 
 
+async def test_ask_user_refuses_too_few_questions_or_options():
+    box = Toolbox("c")
+    for questions in ([], [{**QUESTIONS[0], "options": QUESTIONS[0]["options"][:1]}]):
+        result = await box.run("ask_user", {"questions": questions})
+        assert result.error and result.text().startswith("Invalid arguments for ask_user: questions"), result.content
+
+
 async def test_unknown_tools_and_bad_arguments_come_back_as_errors():
     box = Toolbox("c")
     unknown = await box.run("teleport", {})

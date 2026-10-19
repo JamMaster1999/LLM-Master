@@ -3,11 +3,12 @@ import json
 import mimetypes
 import posixpath
 from importlib import resources
-from typing import Annotated, TypedDict
+from typing import Annotated
 
 from modal.exception import SandboxFilesystemError, SandboxFilesystemNotFoundError
 from modal.types import FileType
 from pydantic import Field
+from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
 from agent.reader import MAX_FILE, format_size
 from agent.result import Result, ToolError, UserFile
