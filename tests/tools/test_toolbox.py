@@ -1,9 +1,11 @@
 """The toolbox's own behaviour, for the tools that need neither Modal nor Exa."""
 import inspect
+from pathlib import Path
 
 import pytest
 
 from agent import Toolbox, files, loop, shell, web
+from agent.skills import Skills
 
 PLAN = [{"step": "Draft the quiz", "status": "in_progress"}, {"step": "Write the key", "status": "pending"}]
 QUESTIONS = [{"question": "Which grade level?", "header": "Grade", "multiSelect": False,
@@ -47,7 +49,8 @@ BOUND = {"self", "sandbox", "run", "tools"}  # what the toolbox binds before the
 @pytest.mark.parametrize("spec, function", [
     (files.READ, files.read), (files.WRITE, files.write), (files.EDIT, files.edit), (shell.BASH, shell.bash),
     (shell.RUN_PROGRAM, shell.run_program), (web.SEARCH, web.Web.search), (web.FETCH, web.Web.fetch),
-    (files.DELIVER, files.deliver_file), (loop.TODO, loop.todo), (loop.ASK_USER, loop.ask_user)])
+    (files.DELIVER, files.deliver_file), (loop.TODO, loop.todo), (loop.ASK_USER, loop.ask_user),
+    (Skills(Path(__file__).parent / "skills").spec, Skills.load)])
 def test_each_schema_matches_its_function(spec, function):
     """The schema the model reads and the signature its arguments are checked against are written
     apart, so this keeps them in step."""

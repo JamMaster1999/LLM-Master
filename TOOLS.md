@@ -19,6 +19,7 @@ SKILLS.md, and the code in `agent/`.
 | deliver_file | host | | text; the file goes to the user |
 | todo | host | Codex's `update_plan` | text |
 | ask_user | the user | Claude Code's `AskUserQuestion` | text, once the user answers |
+| skill | host | Claude Code's `Skill` | the skill's instructions |
 
 file_search, search_uflo_docs, mcp and widget come later; they aren't designed here.
 
@@ -65,6 +66,8 @@ await box.aclose()
 - **`sources` and `urls`** carry state across rebuilds. `sources` are the source parts already
   sent, so numbering continues. `urls` are the URLs the user typed, which fetch_url may read.
 - **`llm`** is llm_master's facade, for the generate pair.
+- **`skills`** is the caller's folder of skill folders (SKILLS.md). Without skills, there's no
+  skill tool.
 - **`specs`** lists the built-in tools, then the caller's own, as openai function dicts.
 - **Custom tools** are plain Python functions, sync or async. The schema comes from the signature
   and docstring, as in CONFIG.md field 6. One returns a string, a `Result`, or any JSON value, and
@@ -104,6 +107,8 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **Names**: the conversation id must fit a Modal name: letters, digits, `-`, `_` and `.`, at
   most 54 characters. A UUID fits. Each deployment uses its own Modal environment.
 - **No network**, DNS included (Keeping data in).
+- **Skills** appear at `/skills/<name>/`, added from the caller's folder as the sandbox starts.
+  A running sandbox keeps the skills it started with.
 - **The image** is Debian slim with Python 3.13, LibreOffice, poppler, Pillow and openpyxl.
   Nothing installs at run time, so a skill that needs a package adds it to the image. A new image
   reaches a conversation when its sandbox next starts.
@@ -176,7 +181,8 @@ print(max(pages, key=len)[:2000])
 - **Calls.** Each tool is an async function that takes one dict and returns the result's text. A
   failed call raises `ToolError`.
 - **Which tools**: web_search, fetch_url, generate_image, generate_audio, deliver_file and every
-  custom tool. The program has a shell already, and todo and ask_user draw UI.
+  custom tool. The program has a shell already, todo and ask_user draw UI, and skill's
+  instructions are for the model.
 - **At most 100 calls** per program.
 - **The host checks every call**, since the program can send anything. Keys stay on the host.
 - **Files and sources** from the calls inside reach the user.
@@ -225,6 +231,21 @@ state, and the UI draws the latest call's plan.
 `ask_user(questions)` is Claude Code's AskUserQuestion: 1–4 questions of 2–4 options each, without
 its terminal-only `preview`. The call waits for the user (Running tools). The model then reads
 Claude Code's answer text, or `User declined to answer questions`.
+
+### skill
+
+`skill(skill)` is Claude Code's Skill tool, without `args`, which fills placeholders our skills
+don't have.
+
+- **Finding.** The tool's description ends with one line per skill, `- name: description`, sorted
+  so the prompt cache holds. Anthropic and OpenAI both list skills this way, and neither searches
+  them. The toolbox doesn't own the system prompt, so the list lives in the description, as
+  agentskills.io allows.
+- **Reading.** A call returns the skill's instructions, wrapped as agentskills.io suggests, with
+  its folder and its other files listed. The model reads those with read and runs them with bash.
+- **Skill folders** follow the Agent Skills spec. SKILL.md's `name` matches its folder, and its
+  `description` is at most 1024 characters. A broken skill fails the toolbox's construction. The
+  frontmatter is read as `key: value` lines, not YAML.
 
 ## Files
 

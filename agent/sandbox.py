@@ -4,6 +4,7 @@ import asyncio
 import math
 import posixpath
 import time
+from pathlib import Path
 
 import modal
 from modal.container_process import ContainerProcess
@@ -13,6 +14,7 @@ from modal.types import FileInfo
 APP = "llm-master-agent"
 WORKSPACE = "/workspace"
 SCRATCH = f"{WORKSPACE}/.agent"  # where long output waits for read
+SKILLS = "/skills"  # the caller's skill folders, the Claude API's layout
 IMAGE = (modal.Image.debian_slim(python_version="3.13")
          .apt_install("libreoffice-nogui", "poppler-utils", "fonts-liberation", "fonts-dejavu", "procps")
          .uv_pip_install("pillow", "pillow-heif", "openpyxl"))
@@ -21,10 +23,13 @@ LIFETIME = 24 * 60 * 60  # Modal's ceiling
 
 
 class Sandbox:
-    """Started on first use. Parallel tool calls share one start."""
+    """Started on first use. Parallel tool calls share one start. `skills`, a folder of skill
+    folders, appears at /skills."""
 
-    def __init__(self, conversation_id: str) -> None:
+    def __init__(self, conversation_id: str, skills: str | Path | None = None) -> None:
         self.conversation_id = conversation_id
+        # copy=False, the default: Modal adds the files as the sandbox starts, without a build
+        self.image = IMAGE.add_local_dir(skills, SKILLS) if skills else IMAGE
         self._box: modal.Sandbox | None = None
         self._lock = asyncio.Lock()
 
@@ -35,7 +40,7 @@ class Sandbox:
         async with self._lock:
             if self._box and self._box is not box:  # replaced while we waited
                 return self._box
-            self._box = await _find(self.conversation_id) or await _create(self.conversation_id)
+            self._box = await _find(self.conversation_id) or await _create(self.conversation_id, self.image)
             return self._box
 
     async def start(self, *args: str, timeout: float) -> ContainerProcess:
@@ -96,11 +101,11 @@ async def _find(conversation_id: str) -> modal.Sandbox | None:
         return None
 
 
-async def _create(conversation_id: str) -> modal.Sandbox:
+async def _create(conversation_id: str, image: modal.Image) -> modal.Sandbox:
     app = await modal.App.lookup.aio(APP, create_if_missing=True)
     volume = modal.Volume.from_name(_volume(conversation_id), create_if_missing=True)
     try:
-        return await modal.Sandbox.create.aio(app=app, name=conversation_id, image=IMAGE,
+        return await modal.Sandbox.create.aio(app=app, name=conversation_id, image=image,
                                               volumes={WORKSPACE: volume}, workdir=WORKSPACE,
                                               block_network=True,  # model-written code can't send data out
                                               timeout=LIFETIME, idle_timeout=IDLE_TIMEOUT)
