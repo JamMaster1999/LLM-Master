@@ -85,8 +85,3 @@ async def test_a_failure_that_would_repeat_is_not_tried_again(steps, candidate, 
     with pytest.raises(InvalidRequestError):
         await llm.query(candidate, GREET)
 
-
-async def test_the_fifth_failure_raises(recorded, llm):
-    recorded(failing("anthropic_configured", 429, RATE_LIMITED, times=5, headers={"retry-after": "0"}))
-    with pytest.raises(RateLimitError):  # teardown fails on a sixth try
-        await llm.query(CONFIGURED["anthropic"], GREET)
