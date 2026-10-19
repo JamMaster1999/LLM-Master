@@ -55,19 +55,14 @@ Parts are a fixed set, told apart by `type`. An unknown `type` fails validation.
 - file (PDF) — `{"type": "file", "data": <base64>, "mime": "application/pdf", "filename": str}`
 - audio — `{"type": "audio", "data": <base64>, "format": str}`, user messages only
 
-Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` accept a
-data-uri, a URL or a local path, and read, convert (HEIC to JPEG) and encode the data when the part
-is created: `Image("photo.heic")`. HEIC becomes JPEG (quality 90): a 12-megapixel phone photo as
-PNG runs about 18 MB, past Claude's limit. The bytes decide what an image is, not its name or
-`Content-Type`. The caller then saves exactly the bytes every later call sends (see The same-bytes
-rule). A failed download or conversion, an `Image` that isn't an image, or a
-`File` that isn't a PDF raises `PartError` when the part is created, before any model is billed.
-Reading is synchronous; an async caller downloading a URL wraps the constructor in
-`asyncio.to_thread`. A source is read as whatever it names, a local path or any URL, with no size
-cap, so never pass a user's input as one: that reads server files or fetches internal addresses.
+Messages hold base64 data only, never a URL or a file path. `Image`, `File` and `Audio` take a
+data-uri, a URL or a local path and encode it once, when the part is created, so every later call
+sends the same bytes (see The same-bytes rule). HEIC becomes JPEG. A source that can't be read, an
+`Image` that isn't an image, or a `File` that isn't a PDF raises `PartError` before any model is
+billed. Never pass a user's input as a source: a path or URL is read as given.
 
-Size limits are left to the provider. For reference: Anthropic rejects an image over 10 MB
-(live-tested), and Gemini accepts at most 20 MB of inline data per request.
+Size limits are left to the provider. For reference: Anthropic rejects an image over 10 MB, and
+Gemini accepts at most 20 MB of inline data per request.
 
 ## Assistant messages: readable fields and native
 
@@ -171,11 +166,7 @@ any-llm's converters expect OpenAI's chat format, so this case writes it.
 - assistant from the same model: `native` unchanged, including Gemini's signatures and
   Fireworks' `reasoning_content`.
 - tool: `{"role": "tool", "tool_call_id", "content"}`, parts renamed as for user.
-  - Gemini 3 receives image and PDF parts as `functionResponse.parts` (any-llm fork PRs #17 and
-    #20). Without them it never sees the media and invents an answer (live-tested).
-  - Fireworks passes image parts to the models that read images: kimi-k3 and deepseek-v4p1-flash
-    read one in a tool result (live-tested). A text-only model such as glm-5p3, or a PDF part,
-    gets Fireworks' own 400.
+  - Gemini 3 receives image and PDF parts as `functionResponse.parts`.
 
 ### messages → `{"messages": [...]}`
 
@@ -187,17 +178,14 @@ every key except role and content, and rebuilds thinking from a format we never 
   - image → `{"type": "image", "source": {"type": "base64", "media_type", "data"}}`
   - file → the same shape as a `document` block
   - audio → `UnsupportedField` (Anthropic has no audio input)
-- assistant from the same model: `{"role": "assistant", "content": <native unchanged>}`. Claude
-  sometimes answers with an empty `content` list; that message is left out, because Anthropic
-  returns a 400 on an empty assistant turn.
+- assistant from the same model: `{"role": "assistant", "content": <native unchanged>}`, or
+  nothing when `native` is empty.
 - tool: `{"type": "tool_result", "tool_use_id", "content"}` inside a user message.
   - Consecutive results go in one user message.
   - Parts become text, image and document blocks.
   - Empty content leaves out the `content` key.
 
 ### responses → `{"input_data": [...]}`
-
-`input_data` is any-llm's name for the request's `input`.
 
 - user: a string → `{"role": "user", "content": str}`. Parts are renamed:
   - text → `input_text`
@@ -224,8 +212,8 @@ calls only, with our ids, in the candidate's own format. No reasoning, no signat
 ids. Its tool results are sent exactly as they would be after the candidate's own calls.
 
 - completion: `{"role": "assistant", "content": <text or None>, "tool_calls": [{"id", "type":
-  "function", "function": {"name", "arguments": <json str>}}]}`, with `tool_calls` only when there are
-  calls. A message with neither text nor calls is left out.
+  "function", "function": {"name", "arguments": <json str>}}]}`, with `tool_calls` only when
+  there are calls. A message with neither text nor calls is left out.
   - Gemini: any-llm adds Google's documented `skip_thought_signature_validator` to the first call
     without a signature, so the call is accepted.
   - Fireworks: nothing more is needed. On deepseek-v4p1-flash, kimi-k3 and glm-5p3, a message
@@ -238,7 +226,7 @@ ids. Its tool results are sent exactly as they would be after the candidate's ow
   - `{"role": "assistant", "content": str}` when there is text;
   - then one `{"type": "function_call", "call_id", "name", "arguments": <json str>}` per call,
     without an item `id`. A function call with an `fc_` id but without its reasoning item
-    returns a 400. gpt-5.5 accepts these calls, and their text needs no `phase` (live-tested).
+    returns a 400.
 
 Switching models in the middle of a tool loop needs nothing extra. Claude in adaptive mode turns
 thinking off for that one request instead of failing
