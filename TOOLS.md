@@ -51,11 +51,11 @@ box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, urls=user
 model = Model(provider="openai", model="gpt-5.5", config=Config(tools=box.specs))
 response = await llm.query(model, history)
 history.append(response.message)
-for call in response.message.calls:
-    result = await box.run(call["name"], call["arguments"])
+for call in response.message.calls or []:
+    result = await box.run(call.name, call.arguments)
     if result.waiting:
         continue  # the browser asks the user; the reply comes with the next request
-    history.append({"role": "tool", "call_id": call["id"], "content": result.content})
+    history.append({"role": "tool", "call_id": call.id, "content": result.content})
 await box.aclose()
 ```
 
