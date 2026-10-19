@@ -64,6 +64,18 @@ Live-checked 2026-10-18:
 * The media tools own the files and the lineage record (TOOLS.md). 
 * OpenAI speech reports its usage only in its streamed format, which `speech()` asks for unless `extra` sets `stream_format`.
 
+**Rate limits.** Each `LLM` holds one limiter: a sliding window per (provider, model), from
+`registry.limit()`. At most `requests` tries may start in any `interval` seconds.
+
+- Every try waits for a slot before it sends, retries and fallback hops included, which is why
+  the limiter sits before retries. Moderation waits in its own window,
+  `omni-moderation-latest`'s.
+- The wait counts toward `response.latency` but not an attempt's latency, which starts with the
+  try.
+- The windows are local to one `LLM`, so other processes don't share them. A provider's 429 still
+  surfaces typed, for the retries.
+- A model without a row of its own still gets its own window, at the provider's default limit.
+
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
 timeout expiry is a typed `ProviderError`, retryable like the rest.
