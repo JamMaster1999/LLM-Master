@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from importlib import resources
 from typing import Annotated
 
+from modal.exception import ConflictError
 from pydantic import Field
 
 from agent.reader import MAX_BYTES, MAX_LINES
@@ -17,6 +18,7 @@ from agent.sandbox import SCRATCH, Sandbox
 MAX_CALLS = 100  # tool calls one program may make
 MAX_CALL_BYTES = 1024 * 1024  # one call's JSON line; a program sending more is stopped
 MAX_ARGUMENT = 60_000  # characters; Modal takes at most 65,536 in one exec argument
+STDIN_CHUNK = 16 * 1024 * 1024  # Modal buffers at most this much stdin between drains
 Timeout = Annotated[float, Field(gt=0, le=600)]
 _RUNNER = resources.files("agent").joinpath("runner.py").read_text()
 
@@ -97,24 +99,27 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
         files.extend(result.files)
         sources.extend(result.sources)
         reply = {"id": request["id"], "error" if result.error else "result": result.text()}
+        data = (json.dumps(reply) + "\n").encode()
         async with lock:
-            with contextlib.suppress(Exception):  # the program may have ended meanwhile
-                process.stdin.write((json.dumps(reply) + "\n").encode())
-                await process.stdin.drain.aio()
+            with contextlib.suppress(ConflictError):  # the program ended meanwhile
+                for start in range(0, len(data), STDIN_CHUNK):
+                    process.stdin.write(data[start:start + STDIN_CHUNK])
+                    await process.stdin.drain.aio()
 
     async with asyncio.TaskGroup() as group:
-        pending, buffer, calls = set(), b"", 0
+        pending, buffer, received = set(), b"", 0
         async for chunk in process.stdout:
             *lines, buffer = (buffer + chunk).split(b"\n")
-            calls += len(lines)
-            if len(buffer) > MAX_CALL_BYTES or calls > 2 * MAX_CALLS:  # it's flooding the bridge, not calling tools
+            received += len(lines)
+            # it's flooding the bridge, not calling tools
+            if received > 2 * MAX_CALLS or max(map(len, [buffer, *lines])) > MAX_CALL_BYTES:
                 await sandbox.exec("pkill", "-f", program, timeout=30)
                 break
-            for line in lines:
+            for number, line in enumerate(lines, received - len(lines) + 1):
                 with contextlib.suppress(ValueError, KeyError, TypeError):  # a forged line that isn't a call
                     request = json.loads(line)
                     task = group.create_task(answer({"id": request["id"], "name": request["name"],
-                                                     "arguments": dict(request["arguments"])}, calls))
+                                                     "arguments": dict(request["arguments"])}, number))
                     pending.add(task)
                     task.add_done_callback(pending.discard)
         exit_code = await process.wait.aio()

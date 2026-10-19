@@ -139,6 +139,17 @@ except ToolError as error:
     assert [(file.name, file.data) for file in result.files] == [("report.txt", b"Quiz report")]
 
 
+async def test_run_program_runs_the_first_100_calls_and_refuses_the_rest(box):
+    code = """
+with open("note.txt", "w") as f:
+    f.write("hi")
+results = await asyncio.gather(*[deliver_file({"path": "note.txt"}) for _ in range(110)], return_exceptions=True)
+print(results.count("Sent note.txt to the user."), {str(r) for r in results if isinstance(r, ToolError)})
+"""
+    result = await run(box, "run_program", code=code)
+    assert result.content == "100 {'run_program allows at most 100 tool calls.'}"
+
+
 async def test_run_program_shows_the_programs_traceback(box):
     result = await run(box, "run_program", code="x = 1\nraise ValueError('no grades yet')\n")
     assert result.error
