@@ -229,7 +229,7 @@ aiohttp = [
 [[package]]
 name = "any-llm-sdk"
 version = "0.0.0.dev0"
-source = { git = "https://github.com/JamMaster1999/any-llm?branch=llm-master#a4eb4ed6a662f11af00c4ab8b013d79862eef793" }
+source = { git = "https://github.com/JamMaster1999/any-llm?branch=llm-master#5c1a38303b8738ff00ce9dc98385f52e4b3b9d40" }
 dependencies = [
     { name = "anthropic" },
     { name = "httpx" },
