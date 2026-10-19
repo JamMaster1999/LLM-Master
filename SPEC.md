@@ -78,6 +78,27 @@ bill one generation twice
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
 discount manually.
 
+- `cost` on a `Response` or a `Media` is dollars, a `float`. The pipeline prices the answering
+  try's usage with genai-prices' `calc_price` when the call ends, streams included.
+- It is None when usage is None or genai-prices doesn't know the model (Fireworks' glm-5p3 and
+  deepseek-v4p1-flash today): unknown, never zero.
+- Only the answering try is priced. A failed try reports no usage, so its spend goes uncounted.
+- The genai-prices provider is the row's `price_id`, else the provider's own name. An import-time
+  check rejects a name genai-prices doesn't know, so a typo can't pass for an unpriced model.
+- `Usage` breaks out the parts providers price apart. Each is part of `input` or `output`:
+  - `cache_write_1h`: Anthropic's 1-hour cache writes, 2x the input rate against 1.25x for
+    5 minutes.
+  - `input_audio`, `input_image`, `output_audio`, `output_image`: audio and image tokens. OpenAI's
+    audio input costs 16x its text rate, and a Gemini image's output 20x.
+- `LLM()` starts genai-prices' hourly refresh, one thread for every `LLM` in the process, and
+  `aclose()` stops it. `LLM(update_prices=False)` starts none, so costs come from the prices
+  genai-prices holds: its bundled snapshot, unless a refresh ran. The offline tests use it, so
+  they never fetch prices.
+- Known limits:
+  - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
+    no caller sets `service_tier` yet.
+  - genai-prices has no row for gemini-3.8-flash-tts, so it prices as gemini-3.8-flash.
+
 **Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
 model, tokens, latency, cost, retry and fallback outcome, and errors.
 
