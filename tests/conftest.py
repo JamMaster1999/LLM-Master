@@ -3,7 +3,6 @@ import base64
 import json
 import os
 import pathlib
-import secrets
 import threading
 from collections.abc import Callable
 from itertools import takewhile
@@ -14,12 +13,7 @@ import httpx
 import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
-os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
-# server/app.py reads these at import: each worker's own app, public while the tests run, with a short
-# prompt and the fixture skills
-os.environ.update(AGENT_APP=f"llm-master-test-{secrets.token_hex(4)}", AGENT_PUBLIC="1",
-                  AGENT_PROMPT=str(pathlib.Path(__file__).parent / "fixtures" / "prompt.md"),
-                  AGENT_SKILLS=str(pathlib.Path(__file__).parent / "tools" / "skills"))
+os.environ["MODAL_ENVIRONMENT"] = "dev"  # sandboxes and apps never run beside production's
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():
@@ -123,8 +117,9 @@ def recorded(provider_server, request):
     request body matches the recorded one: the goldens of the same-bytes rule. A step is a fixture name,
     fixtures/<name>.json, or a list of exchanges built by failing(), cut() or paced(), which replay as given.
     RECORD=1 with one name forwards its requests to the real provider and rewrites its file (bodies only,
-    never keys). A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
-    def serve(*steps: str | list[dict]) -> None:
+    never keys). A multipart body (an image edit) is pinned as base64 with its random boundary blanked.
+    `unpinned` names JSON body keys neither checked nor kept, such as tools pinned elsewhere."""
+    def serve(*steps: str | list[dict], unpinned: tuple[str, ...] = ()) -> None:
         live = os.environ.get("RECORD") == "1" and len(steps) == 1 and isinstance(steps[0], str)
         plan = [] if live else [e for step in steps for e in (exchanges(step) if isinstance(step, str) else step)]
         received: list[dict] = []
@@ -135,7 +130,7 @@ def recorded(provider_server, request):
             if kind.startswith("multipart/"):
                 pinned = base64.b64encode(body.replace(kind.split("boundary=")[1].encode(), b"BOUNDARY")).decode()
             else:
-                pinned = json.loads(body)
+                pinned = {key: value for key, value in json.loads(body).items() if key not in unpinned}
             received.append({"path": path, "body": pinned})
             if live:
                 headers = {k: v for k, v in handler.headers.items()

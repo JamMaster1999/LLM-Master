@@ -19,7 +19,7 @@ from pathlib import Path
 import httpx
 import modal
 
-from server.app import MODELS
+from server import APP, MODELS
 
 DIM, PLAIN = "\033[2m", "\033[0m"
 
@@ -93,7 +93,7 @@ def main() -> None:
     parser.add_argument("--conversation", default=str(uuid.uuid4()))
     parser.add_argument("--files", type=Path, default=Path("files"))
     parser.add_argument("--url", help="the backend's address; found on Modal when left out")
-    parser.add_argument("--app", default="llm-master-server")
+    parser.add_argument("--app", default=APP)
     args = parser.parse_args()
     url = args.url or modal.Function.from_name(args.app, "web", environment_name="dev").get_web_url()
     assert url, "web() is a web endpoint, so it has an address"
@@ -109,6 +109,8 @@ def main() -> None:
                     line = input("> ").strip()
                 except EOFError:
                     break
+                if not line:
+                    continue
                 if line == "/quit":
                     break
                 if line == "/delete":
@@ -122,12 +124,16 @@ def main() -> None:
                         print(error)
                     continue
                 message, uploads = {"role": "user", "parts": [*uploads, {"type": "text", "text": line}]}, []
-            asked = {}
+            asked = {}  # ask_user calls the stream left waiting
             try:
                 for chunk in chunks(client, url, {"id": args.conversation, "model": args.model, "message": message}):
                     show(chunk, args.files)
                     if chunk["type"] == "tool-input-available" and chunk["toolName"] == "ask_user":
                         asked[chunk["toolCallId"]] = chunk["input"]
+                    elif chunk["type"] in ("tool-output-available", "tool-output-error"):  # bad arguments, say
+                        asked.pop(chunk["toolCallId"], None)
+                    elif chunk["type"] == "reset-step":
+                        asked.clear()
             except KeyboardInterrupt:
                 print("\n[stopped]")
                 asked = {}
