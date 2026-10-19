@@ -14,7 +14,7 @@ from agent.sandbox import delete
 from agent.turn import Conversation, turn
 from server import MODELS
 
-pytestmark = [pytest.mark.live, pytest.mark.parametrize("model", list(MODELS))]
+pytestmark = [pytest.mark.live, pytest.mark.agentic, pytest.mark.parametrize("model", list(MODELS))]
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 SKILLS = Path(__file__).parent / "skills"
