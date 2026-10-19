@@ -15,6 +15,7 @@ import modal
 import pytest
 from modal.exception import NotFoundError
 
+from agent.sandbox import Sandbox
 from agent.turn import STOPPED, Conversation
 from server import MODELS
 
@@ -29,6 +30,7 @@ from server.app import app, load, locks, web  # noqa: E402
 from server.cli import chunks  # noqa: E402
 
 pytestmark = pytest.mark.live
+plumbing = pytest.mark.xdist_group("backend")  # the cheap ones share a worker, and so one app
 MODEL = "claude-sonnet-5-5"
 
 
@@ -53,6 +55,14 @@ def said(url: str, conversation: str, text: str) -> list[dict]:
         return list(chunks(client, url, body))
 
 
+@plumbing
+def test_a_message_streams_its_answer(url, conversation):
+    streamed = said(url, conversation, "Reply with the word ok.")
+    assert (streamed[0]["type"], streamed[-1]["type"]) == ("start", "finish")
+    assert "ok" in "".join(c["delta"] for c in streamed if c["type"] == "text-delta").lower()
+
+
+@pytest.mark.agentic
 @pytest.mark.parametrize("model", list(MODELS))  # each provider's key and stream through the deployed app
 def test_the_cli_uploads_asks_and_saves_what_the_agent_sends(url, conversation, tmp_path, model):
     (tmp_path / "notes.txt").write_text("The secret word is tangerine.\n")
@@ -69,6 +79,7 @@ def test_the_cli_uploads_asks_and_saves_what_the_agent_sends(url, conversation, 
     assert f"Saved {saved}" in run.stdout and "tangerine" in saved.read_text(), run.stdout + run.stderr
 
 
+@pytest.mark.agentic
 def test_a_stopped_turn_answers_its_open_call_and_the_next_request_waits_for_it(url, conversation):
     with httpx.Client(timeout=httpx.Timeout(30, read=None)) as client:
         body = {"id": conversation, "model": MODEL, "message": {"role": "user", "parts": [
@@ -81,15 +92,17 @@ def test_a_stopped_turn_answers_its_open_call_and_the_next_request_waits_for_it(
     assert [m.content for m in messages if m.role == "tool"] == [STOPPED] and "ok" in answer.lower()
 
 
+@plumbing
 def test_delete_removes_the_files_and_the_history(url, conversation):
-    said(url, conversation, "Write keep.txt containing hi.")
-    modal.Volume.from_name(f"workspace-{conversation}").hydrate()  # there are files to delete
+    said(url, conversation, "Reply with the word ok.")  # a history
+    asyncio.run(Sandbox(conversation).write("keep.txt", b"hi"))  # and files, as a tool would leave them
     httpx.delete(f"{url}/conversations/{conversation}", timeout=120).raise_for_status()
     assert asyncio.run(load(conversation)) == Conversation()
     with pytest.raises(NotFoundError):
         modal.Volume.from_name(f"workspace-{conversation}").hydrate()
 
 
+@plumbing
 def test_a_lock_whose_holder_died_is_taken_over(url, conversation):
     locks.put(conversation, ("a dead container", time.time() - 1))
     answer = "".join(c["delta"] for c in said(url, conversation, "Reply with the word ok.") if c["type"] == "text-delta")
