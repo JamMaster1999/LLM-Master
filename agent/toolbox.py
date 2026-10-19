@@ -15,7 +15,7 @@ from pydantic.experimental.arguments_schema import generate_arguments_schema
 from pydantic_core import ArgsKwargs, SchemaValidator
 
 from agent import files, loop, media, reader, shell, web
-from agent.result import Result, ToolError
+from agent.result import Result, ToolError, whole
 from agent.sandbox import SCRATCH, Sandbox
 from agent.skills import Skills
 from agent.web import Web
@@ -99,6 +99,9 @@ class Toolbox:
                 result = await self._call(name, arguments)
             except ToolError as error:
                 result = Result(str(error), error=True)
+            result.content = (whole(result.content) if isinstance(result.content, str) else
+                              [{**part, "text": whole(part["text"])} if part["type"] == "text" else part
+                               for part in result.content])
             if cut and name not in CUT_THEIR_OWN:
                 result.content = await self._cut(name, result.content)
             return result

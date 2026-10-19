@@ -17,9 +17,11 @@ dependencies = [
 [project.optional-dependencies]
 # agent/, the tools beside llm_master: the sandbox and web search
 agent = ["modal>=1.6.2", "exa-py>=2.25.0", "pydantic>=2.11", "pyyaml>=6.0.3"]
+# server/, the backend on Modal
+server = ["fastapi>=0.147.0"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "pytest-xdist", "llm-master[agent]"]
+dev = ["pytest", "pytest-asyncio", "pytest-xdist", "llm-master[agent,server]"]
 
 [build-system]
 requires = ["hatchling"]

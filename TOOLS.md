@@ -46,7 +46,8 @@ code it writes. Three rules keep the conversation's data in:
 ## Running tools
 
 The caller installs `llm-master[agent]` and builds a `Toolbox` for each request of a
-conversation. It lists the tools for the config and runs the model's calls:
+conversation. It lists the tools for the config and runs the model's calls; `turn()` (The loop) is
+the full version of this sketch:
 
 ```python
 box = Toolbox("conv_8f2", tools=[lookup_grade], sources=saved_sources, urls=user_urls, llm=llm)
@@ -99,8 +100,8 @@ before anything else joins the history. A request without a reply declines it wi
 ## The loop
 
 `agent.turn.turn()` runs one request of a conversation. It takes the conversation's state, builds
-the toolbox, adds the request's message, and loops: it calls `query()`, runs the model's calls in
-parallel, and appends their results, until the model answers without a call.
+the toolbox, adds the request's message, and loops: it calls `query()`, runs the model's calls,
+and appends their results, until the model answers without a call.
 
 ```python
 conversation = Conversation()  # or the saved one
@@ -109,6 +110,9 @@ async for chunk in turn(llm, model, "conv_8f2", conversation, text="Make a quiz"
 save(conversation)
 ```
 
+- **Order**: a message's calls run in parallel, except that one that changes the sandbox (write,
+  edit, bash, run_program) runs alone, after the calls before it, as in Claude Code. A review_file
+  sent beside the bash that builds its file reviews the new file.
 - **Input**: `text` and `uploads` make a new user message; each upload goes through `box.attach`.
   `answers` finish waiting ask_user calls, by call id.
 - **Output**: `start`, llm_master's chunks for each step, a `tool-output-available` or
@@ -119,12 +123,52 @@ save(conversation)
   user typed. A waiting ask_user call is the last assistant message's unanswered call, so nothing
   else records it. The turn appends to the state as it goes.
 - **ask_user** ends the turn once the other calls finish. The next request's answers resume it,
-  and a new message instead declines it.
+  and a new message instead declines it. URLs the user types into an answer join the allowlist; a
+  picked option's don't, since the model wrote them.
+- **Nothing new**, an empty message or answers sent twice, ends the turn without calling the model.
 - **Stopping**: closing or cancelling the turn cancels the running tools and answers every open
   call with `Stopped by the user.` A stop while the model answers keeps the text it streamed as
   the step's message, then adds a user message, `[Request interrupted by user]`, as Claude Code
   does. Its reasoning and unfinished calls are dropped.
 - **Failure**: a provider's error raises, as in llm_master, and the caller sends the `error` chunk.
+
+## The backend
+
+`server/app.py` runs the loop on Modal. Each container takes one request at a time, so llm_master's
+blocking calls are fine there. `server/cli.py` drives one conversation from the terminal.
+
+- **`POST /chat`** takes the body the AI SDK sends when it sends only the last message, `{id,
+  message}`, plus `model`, one of the four the backend offers. A user message's `file` parts hold
+  base64 data URLs, and each goes through `box.attach`. An assistant message carries ask_user's
+  answers in its `tool-ask_user` parts. The answer streams as server-sent events in the UI message
+  stream protocol.
+- **`DELETE /conversations/{id}`** stops the sandbox, drops the volume and deletes the history.
+  Uflo calls it when the user deletes the conversation. Nothing else deletes a conversation.
+- **State** lives in the `llm-master-history` volume, a JSON file per conversation, read at the start
+  of a request and written at its end, whatever ends it. No sandbox mounts that volume, and the
+  sandbox has no network and no Modal token, so model-written code can't forge the history.
+- **Files**: the backend never mounts a workspace volume. Every file it reads or writes goes through
+  the conversation's sandbox, so the sandbox is the volume's only writer.
+- **One request per conversation**: a lock in the `llm-master-locks` Dict, naming its holder and
+  when it lapses. The holder pushes the time back every 20 seconds while it runs, so a container
+  that dies frees its conversation within a minute. A lapsed lock passes to the first request that
+  claims it under a key named for it, so two can't both take it. A second request waits up to 30
+  seconds, then gets an `error` chunk.
+- **Stopping**: the user stops a turn by closing the stream. Modal tells the app only when a write
+  fails, so the backend pings with an SSE comment after 5 quiet seconds. The turn then stops and
+  saves, and only then does the next request get the lock.
+- **Delivered files** go as `file` chunks holding data URLs until the files origin exists. The AI
+  SDK's file chunk has no name field, so the name rides in `providerMetadata.agent.filename`.
+- **Models**: `server/__init__.py` lists the four the backend offers, each at its own thinking level.
+- **Keys** reach the backend as the `llm-master-keys` Modal Secret. The sandbox gets none.
+- **Preemption** would rerun a request with nobody left to stream to, so the function is
+  nonpreemptible, at 3x the container's CPU and memory price.
+- **Auth**: Modal's proxy auth guards the endpoint; a client sends a proxy token as
+  `Authorization: Bearer wk-….ws-…`. `AGENT_PUBLIC=1` drops it, for the test apps, which live minutes
+  under random names.
+- **Deploying**: `modal deploy --env dev server/app.py` ships the prompt in `prompts/system.md`
+  and the skills in `skills/`; `AGENT_PROMPT`, `AGENT_SKILLS` and `AGENT_APP` point elsewhere. The
+  deploy also builds the sandbox image, so a package that won't install fails it.
 
 ## The sandbox
 
@@ -143,7 +187,7 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **Skills** appear at `/skills/<name>/`, added from the caller's folder as the sandbox starts.
   A running sandbox keeps the skills it started with.
 - **The image** is Debian slim (bookworm) with Python 3.13, LibreOffice 25.2 from
-  bookworm-backports, fonts that match Calibri and Cambria, Noto, poppler, pandoc, Pillow, openpyxl,
+  bookworm-backports, fonts that match Calibri and Cambria, Noto with CJK, poppler, pandoc, Pillow, openpyxl,
   charset-normalizer, and Indra OCR with its weights. Nothing installs at run time, so a skill that
   needs a package lists it in the skills folder: `apt.txt` for Debian packages, `requirements.txt`
   for pip, one per line, `#` for comments. A new image reaches a conversation when its sandbox next
@@ -343,7 +387,8 @@ A PDF, document, slide deck or recording gets a **view**: a folder at `.agent/vi
 for a hash of the file's bytes.
 
 - `source.pdf`: the PDF, or LibreOffice's rendering of a document or deck.
-- `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule.
+- `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule. PDFium draws them,
+  since poppler 22 loses the check in a filled form's checkbox.
 - `transcript.jsonl`: per page `{"page", "text"}`, or per line of a recording
   `{"start", "end", "speaker", "text"}`. A line is a Whisper segment, split where the speaker
   changes.

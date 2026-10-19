@@ -6,7 +6,8 @@ skills. The tools they use are in TOOLS.md.
 
 Each skill is an Agent Skills folder: SKILL.md, whose frontmatter gives its `name` and
 `description`, then the instructions, with optional scripts and references beside it. The model
-loads one through the `skill` tool.
+loads one through the `skill` tool. The packages the skills need go in the skills folder's
+`apt.txt` and `requirements.txt`, which the sandbox image installs (TOOLS.md, The sandbox).
 
 ## Building now
 

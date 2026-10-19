@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
-os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
+os.environ["MODAL_ENVIRONMENT"] = "dev"  # sandboxes and apps never run beside production's
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():
@@ -36,13 +36,13 @@ def pytest_xdist_auto_num_workers(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Agentic tests only when -m names them. Live tests first, so no parallel worker starts a slow
-    one last."""
+    """Agentic tests only when -m names them. Live tests first, the minute-long agentic ones leading,
+    so no parallel worker starts a slow one last."""
     if "agentic" not in config.option.markexpr:
         if skipped := [item for item in items if item.get_closest_marker("agentic")]:
             config.hook.pytest_deselected(items=skipped)
             items[:] = [item for item in items if not item.get_closest_marker("agentic")]
-    items.sort(key=lambda item: item.get_closest_marker("live") is None)
+    items.sort(key=lambda item: (item.get_closest_marker("live") is None, item.get_closest_marker("agentic") is None))
 
 
 @pytest.fixture
@@ -82,8 +82,9 @@ def recorded(provider_server, request):
     """Stands in for every provider, answering from fixtures/<name>.json in order, and checks at teardown
     that each request body matches the recorded one: the goldens of the same-bytes rule.
     RECORD=1 forwards to the real provider instead and rewrites the file (bodies only, never keys).
-    A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
-    def serve(name: str) -> None:
+    A multipart body (an image edit) is pinned as base64 with its random boundary blanked. `unpinned`
+    names JSON body keys neither checked nor kept, such as tools pinned elsewhere."""
+    def serve(name: str, unpinned: tuple[str, ...] = ()) -> None:
         path, live = FIXTURES / f"{name}.json", os.environ.get("RECORD") == "1"
         exchanges = [] if live else json.loads(path.read_text())
         received: list[dict] = []
@@ -93,7 +94,7 @@ def recorded(provider_server, request):
             if kind.startswith("multipart/"):
                 pinned = base64.b64encode(body.replace(kind.split("boundary=")[1].encode(), b"BOUNDARY")).decode()
             else:
-                pinned = json.loads(body)
+                pinned = {key: value for key, value in json.loads(body).items() if key not in unpinned}
             received.append({"path": path, "body": pinned})
             if live:
                 headers = {k: v for k, v in handler.headers.items()

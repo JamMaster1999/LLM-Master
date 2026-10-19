@@ -43,8 +43,9 @@ class Skills:
             raise ToolError(f"Unknown skill: {skill}. Available skills: {', '.join(self.skills)}.")
         _, body = self.skills[skill]
         folder = self.folder / skill
-        files = sorted(path.relative_to(folder).as_posix() for path in folder.rglob("*")
-                       if path.is_file() and path != folder / "SKILL.md")
+        files = [path.relative_to(folder) for path in folder.rglob("*") if path.is_file() and path != folder / "SKILL.md"]
+        files = sorted(file.as_posix() for file in files  # not what Python compiled, nor hidden files
+                       if not any(part.startswith(".") or part == "__pycache__" for part in file.parts))
         resources = "".join(f"<file>{file}</file>\n" for file in files)
         return (f'<skill_content name="{skill}">\n{body}\n\nSkill directory: {SKILLS}/{skill}\n'
                 "Relative paths in this skill are relative to the skill directory.\n"
