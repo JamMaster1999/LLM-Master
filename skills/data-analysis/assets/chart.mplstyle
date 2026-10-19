@@ -1,0 +1,36 @@
+# Clean, readable charts: plt.style.use("/skills/data-analysis/assets/chart.mplstyle")
+# The colors are Okabe and Ito's, which people with color blindness can tell apart.
+
+figure.figsize: 8, 4.5
+figure.dpi: 100
+savefig.dpi: 200
+savefig.bbox: tight
+savefig.facecolor: white
+
+font.family: Carlito, Noto Sans CJK JP, DejaVu Sans  # each falls back to the next for a missing character
+font.size: 12
+axes.titlesize: 15
+axes.titleweight: bold
+axes.titlelocation: left
+axes.titlepad: 12
+axes.labelsize: 12
+axes.labelcolor: 374151
+xtick.labelsize: 11
+ytick.labelsize: 11
+xtick.color: 374151
+ytick.color: 374151
+text.color: 1F2937
+
+axes.prop_cycle: cycler('color', ['0072B2', 'E69F00', '009E73', 'CC79A7', '56B4E9', 'D55E00', 'F0E442', '000000'])
+axes.spines.top: False
+axes.spines.right: False
+axes.edgecolor: 9CA3AF
+axes.grid: True
+axes.grid.axis: y
+grid.color: E5E7EB
+grid.linewidth: 0.8
+axes.axisbelow: True
+
+legend.frameon: False
+legend.fontsize: 11
+lines.linewidth: 2.2

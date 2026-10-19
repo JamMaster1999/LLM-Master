@@ -8,6 +8,7 @@ from agent import Toolbox
 from agent.sandbox import delete
 
 SKILLS = Path(__file__).parent / "skills"
+SHIPPED = Path(__file__).parents[2] / "skills"
 
 
 def test_skills_are_listed_in_the_tools_description(tmp_path):
@@ -19,6 +20,12 @@ def test_skills_are_listed_in_the_tools_description(tmp_path):
     (tmp_path / "__pycache__").mkdir()
     for box in (Toolbox("c"), Toolbox("c", skills=tmp_path)):  # no skills, or a folder holding none: no tool
         assert "skill" not in [spec["function"]["name"] for spec in box.specs]
+
+
+def test_the_shipped_skills_build_a_toolbox_that_lists_each_of_them():
+    spec = Toolbox("c", skills=SHIPPED).specs[-1]["function"]
+    assert spec["parameters"]["properties"]["skill"]["enum"] == sorted(path.name for path in SHIPPED.iterdir()
+                                                                      if path.is_dir())
 
 
 async def test_a_skill_comes_back_with_its_directory_and_files():
