@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
     "(python_full_version < '3.14' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
@@ -1201,6 +1201,7 @@ dependencies = [
 agent = [
     { name = "exa-py" },
     { name = "modal" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -1221,6 +1222,7 @@ requires-dist = [
     { name = "openai", extras = ["aiohttp"] },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pillow-heif", specifier = ">=1.8.1" },
+    { name = "pydantic", marker = "extra == 'agent'", specifier = ">=2.11" },
 ]
 provides-extras = ["agent"]
 
