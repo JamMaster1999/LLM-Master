@@ -78,8 +78,7 @@ A message a provider produced has two more fields:
 
 - `origin` — `{"provider": ..., "model": ...}`, the candidate that produced it. It's set from the
   candidate, not from the model name in the response, because Gemini's response says `google/genai`.
-- `native` — the provider's raw output as JSON: the SDK's parsed objects dumped with their nulls
-  dropped, never re-validated:
+- `native` — the provider's raw output as JSON, never re-validated:
   - Anthropic: the response's `content` list (signed thinking, redacted thinking, text,
     tool_use, and any block type added later).
   - OpenAI: the response's `output` list (reasoning with `encrypted_content`, message,
@@ -198,9 +197,8 @@ every key except role and content, and rebuilds thinking from a format we never 
     truncated history returns a 400 otherwise.
 - tool: `{"type": "function_call_output", "call_id", "output"}`, where output is a string or a
   list of `input_text`, `input_image` and `input_file`.
-- `cache` minutes (CONFIG.md field 11) put `prompt_cache_breakpoint: {"mode": "explicit"}` on the
-  last block of the last item, turning a string into one `input_text` block first. OpenAI's explicit
-  cache mode caches nothing without a breakpoint.
+- `cache` minutes (CONFIG.md field 11) mark the last block of the last item with
+  `prompt_cache_breakpoint`.
 - Every Responses call sends `store: False` and `include: ["reasoning.encrypted_content"]`.
   - Saved history is then the only conversation state, and reasoning replays without depending
     on OpenAI's servers.
@@ -249,10 +247,9 @@ attached.
 - responses: output_text joined, summaries joined, each function_call becomes a call (matched by
   `call_id`); `native` is the output list.
 
-A tool call the model didn't finish can't run, so the call raises a typed `CutCall` (a
-`ProviderError`) instead of returning it. That covers arguments that aren't one whole JSON object,
-and calls in an answer that stopped on `length` or `refusal`. An OpenAI response whose status is
-`failed` raises a `ProviderError`.
+A tool call the model didn't finish, cut off by `max_tokens` or a refusal, can't run, so the call
+raises a typed `CutCall` instead of returning it. An OpenAI response with status `failed` raises a
+`ProviderError`.
 
 `messages + [response.message] + [tool results]` is the next call's history. Saving, reloading
 and calling again loses nothing, because `native` is stored as raw JSON rather than SDK objects;
@@ -262,10 +259,8 @@ Text, calls and reasoning live only on `message`; nothing is copied to the top l
 user sees `reasoning` is the caller's choice when rendering. The other fields describe this one
 call and never go into history:
 
-- `parsed` — the `response_format` object, or None. llm_master reads it from `message.content`
-  when the model stopped normally: a schema class validates into its instance, a schema dict or
-  `type="json"` gives the parsed JSON, and `type="text"` or any other `finish` gives None. A class
-  goes out as its JSON schema (CONFIG.md field 8), so streams and plain calls parse the same way.
+- `parsed` — the `response_format` object when the model stopped normally: an instance for a
+  schema class, the parsed JSON for a schema dict or `type="json"`. Otherwise None.
 - `finish` — why the model stopped: `stop`, `length`, `calls` or `refusal`. A refusal's text, if
   any, is in `message.content`. Errors raise a typed exception, so `finish` never says error.
 - `usage` — input, output, reasoning, cache-read and cache-write tokens. `input` counts every
@@ -311,30 +306,25 @@ For each model call, llm_master yields:
   it.
 - `text-start` / `-delta` / `-end`: the answer, a refusal's text included.
 - `tool-input-start` / `-delta` / `-available`: each call's name, then its arguments as they
-  arrive, then the complete arguments, parsed strictly. A call cut off mid-arguments never reaches
-  `-available`: its step resets and the stream raises `CutCall`. `toolCallId` is our `lm_` id,
-  created when the call starts streaming, so it matches `response.message.calls`.
+  arrive, then the complete arguments. A call cut off mid-arguments never reaches `-available`:
+  the step resets and the stream raises `CutCall`. `toolCallId` is our `lm_` id, created when the
+  call starts streaming, so it matches `response.message.calls`.
 - `reset-step` when an attempt fails mid-stream. The browser removes that attempt's output, and
   the next attempt (a retry or the next candidate) streams from the start under a new
   `start-step`. Earlier steps stay.
 
 The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
 and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
-call raises; llm_master never sends an `error` chunk. A stream that ends before the provider's
-final event, or a completion stream that ends without its closing usage, raises a typed
-`ProviderError` after its `reset-step`, as does any failure before the `Response` is built. A
-half-streamed tool call can't be run: tools run from `response.message.calls` after the loop ends.
+call raises; llm_master never sends an `error` chunk. A stream cut off before it finishes raises a
+typed `ProviderError` after its `reset-step`. A half-streamed tool call can't be run: tools run
+from `response.message.calls` after the loop ends.
 
-To abort, leave the loop. However it ends, by `break`, an exception, or a cancel while the caller
-awaits inside the loop body, the provider's stream closes on the event loop's next turn.
-`await stream.aclose()` closes it at once. Python can't close a generator another task is inside,
-so `aclose()` belongs to the iterating side.
+To abort, leave the loop or cancel the task that iterates it: the provider's stream closes.
+`await stream.aclose()` closes it at once, from the iterating task.
 
 The final `message` is built from the stream with the same extraction as a normal call, and
-`native` from the provider's own stream events: Anthropic's SDK hands over the whole message at
-`message_stop`, OpenAI's `response.completed` carries the whole response, and the completion
-deltas are joined into the message any-llm would have returned. Usage comes from the last usage
-event, never a sum, because Gemini sends a running total on every chunk.
+`native` from the provider's own stream events. Usage comes from the last usage event, never a
+sum, because Gemini sends a running total on every chunk.
 
 ## Known limits
 
@@ -348,14 +338,10 @@ event, never a sum, because Gemini sends a running total on every chunk.
   - Results sent in a different order from the calls come back swapped, with a 200
     (live-tested).
   - Fork PR #18 sends ids in both directions.
-  - Until it, PR #17 (Gemini tool-result images), PR #20 (Gemini tool-result PDFs) and PR #21
-    (OpenAI's own Response, which keeps `cache_write_tokens`) are released upstream, llm_master
-    installs any-llm from a fork build that includes them.
+  - Until it and PRs #17, #20 and #21 are released upstream, llm_master installs any-llm from a
+    fork build that includes them.
 - Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
   and Vertex reject each other's thought signatures.
-- Live-tested during the build: a conversation saved to JSON, reloaded and continued reads the
-  cache on its next turn on Anthropic (with `cache` minutes), OpenAI (auto, and 30 minutes),
-  Gemini and Fireworks. OpenAI still accepts `include: reasoning.encrypted_content`.
 - Parts travel only as inline base64. Files above the inline limits would need a provider's Files
   API. any-llm exposes Anthropic's and OpenAI's (upload, list, retrieve, download, delete) and
   Gemini's (no download), but no part can reference an uploaded file yet. That gets added when
