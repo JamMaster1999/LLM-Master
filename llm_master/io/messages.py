@@ -69,8 +69,6 @@ def validate(messages: Sequence[Message | dict]) -> list[Message]:
     history = [Message.model_validate(m) for m in messages]
     if not history:
         raise ValueError("messages can't be empty")
-    if history[-1].role == "assistant":
-        raise ValueError("messages can't end on an assistant message: Claude reads it as a prefill")
     seen: set[str] = set()
     open_calls: set[str] = set()
     for m in history:

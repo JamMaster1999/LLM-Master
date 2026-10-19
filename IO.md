@@ -135,7 +135,6 @@ One validator checks every rule, before anything is sent:
 - **The list**
   - It can't be empty.
   - Roles are user, assistant and tool. A system-role message fails.
-  - It can't end on an assistant message: Claude 5.5 treats that as a prefill and returns a 400.
 - **Fields per role**
   - `call_id` is required on tool messages and forbidden on the others.
   - `calls`, `reasoning`, `origin` and `native` belong to assistant messages only.
