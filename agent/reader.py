@@ -1,5 +1,5 @@
 """read's, attach's and review_file's work, done inside the sandbox where Pillow, openpyxl, LibreOffice,
-poppler, pandoc and Indra live: one call in, one JSON result out, so a call is one round trip and only its
+PDFium, pandoc and Indra live: one call in, one JSON result out, so a call is one round trip and only its
 result leaves the sandbox. The host runs this file's source with `python -c` and imports it for pi's text
 limits and the view hash."""
 import base64
@@ -268,8 +268,8 @@ def _pages_view(path: str, shown: str, out: str) -> None:
         raise Problem(f"{shown} has {total} pages, too long for read, which takes {MAX_VIEW_PAGES} at most. "
                       f"Use bash to work with it.")
     os.mkdir(f"{out}/pages")
-    with subprocess.Popen(["pdftoppm", "-jpeg", "-jpegopt", "quality=85", "-scale-to", str(IMAGE_SIDE), pdf,
-                           f"{out}/pages/p"], stderr=subprocess.PIPE, text=True) as render:  # runs beside Indra
+    with subprocess.Popen([sys.executable, "-I", "-c", _RENDER, pdf, f"{out}/pages", str(IMAGE_SIDE)],
+                          stderr=subprocess.PIPE, text=True) as render:  # runs beside Indra
         try:
             [(_, pages)] = indra_ocr.convert_many([pdf])
         except BaseException:
@@ -279,15 +279,26 @@ def _pages_view(path: str, shown: str, out: str) -> None:
     if isinstance(pages, Exception):
         raise Problem(f"Could not read {shown}: {pages}")
     if render.returncode:
-        raise Problem(f"pdftoppm failed: {errors.strip() or 'no reason given'}")
+        raise Problem(f"Could not draw the pages of {shown}: {(errors.strip().splitlines() or ['no reason given'])[-1]}")
     with open(f"{out}/{TRANSCRIPT}", "w") as f:
         for index, result in pages:
             text = result.markdown if result.markdown is not None else result.text
             # PDFium can split an emoji into its UTF-16 halves: rejoin them, and replace a lone half
             text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             f.write(json.dumps({"page": index + 1, "text": text}, ensure_ascii=False) + "\n")
-    for name in os.listdir(f"{out}/pages"):  # p-01.jpg, padded to the page count's digits
-        os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name.removeprefix('p-').removesuffix('.jpg'))}.jpg")
+
+
+# Each page as <n>.jpg, IMAGE_SIDE px on the long side. PDFium, not poppler: poppler 22 redraws a filled
+# form's fields from their DA strings and loses a checkbox's check; PDFium draws each field's own look.
+_RENDER = """
+import sys, pypdfium2
+pdf, out, side = sys.argv[1], sys.argv[2], int(sys.argv[3])
+document = pypdfium2.PdfDocument(pdf)
+document.init_forms()
+for number, page in enumerate(document, 1):
+    picture = page.render(scale=side / max(page.get_size()), may_draw_forms=True).to_pil()
+    picture.convert("RGB").save(f"{out}/{number}.jpg", quality=85)
+"""
 
 
 def _transcript(view: str, family: str) -> tuple[str, str]:
