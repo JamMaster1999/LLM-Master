@@ -88,7 +88,7 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
     start = time.monotonic()
     # -I keeps /workspace off the import path, so a random.py there can't break the runner
     process = await sandbox.start("python", "-I", "-u", "-c", _RUNNER, program, log, json.dumps(tools), timeout=timeout)
-    files, sources, lock = [], [], asyncio.Lock()
+    files, sources, lock, unsent = [], [], asyncio.Lock(), bytearray()
 
     async def answer(request: dict, number: int) -> None:
         if request["name"] not in tools:
@@ -102,8 +102,10 @@ async def run_program(sandbox: Sandbox, run: Callable[[str, dict], Awaitable[Res
         files.extend(result.files)
         sources.extend(result.sources)
         reply = {"id": request["id"], "error" if result.error else "result": result.text()}
-        data = (json.dumps(reply) + "\n").encode()
-        async with lock:
+        unsent.extend((json.dumps(reply) + "\n").encode())
+        async with lock:  # the replies that land during a write go out together in the next, one round trip
+            data = bytes(unsent)
+            unsent.clear()
             with contextlib.suppress(ConflictError):  # the program ended meanwhile
                 for start in range(0, len(data), STDIN_CHUNK):
                     process.stdin.write(data[start:start + STDIN_CHUNK])
