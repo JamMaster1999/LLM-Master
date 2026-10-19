@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, assert_never
 from any_llm import AnyLLM
 
 from llm_master import pipeline
-from llm_master.config import (cache, max_tokens, merge, moderation, response_format, stream as streaming, system,
-                               temperature, thinking, timeout, tool_choice, tools)
+from llm_master.config import (cache, max_tokens, merge, moderation as moderating, response_format,
+                               stream as streaming, system, temperature, thinking, timeout, tool_choice, tools)
 from llm_master.io.messages import Message, Origin, assemble, validate
 from llm_master.io.parts import Audio
 from llm_master.io.response import Response, read
@@ -43,11 +43,11 @@ def build(candidate: Model, history: list[Message], stream: bool) -> tuple[API, 
 
 
 async def run(llm: "LLM", candidates: Model | Sequence[Model], messages: Sequence[Message | dict],
-              stream: bool) -> Response | Stream:
+              stream: bool, moderation: bool) -> Response | Stream:
     history = validate(messages)
     chain = pipeline.chain(candidates)
-    if any(c.config.moderation for c in chain):  # once per call: the input is the same for every candidate
-        await moderation.check(llm.client("openai"), history)
+    if moderation:
+        await moderating.check(llm.client("openai"), history)
     if stream:
         return Stream(pipeline.stream(chain, lambda c: _streamed(llm, c, history)))
 
