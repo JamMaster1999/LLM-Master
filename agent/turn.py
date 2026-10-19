@@ -14,6 +14,7 @@ from llm_master.io.messages import Call, Message
 from llm_master.types import Model
 
 STOPPED = "Stopped by the user."
+INTERRUPTED = "[Request interrupted by user]"  # what Claude Code tells the model after a stop mid-answer
 URL = re.compile(r"https?://[^\s<>\"'`]+")
 
 
@@ -37,8 +38,9 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
 
     `text` and `uploads`, (name, bytes) pairs, make a new user message. `answers` finish waiting
     ask_user calls, by call id; a waiting call without one is declined. The turn appends to
-    `conversation` as it goes, and a stopped one answers each open call with "Stopped by the user.",
-    so the conversation is always ready for the next request."""
+    `conversation` as it goes. A stopped one answers each open call with "Stopped by the user.", and
+    one stopped mid-answer keeps the text so far, then "[Request interrupted by user]", so the
+    conversation is always ready for the next request."""
     if text:
         conversation.urls += [url for url in typed_urls(text) if url not in conversation.urls]
     box = Toolbox(conversation_id, sources=conversation.sources, urls=conversation.urls, skills=skills, llm=llm)
@@ -54,9 +56,17 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
                 parts += await box.attach(name, data)
             conversation.messages.append(Message.model_validate({"role": "user", "content": parts}))
         while True:
-            stream = await llm.query(model, conversation.messages, stream=True)
-            async for chunk in stream:
-                yield chunk
+            streamed = ""
+            try:
+                stream = await llm.query(model, conversation.messages, stream=True)
+                async for chunk in stream:
+                    if chunk["type"] == "text-delta":
+                        streamed += chunk["delta"]
+                    yield chunk
+            except (GeneratorExit, asyncio.CancelledError):  # stopped mid-answer: keep the text the user saw
+                conversation.messages += [Message(role="assistant", content=streamed)] if streamed else []
+                conversation.messages.append(Message(role="user", content=INTERRUPTED))
+                raise
             assert stream.response is not None  # set once the stream ends
             message = stream.response.message
             conversation.messages.append(message)

@@ -1,8 +1,9 @@
 """The loop at its entry point, turn(), against recorded provider exchanges (RECORD=1 re-records them
 live) and the Exa stand-in: the tools here need no sandbox."""
+from contextlib import aclosing
 from typing import Any
 
-from agent.turn import Conversation, turn, typed_urls
+from agent.turn import INTERRUPTED, Conversation, turn, typed_urls
 from llm_master.types import Config, Model
 
 MODEL = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(system="Use the tools as the user asks."))
@@ -51,6 +52,22 @@ async def test_a_new_message_declines_the_waiting_question(recorded, llm):
     await run(llm, conversation, text="Never mind. Reply with the word ok.")
     declined, said = conversation.messages[2:4]
     assert (declined.role, declined.content, said.role) == ("tool", "User declined to answer questions", "user")
+
+
+async def test_a_stop_mid_answer_keeps_the_text_the_user_saw(recorded, llm):
+    recorded("turn_interrupted")
+    conversation = Conversation()
+    seen = ""
+    async with aclosing(turn(llm, MODEL, "c", conversation, text="Count from 1 to 50, one number per line.")) as chunks:
+        async for chunk in chunks:
+            if isinstance(chunk, dict) and chunk["type"] == "text-delta":
+                seen += chunk["delta"]
+                break
+    kept = [(m.role, m.content) for m in conversation.messages[1:]]
+    assert seen and kept == [("assistant", seen), ("user", INTERRUPTED)], kept
+    after = await run(llm, conversation, text="Go on.")
+    answer = "".join(c["delta"] for c in after if c["type"] == "text-delta")
+    assert answer.split()[0] == str(int(seen.split()[-1]) + 1), answer  # it counts on from the kept text
 
 
 def test_typed_urls_leave_out_the_punctuation_around_them():
