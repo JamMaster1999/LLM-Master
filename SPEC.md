@@ -105,6 +105,21 @@ Retries (step 6), the same for every call and stream:
   from the start under a new `start-step`.
 - When a candidate's last try fails, its error goes to fallback (step 7).
 
+Fallback (step 7), the same for every call and stream:
+
+- A call takes one candidate or a list, tried in order. An empty list raises `ValueError` before
+  anything is sent.
+- When a candidate's error skips the retries or its fifth try fails, the next candidate starts
+  with a fresh retry budget. Every error moves on, typed or not. A cancelled call stops.
+- Each hop builds the request again for the new candidate, so history replays per its own origin
+  rule (IO.md).
+- `attempts` holds one entry per candidate tried, in order, each with its own errors. The answering
+  candidate is last, and it sets `origin`, `usage` and `cost`.
+- A stream that fails over mid-answer yields `reset-step`, then the next candidate streams from
+  the start under a new `start-step`.
+- When every candidate fails, the call raises the last candidate's last error, typed as a single
+  candidate's would be. A note on it lists every earlier error, one line per try.
+
 Known limit: gemini and vertexai keep google-genai's aiohttp transport for async throughput,
 and that transport retries a connection error once on its own, after 1–10 seconds, ignoring
 `max_retries`. HTTP errors are unaffected. A drop after the server received the request can
