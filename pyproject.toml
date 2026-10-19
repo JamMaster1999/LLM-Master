@@ -19,7 +19,7 @@ dependencies = [
 agent = ["modal>=1.6.2", "exa-py>=2.25.0", "pydantic>=2.11", "pyyaml>=6.0.3"]
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "llm-master[agent]"]
+dev = ["pytest", "pytest-asyncio", "pytest-xdist", "llm-master[agent]"]
 
 [build-system]
 requires = ["hatchling"]
