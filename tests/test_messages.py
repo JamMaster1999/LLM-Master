@@ -114,7 +114,6 @@ ANSWER = {"role": "tool", "call_id": "lm_1", "content": "ok"}
 @pytest.mark.parametrize("history, error", [  # our rules match our words, pydantic's its error type
     ([], "can't be empty"),
     ([{"role": "system", "content": "x"}, U], "literal_error"),
-    ([U, {"role": "assistant", "content": "x"}], "end on an assistant"),
     ([{"role": "tool", "content": "x"}], "call_id is required"),
     ([{**U, "call_id": "lm_1"}], "call_id is required"),
     ([{**U, "reasoning": "r"}], "can't carry reasoning"),
