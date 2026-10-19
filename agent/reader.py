@@ -283,6 +283,8 @@ def _pages_view(path: str, shown: str, out: str) -> None:
     with open(f"{out}/{TRANSCRIPT}", "w") as f:
         for index, result in pages:
             text = result.markdown if result.markdown is not None else result.text
+            # PDFium can split an emoji into its UTF-16 halves: rejoin them, and replace a lone half
+            text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             f.write(json.dumps({"page": index + 1, "text": text}, ensure_ascii=False) + "\n")
     for name in os.listdir(f"{out}/pages"):  # p-01.jpg, padded to the page count's digits
         os.rename(f"{out}/pages/{name}", f"{out}/pages/{int(name.removeprefix('p-').removesuffix('.jpg'))}.jpg")
