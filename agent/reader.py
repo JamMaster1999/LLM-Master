@@ -139,7 +139,7 @@ def _pages(path: str, shown: str, first: int, count: int, work: str) -> list[dic
 
 
 def _sheets(path: str, work: str) -> str:
-    """Every sheet as CSV when it all fits in 25 KB, else a preview of each."""
+    """Every sheet as CSV when it all fits in 25 KB, else a preview of each, cut at read's limits."""
     name = os.path.basename(path)
     if path.lower().endswith((".csv", ".tsv")):
         with open(path, newline="", encoding="utf-8", errors="replace") as f:
@@ -158,11 +158,12 @@ def _sheets(path: str, work: str) -> str:
     whole = "\n".join(f"## {title}\n{_csv(rows)}" for title, rows in sheets.items()).rstrip("\n")
     if len(whole.encode()) <= SHEET_BYTES:
         return whole
-    previews = [f"## {title}\n{_csv(rows[:20])[:SHEET_BYTES]}[{len(rows)} rows x {max(map(len, rows), default=0)} "
-                f"columns; showing the first 20]" for title, rows in sheets.items()]
-    return "\n\n".join(previews) + (f"\n\n[The full data is {len(whole.encode()) // 1024} KB as CSV, over the "
-                                    f"{SHEET_BYTES // 1024} KB limit. It stays at {path}; use bash or run_program "
-                                    f"to analyze it.]")
+    previews = "\n\n".join(f"## {title}\n{_csv(rows[:20])}[{len(rows)} rows x {max(map(len, rows), default=0)} "
+                           f"columns; showing the first 20]" for title, rows in sheets.items())
+    notice = (f"\n\n[The full data is {len(whole.encode()) // 1024} KB as CSV, over the {SHEET_BYTES // 1024} KB "
+              f"limit. It stays at {path}; use bash or run_program to analyze it.]")
+    lines = previews.split("\n")[:MAX_LINES - 2]  # the notice takes the last two lines
+    return "\n".join(lines).encode()[:MAX_BYTES - len(notice.encode())].decode(errors="ignore") + notice
 
 
 def _csv(rows: list) -> str:

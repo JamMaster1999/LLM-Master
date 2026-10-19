@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from agent import Toolbox
+from agent.reader import MAX_BYTES
 from agent.sandbox import delete
 
 pytestmark = pytest.mark.live
@@ -88,10 +89,14 @@ async def test_read_turns_spreadsheets_into_csv(box):
                                    "sheet.title = 'Scores'; sheet.append([1]); sheet.append([2]); sheet.append(['=SUM(A1:A2)']); "
                                    "book.save('built.xlsx')\"")
     assert (await run(box, "read", path="built.xlsx")).content == "## Scores\n1\n2\n=SUM(A1:A2)"
-    await run(box, "write", path="big.csv", content="n\n" + "\n".join(str(i) for i in range(10_000)))
-    preview = (await run(box, "read", path="big.csv")).text()
-    assert "[10001 rows x 1 columns; showing the first 20]" in preview
-    assert preview.endswith("It stays at /workspace/big.csv; use bash or run_program to analyze it.]")
+    await run(box, "bash", command="python -c \"import openpyxl; book = openpyxl.Workbook(); "
+                                   "sheets = [book.active] + [book.create_sheet() for _ in range(11)]; "
+                                   "[sheet.append([chr(233) * 100] * 10) for sheet in sheets for _ in range(25)]; "
+                                   "book.save('wide.xlsx')\"")
+    preview = (await run(box, "read", path="wide.xlsx")).text()  # 12 sheets of 40 KB previews
+    assert "[25 rows x 10 columns; showing the first 20]" in preview
+    assert preview.endswith("It stays at /workspace/wide.xlsx; use bash or run_program to analyze it.]")
+    assert len(preview.encode()) <= MAX_BYTES, len(preview.encode())
 
 
 async def test_bash_reports_output_exit_code_and_timeout(box):
