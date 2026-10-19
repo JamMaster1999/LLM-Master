@@ -16,19 +16,12 @@ async def capped():
     await llm.aclose()
 
 
-async def test_a_full_window_holds_the_next_try_before_it_sends(recorded, capped):
-    recorded("gemini_configured")  # one exchange: teardown fails on a second request
-    await capped.query(CONFIGURED["gemini"], GREET)
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(capped.query(CONFIGURED["gemini"], GREET), 0.3)
-
-
-async def test_the_wait_counts_toward_the_calls_latency_not_the_attempts(recorded, monkeypatch, capped):
+async def test_a_full_window_holds_the_next_try_before_it_starts(recorded, monkeypatch, capped):
     recorded("gemini_configured")
     monkeypatch.setattr(limiter, "WINDOW", 0.5)
     await capped.limiter.wait("gemini", CONFIGURED["gemini"].model)  # an earlier try took the slot
     r = await capped.query(CONFIGURED["gemini"], GREET)
-    [attempt] = r.attempts
+    [attempt] = r.attempts  # the wait comes before the try: the call's latency counts it, the attempt's doesn't
     assert r.latency - attempt.latency >= 0.45, "the try started inside the earlier one's window"
 
 

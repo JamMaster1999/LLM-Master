@@ -1,7 +1,7 @@
 """The rate limiter: a sliding window per (provider, model), its cap set by the caller. See SPEC.md Rate limits."""
 import asyncio
 import time
-from collections import deque
+from collections import defaultdict, deque
 
 from llm_master.providers import ProviderName
 
@@ -15,18 +15,16 @@ class Limiter:
         if per_minute is not None and per_minute < 1:  # 0 would hold every try forever
             raise ValueError(f"per_minute is 1 or more, or None for no limit, not {per_minute}")
         self._cap = per_minute
-        self._starts: dict[tuple[ProviderName, str], deque[float]] = {}
+        # the last per_minute starts: a try may start once the oldest of them is a window old
+        self._windows: defaultdict[tuple[ProviderName, str], tuple[asyncio.Lock, deque[float]]] = defaultdict(
+            lambda: (asyncio.Lock(), deque(maxlen=per_minute)))
 
     async def wait(self, provider: ProviderName, model: str) -> None:
-        """Returns once a try may start, and counts it as started."""
+        """Returns once a try may start, and counts it as started. Waiters go in arrival order."""
         if self._cap is None:
             return
-        starts = self._starts.setdefault((provider, model), deque())
-        while True:
-            now = time.monotonic()
-            while starts and starts[0] <= now - WINDOW:
-                starts.popleft()
-            if len(starts) < self._cap:
-                starts.append(now)
-                return
-            await asyncio.sleep(starts[0] + WINDOW - now)  # until the oldest start leaves the window
+        lock, starts = self._windows[provider, model]
+        async with lock:
+            while len(starts) == self._cap and (left := starts[0] + WINDOW - time.monotonic()) > 0:
+                await asyncio.sleep(left)
+            starts.append(time.monotonic())  # maxlen drops the oldest start, now out of the window

@@ -232,5 +232,5 @@ save → reload → next call is lossless by construction.
 - Not a translation but a pre-step: when on, the newest user message's text runs through openai's
   `omni-moderation-latest` once, before any candidate, as in v1. A flagged input raises our typed
   refusal before any model is called or billed.
-- The moderation call is free (openai prices it at zero; 1000 rpm in our registry).
+- The moderation call is free: openai prices it at zero. It takes no rate-limiter slot (SPEC.md Rate limits).
 - v1 had this exact flag on `query()`; the chat platform is its consumer.
