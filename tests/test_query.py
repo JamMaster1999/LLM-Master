@@ -98,16 +98,16 @@ async def test_a_stream_cut_mid_answer_resets_its_step(recorded, llm):
 
 CONFIGURED = {  # each field placed per API; the recorded request body pins the spelling
     "anthropic": Model(provider="anthropic", model="claude-haiku-5-5", config=Config(
-        system="Answer in French.", thinking="low", max_tokens=2000, cache=5, tools=[WEATHER],
+        system="Answer in French.", thinking="low", max_tokens=2000, tools=[WEATHER],
         tool_choice=ToolChoice(mode="none"))),
     "openai": Model(provider="openai", model="gpt-5.6-luna", config=Config(
-        system="Answer in French.", thinking="low", max_tokens=2000, cache=30, tools=[WEATHER],
+        system="Answer in French.", thinking="low", max_tokens=2000, tools=[WEATHER],
         tool_choice=ToolChoice(mode="none"))),
     "gemini": Model(provider="gemini", model="gemini-3.5-flash", config=Config(
-        system="Answer in French.", thinking="low", max_tokens=2000, cache="none", temperature=0.5, tools=[WEATHER],
+        system="Answer in French.", thinking="low", max_tokens=2000, cache=False, temperature=0.5, tools=[WEATHER],
         tool_choice=ToolChoice(mode="none"))),
     "openai-none": Model(provider="openai", model="gpt-5.6-luna", config=Config(system="Answer in French.",
-                                                                                 cache="none")),
+                                                                                 cache=False)),
 }
 
 
@@ -148,7 +148,8 @@ async def test_flagged_input_never_reaches_the_model(recorded, llm):
 async def test_a_call_that_cant_be_built_sends_nothing(recorded, llm):
     recorded("nothing_sent")  # no exchanges: teardown fails on any request
     with pytest.raises(UnsupportedField):
-        await llm.query(Model(provider="gemini", model="gemini-3.5-flash", config=Config(cache=30)), ASK)
+        await llm.query(Model(provider="anthropic", model="claude-haiku-5-5",
+                              config=Config(response_format=Format(type="json"))), ASK)
 
 
 async def test_openai_audio_input_goes_to_completion(recorded, llm):
@@ -204,7 +205,7 @@ class Rating(BaseModel):
 
 @pytest.mark.parametrize("name, schema, ask, finish", [
     ("anthropic_parsed_cut", Essay, "Write a 300-word essay about rivers.", "length"),
-    ("anthropic_parsed_misfit", Rating, "Set rating to 9, exactly 9.", "stop"),  # its reply edited from 1 to 9
+    ("anthropic_parsed_misfit", Rating, "Set rating to 9, exactly 9.", "stop"),  # its in-range reply edited to 9
 ], ids=["cut", "misfit"])
 async def test_an_answer_with_no_valid_object_keeps_its_text(name, schema, ask, finish, recorded, llm):
     recorded(name)
@@ -276,12 +277,11 @@ LONG = "Remember these facts. " + " ".join(f"Fact {i}: the code for item {i} is 
 
 @pytest.mark.live
 @pytest.mark.parametrize("candidate", [
-    Model(provider="anthropic", model="claude-haiku-5-5", config=Config(cache=5)),
+    Model(provider="anthropic", model="claude-haiku-5-5"),
     Model(provider="openai", model="gpt-5.6-luna"),
-    Model(provider="openai", model="gpt-5.6-luna", config=Config(cache=30)),
     Model(provider="gemini", model="gemini-3.5-flash"),
     Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash"),
-], ids=["anthropic-5m", "openai-auto", "openai-30m", "gemini-auto", "fireworks-auto"])
+], ids=lambda m: m.provider)
 async def test_a_saved_conversation_reads_the_cache(candidate, llm):
     history = [{"role": "user", "content": LONG + "\n\nWhat is the code for item 3?"}]
     first = await llm.query(candidate, history)

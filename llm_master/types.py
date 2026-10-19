@@ -5,7 +5,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from llm_master.config.cache import Cache
 from llm_master.config.response_format import Format
 from llm_master.config.thinking import Level
 from llm_master.config.tool_choice import ToolChoice
@@ -33,4 +32,4 @@ class Config(BaseModel, extra="forbid"):
     response_format: Format | None = None  # type="text" | "json" | "schema" (with schema=...)
     max_tokens: int | None = Field(default=None, gt=0)
     timeout: float | None = Field(default=None, gt=0)
-    cache: Cache = "auto"  # int = minutes, 5-60
+    cache: bool = True  # off skips the cache write fee on one-shot prompts

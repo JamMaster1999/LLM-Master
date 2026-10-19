@@ -197,8 +197,6 @@ every key except role and content, and rebuilds thinking from a format we never 
     truncated history returns a 400 otherwise.
 - tool: `{"type": "function_call_output", "call_id", "output"}`, where output is a string or a
   list of `input_text`, `input_image` and `input_file`.
-- `cache` minutes (CONFIG.md field 11) mark the last block of the last item with
-  `prompt_cache_breakpoint`.
 - Every Responses call sends `store: False` and `include: ["reasoning.encrypted_content"]`.
   - Saved history is then the only conversation state, and reasoning replays without depending
     on OpenAI's servers.
