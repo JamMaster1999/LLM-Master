@@ -1,13 +1,11 @@
 """image() and speech(): media calls, one case per provider, on query()'s pipeline. See SPEC.md Media."""
 import base64
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, assert_never, cast
 
-from any_llm.providers.openai.base import BaseOpenAIProvider
 from any_llm.types.completion import ChatCompletion
-from any_llm.utils.exception_handler import convert_exception
-from openai import AsyncOpenAI
 
 from llm_master import pipeline
 from llm_master.config import UnsupportedField
@@ -30,7 +28,7 @@ class Media:
     data: bytes
     mime: str
     origin: Origin
-    usage: Usage | None  # None when the provider reports none (openai speech): cost None, never zero
+    usage: Usage | None  # None when the provider reports none: cost None, never zero
     attempts: list[Attempt] = field(default_factory=list)  # the pipeline sets these two
     latency: float = 0.0
     cost: float | None = None  # SPEC.md step 4
@@ -97,10 +95,8 @@ def _request(candidate: Model, base: dict[str, Any]) -> dict[str, Any]:
 async def _openai_image(llm: "LLM", candidate: Model, prompt: str, images: Sequence[Image]) -> Media:
     files = [(f"image{i}.{p.mime.split('/')[-1]}", base64.b64decode(p.data), p.mime) for i, p in enumerate(images)]
     request = _request(candidate, {"model": candidate.model, "prompt": prompt} | ({"image": files} if files else {}))
-    try:
-        reply = await (_openai(llm).images.edit(**request) if files else _openai(llm).images.generate(**request))
-    except Exception as e:
-        raise convert_exception(e, "openai") from e
+    openai = llm.client("openai")
+    reply = await (openai.aimage_edit(**request) if files else openai.aimage_generation(**request))
     if not reply.data or not reply.data[0].b64_json:
         raise MissingMedia(f"openai/{candidate.model} answered without an image")
     u = reply.usage
@@ -119,12 +115,16 @@ async def _gemini_image(llm: "LLM", candidate: Model, prompt: str, images: Seque
 
 
 async def _openai_speech(llm: "LLM", candidate: Model, text: str) -> Media:
-    request = _request(candidate, {"model": candidate.model, "input": text, "voice": "alloy"})  # a voice is required
-    try:
-        reply = await _openai(llm).audio.speech.create(**request)
-    except Exception as e:
-        raise convert_exception(e, "openai") from e
-    return _made(candidate, reply.content, reply.response.headers["content-type"], None)
+    # a voice is required; only the streamed format reports usage, in its last event
+    request = _request(candidate, {"model": candidate.model, "input": text, "voice": "alloy", "stream_format": "sse"})
+    reply = await llm.client("openai").aspeech(**request)
+    events = [json.loads(line[6:]) for line in reply.decode().splitlines() if line.startswith("data: {")]
+    audio = b"".join(base64.b64decode(e["audio"]) for e in events if e["type"] == "speech.audio.delta")
+    if not audio:
+        raise MissingMedia(f"openai/{candidate.model} answered without audio")
+    u = next((e["usage"] for e in events if e["type"] == "speech.audio.done"), None)
+    usage = Usage(input=u["input_tokens"], output=u["output_tokens"]) if u else None
+    return _made(candidate, audio, f"audio/{request.get('response_format', 'mp3')}", usage)
 
 
 async def _gemini_speech(llm: "LLM", candidate: Model, text: str) -> Media:
@@ -141,7 +141,3 @@ async def _gemini(llm: "LLM", candidate: Model, content: str | list[dict], modal
                                    "response_modalities": [modality]})
     return cast(ChatCompletion, await llm.client(candidate.provider).acompletion(**request))  # not streamed
 
-
-def _openai(llm: "LLM") -> AsyncOpenAI:
-    """The held openai SDK client. any-llm skips image edits and forbids extra keys on generate and speech."""
-    return cast(BaseOpenAIProvider, llm.client("openai")).client

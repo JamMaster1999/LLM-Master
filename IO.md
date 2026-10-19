@@ -339,8 +339,8 @@ sum, because Gemini sends a running total on every chunk.
   - Results sent in a different order from the calls come back swapped, with a 200
     (live-tested).
   - Fork PR #18 sends ids in both directions.
-  - Until it and PRs #17, #20 and #21 are released upstream, llm_master installs any-llm from a
-    fork build that includes them.
+  - Until it and PRs #17, #20, #21 and #22 are released upstream, llm_master installs any-llm from
+    a fork build that includes them.
 - Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
   and Vertex reject each other's thought signatures.
 - Parts travel only as inline base64. Files above the inline limits would need a provider's Files

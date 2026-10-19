@@ -50,10 +50,10 @@ async def test_extra_has_the_last_word(recorded, llm):
     assert spoken.data
 
 
-async def test_openai_speech_is_typed_by_its_reply_and_reports_no_usage(recorded, llm):
-    recorded("openai_speech")
+async def test_openai_speech_reports_its_usage(recorded, llm):
+    recorded("openai_speech")  # the streamed format: the plain one carries no usage
     spoken = await llm.speech(Model(provider="openai", model="gpt-4o-mini-tts"), "Say: hello there.")
-    assert spoken.mime == "audio/mpeg" and spoken.usage is None  # so its cost stays None, never zero
+    assert spoken.mime == "audio/mp3" and spoken.data and spoken.usage and spoken.usage.output > 0
 
 
 async def test_gemini_speech_is_a_wav(recorded, llm):

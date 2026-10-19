@@ -61,7 +61,7 @@ request, no history and no server state. Any provider can edit any provider's im
 Live-checked 2026-10-18: 
 * openai doubles the nucleus and keeps the rest; a gemini-made image edits cleanly on openai; gemini edits keep the image but understate the change. 
 * The media tools own the files and the lineage record (TOOLS.md). 
-* OpenAI speech returns bytes with no usage, so its `cost` is None, never zero.
+* OpenAI speech reports its usage only in its streamed format, which `speech()` asks for.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
