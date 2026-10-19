@@ -14,29 +14,32 @@ from pydantic import ConfigDict, ValidationError
 from pydantic.experimental.arguments_schema import generate_arguments_schema
 from pydantic_core import ArgsKwargs, SchemaValidator
 
-from agent import files, loop, reader, shell, web
+from agent import files, loop, media, reader, shell, web
 from agent.result import Result, ToolError
 from agent.sandbox import SCRATCH, Sandbox
 from agent.skills import Skills
 from agent.web import Web
+from llm_master.facade import LLM
 
 log = logging.getLogger(__name__)
 
 SERIAL = {"write", "edit", "bash", "run_program"}  # they change the sandbox, so they run one at a time
-PROGRAM_TOOLS = ["web_search", "fetch_url", "deliver_file"]  # the host's tools a program may call; custom ones join
+PROGRAM_TOOLS = ["web_search", "fetch_url", "deliver_file"]  # host tools a program may call; generate_* and custom ones join
 CUT_THEIR_OWN = {"read", "bash", "run_program"}  # every other tool's long text is cut here
 
 
 class Toolbox:
     def __init__(self, conversation_id: str, *, tools: Sequence[Callable] = (), sources: Sequence[dict] = (),
-                 urls: Sequence[str] = (), skills: str | Path | None = None) -> None:
+                 urls: Sequence[str] = (), skills: str | Path | None = None, llm: LLM | None = None) -> None:
         """`tools` are the caller's own functions; `sources` the source parts already sent in this
         conversation; `urls` the ones the user wrote, which fetch_url may read; `skills` a folder of
-        skill folders. A broken skill raises ValueError."""
+        skill folders; `llm` llm_master's facade, for the generate pair. A broken skill raises ValueError."""
         self.sandbox = Sandbox(conversation_id, skills)
         self.web = Web(list(sources), urls)
+        generate = [(media.GENERATE_IMAGE, partial(media.generate_image, self.sandbox, llm)),
+                    (media.GENERATE_AUDIO, partial(media.generate_audio, self.sandbox, llm))] if llm else []
         custom = [(callable_to_tool(tool), tool) for tool in tools]
-        program_tools = PROGRAM_TOOLS + [spec["function"]["name"] for spec, _ in custom]
+        program_tools = PROGRAM_TOOLS + [spec["function"]["name"] for spec, _ in generate + custom]
         run_program = dict(shell.RUN_PROGRAM, function={**shell.RUN_PROGRAM["function"], "description":
                            shell.RUN_PROGRAM["function"]["description"].format(tools=", ".join(program_tools))})
         builtins = [
@@ -47,6 +50,7 @@ class Toolbox:
             (run_program, partial(shell.run_program, self.sandbox, self._run_from_program, program_tools)),
             (web.SEARCH, self.web.search),
             (web.FETCH, self.web.fetch),
+            *generate,
             (files.DELIVER, partial(files.deliver_file, self.sandbox)),
             (loop.TODO, loop.todo),
             (loop.ASK_USER, loop.ask_user),

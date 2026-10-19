@@ -110,7 +110,7 @@ async def edit(sandbox: Sandbox, path: str, edits: list[Edit] | Edit | str) -> s
             raise ToolError("Edit tool input is invalid. edits must be an array of {oldText, newText}.") from None
     edits = edits if isinstance(edits, list) else [edits]  # and some send one edit without the array
     try:
-        text = (await _load(sandbox, path)).decode()
+        text = (await load(sandbox, path)).decode()
     except UnicodeDecodeError:
         raise ToolError(f"{path} is not UTF-8 text. Use bash to change it.") from None
     await write(sandbox, path, apply_edits(text, edits, path))
@@ -118,7 +118,7 @@ async def edit(sandbox: Sandbox, path: str, edits: list[Edit] | Edit | str) -> s
 
 
 async def deliver_file(sandbox: Sandbox, path: str) -> Result:
-    data = await _load(sandbox, path)
+    data = await load(sandbox, path)
     name = posixpath.basename(path)
     return Result(f"Sent {name} to the user.",
                   files=[UserFile(name, mimetypes.guess_type(name)[0] or "application/octet-stream", data)])
@@ -170,7 +170,7 @@ def _occurrences(text: str, old: str) -> int:
     return count
 
 
-async def _load(sandbox: Sandbox, path: str) -> bytes:
+async def load(sandbox: Sandbox, path: str) -> bytes:
     """A regular file's bytes, up to MAX_FILE, or a ToolError that says what's wrong with the path."""
     try:
         info = await sandbox.stat(path)

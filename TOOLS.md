@@ -65,7 +65,7 @@ await box.aclose()
 - **The conversation's id** names its sandbox.
 - **`sources` and `urls`** carry state across rebuilds. `sources` are the source parts already
   sent, so numbering continues. `urls` are the URLs the user typed, which fetch_url may read.
-- **`llm`** is llm_master's facade, for the generate pair.
+- **`llm`** is llm_master's facade, for the generate pair. Without llm, there's no generate pair.
 - **`skills`** is the caller's folder of skill folders (SKILLS-LIST.md). Without skills, there's
   no skill tool.
 - **`specs`** lists the built-in tools, then the caller's own, as openai function dicts. Each
@@ -212,13 +212,14 @@ comes back whole, numbered like a search result, and a failed page doesn't fail 
 
 `generate_image(prompt, image?)` makes an image with `image()`, or edits the image at `image`. An
 edit sends the parent and the prompt together (SPEC.md, Media). The image is saved under `images/`
-with a record beside it naming its parent, prompt and candidate. Openai goes first, gemini is the
-fallback.
+with a record beside it naming its parent, prompt and candidate. Openai makes it alone until
+llm_master falls back (SPEC.md step 7); then gemini is the fallback.
 
 ### generate_audio
 
 `generate_audio(text)` is one-shot speech with `speech()`, at most 4096 characters, OpenAI's limit.
-The audio is saved under `audio/` and goes to the user. Openai goes first, gemini is the fallback.
+The audio is saved under `audio/` and goes to the user. Openai speaks it alone until llm_master falls
+back (SPEC.md step 7); then gemini is the fallback.
 
 ### deliver_file
 

@@ -61,10 +61,10 @@ def shape(schema: dict, defs: dict) -> dict:
     return out
 
 
-def test_each_schema_matches_its_function():
+async def test_each_schema_matches_its_function(llm):
     """The schema the model reads and the type hints its arguments are checked against are written
     apart, so this keeps them in step."""
-    for name, (spec, function) in Toolbox("c", skills=SKILLS).tools.items():
+    for name, (spec, function) in Toolbox("c", skills=SKILLS, llm=llm).tools.items():
         hinted = TypeAdapter(function).json_schema()
         written, expected = shape(spec["function"]["parameters"], {}), shape(hinted, hinted.get("$defs", {}))
         for field, hint in expected["properties"].items():
@@ -80,5 +80,6 @@ def test_each_schema_matches_its_function():
                                        Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash")],
                          ids=lambda m: m.provider)
 async def test_every_provider_takes_the_tools(candidate, llm):
-    candidate = candidate.model_copy(update={"config": Config(tools=Toolbox("c", skills=SKILLS).specs, max_tokens=64)})
+    specs = Toolbox("c", skills=SKILLS, llm=llm).specs
+    candidate = candidate.model_copy(update={"config": Config(tools=specs, max_tokens=64)})
     await llm.query(candidate, [{"role": "user", "content": "Reply with the word ok."}])
