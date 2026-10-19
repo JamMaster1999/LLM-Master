@@ -23,7 +23,7 @@ candidates are typed the same way. Field order below is the authoring order.
 8. `response_format` — structured output schema
 9. `max_tokens` — output cap
 10. `timeout` — per-request seconds
-11. `cache` — auto / none / minutes
+11. `cache` — on / off
 12. `moderation` — pre-send openai moderation
 
 Each fallback candidate additionally carries `extra: dict` — a raw pass-through door merged last
@@ -206,30 +206,19 @@ save → reload → next call is lossless by construction.
 - An expiry surfaces as the typed timeout error, a retryable failure — the retry and fallback
   layers decide what happens next, not this field.
 
-## 11. `cache` — `"auto" | "none" | int` minutes (validated 5–60), default "auto"
+## 11. `cache` — `bool`, default True
 
-- `"auto"`: provider behavior, no breakpoints from us — anthropic doesn't cache, openai and
-  gemini auto-cache. On openai 5.6+, auto-caching bills writes at 1.25x by default; that's their
-  default, not our opinion.
-- `"none"`: openai sends `prompt_cache_options={"mode": "explicit"}` with no breakpoints — skips
-  the cache, no write fee. Anthropic sends nothing (already off). Gemini quiet no-op: its
-  auto-cache has no off switch and no write fee.
-- minutes: a real lifetime, passed through — if it fails it fails. Anthropic: top-level
-  `cache_control={"type": "ephemeral", "ttl": ...}`, which marks the last cacheable block; `5` →
-  `"5m"`, `60` → `"1h"`, anything between goes literally and their API rejects unknown tiers.
-  Openai: explicit mode plus ttl — only `"30m"` exists today (live-verified: other values 400
-  naming the supported set) — with one breakpoint at the end of the prompt (IO.md), since
-  explicit mode caches nothing without one. Gemini: implicit caching only, so minutes raise typed.
-  any-llm can turn a `cache_control` breakpoint into an explicit gemini context cache; this field
-  never emits one.
-- Costs, verified: openai 5.6+ writes 1.25x flat, auto mode included — an unrecoverable fee on
-  one-shot prompts, which is why `"none"` exists. Anthropic writes 1.25x at 5m and 2x at 1h;
-  reads 0.1x everywhere. any-llm's usage reports reads as `cached_tokens` and writes as
-  `cache_write_tokens`, with anthropic's 5m/1h split in `cache_creation_token_details`, so the
-  cost step has every count it needs. genai-prices carries a single cache-write price, so
-  anthropic's 1h-tier 2x needs our own multiplier — noted for the cost step.
-- Pre-5.6 openai models reject `"none"` and minutes with a typed 400; use `"auto"` there.
-- Lifetime exotics beyond the field ride the candidate's `extra`.
+- On: every provider caches the conversation. OpenAI, Gemini and Fireworks do it on their own;
+  anthropic caches only when asked, so it gets a top-level `cache_control={"type": "ephemeral"}`,
+  which caches up to the last block and moves forward as the conversation grows.
+- Off: no cache, so no write fee on a one-shot prompt. OpenAI sends
+  `prompt_cache_options={"mode": "explicit"}` with no breakpoint; anthropic sends nothing. Gemini
+  and Fireworks charge no write fee and have no off switch, so off sends nothing.
+- Costs, verified: openai 5.6+ and anthropic bill a cache write at 1.25x; reads cost 0.1x
+  everywhere. any-llm's usage reports reads as `cached_tokens` and writes as `cache_write_tokens`,
+  so the cost step has every count it needs.
+- Pre-5.6 openai models reject off with a typed 400. They charge no write fee, so leave it on.
+- A cache lifetime, such as anthropic's 1 hour, rides the candidate's `extra`.
 
 ## 12. `moderation` — `bool`, default False
 

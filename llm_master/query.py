@@ -23,8 +23,7 @@ def build(candidate: Model, history: list[Message], stream: bool) -> tuple[API, 
     """The API and kwargs one candidate gets. Pure, like assembly: same input, same request."""
     api = _api(candidate, history)
     c = candidate.config
-    fragments = [assemble(history, candidate.provider, candidate.model, api, c.system,
-                          cache_breakpoint=isinstance(c.cache, int)),
+    fragments = [assemble(history, candidate.provider, candidate.model, api, c.system),
                  streaming.translate(stream, api), max_tokens.translate(c.max_tokens, api),
                  timeout.translate(c.timeout, api), cache.translate(c.cache, api)]
     if c.system is not None:

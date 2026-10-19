@@ -11,8 +11,12 @@
      }
     ],
     "model": "claude-haiku-5-5",
+    "cache_control": {
+     "type": "ephemeral"
+    },
     "output_config": {
      "format": {
+      "type": "json_schema",
       "schema": {
        "type": "object",
        "title": "Verdict",
@@ -35,8 +39,7 @@
         "answer",
         "confidence"
        ]
-      },
-      "type": "json_schema"
+      }
      }
     }
    }
@@ -44,7 +47,7 @@
   "response": {
    "status": 200,
    "type": "application/json",
-   "body": "{\"model\":\"claude-haiku-5-5\",\"id\":\"msg_011CgAGbwGrsYhcz3ACPtA9e\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\": 4, \\\"confidence\\\": \\\"high\\\"}\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":289,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":19,\"output_tokens_details\":{\"thinking_tokens\":0},\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}"
+   "body": "{\"model\":\"claude-haiku-5-5\",\"id\":\"msg_011CgAqAkXrauxygv3bjCRiA\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\": 4, \\\"confidence\\\": \\\"high\\\"}\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":289,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":19,\"output_tokens_details\":{\"thinking_tokens\":0},\"service_tier\":\"standard\",\"inference_geo\":\"us\",\"speed\":\"standard\"},\"diagnostics\":null}"
   }
  }
 ]

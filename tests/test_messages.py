@@ -98,19 +98,6 @@ def test_claudes_empty_answer_is_left_out_of_its_own_replay():
     assert [m["role"] for m in sent] == ["user", "user"]
 
 
-@pytest.mark.parametrize("content, marked", [
-    ("rain", [{"type": "input_text", "text": "rain"}]),
-    ([], [{"type": "input_text", "text": ""}]),
-    ([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
-     [{"type": "input_text", "text": "a"}, {"type": "input_text", "text": "b"}]),
-], ids=["string", "empty", "parts"])
-def test_the_cache_breakpoint_marks_the_last_block(content, marked):
-    history = validate([U, ASKS, {**ANSWER, "content": content}])
-    last = assemble(history, *GPT, "responses", None, cache_breakpoint=True)["input_data"][-1]
-    marked[-1]["prompt_cache_breakpoint"] = {"mode": "explicit"}
-    assert last["output"] == marked
-
-
 U = {"role": "user", "content": "hi"}
 CALL, CALL2 = {"id": "lm_1", "name": "f", "arguments": {}}, {"id": "lm_2", "name": "f", "arguments": {}}
 ASKS = {"role": "assistant", "calls": [CALL]}
