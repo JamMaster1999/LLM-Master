@@ -61,8 +61,9 @@ sends the same bytes (see The same-bytes rule). HEIC becomes JPEG. A source that
 `Image` that isn't an image, or a `File` that isn't a PDF raises `PartError` before any model is
 billed. Never pass a user's input as a source: a path or URL is read as given.
 
-Size limits are left to the provider. For reference: Anthropic rejects an image over 10 MB, and
-Gemini accepts at most 20 MB of inline data per request.
+Size limits are left to the provider. For reference: Anthropic's API rejects an image over 10 MB
+(5 MB on Bedrock and Vertex AI), and Gemini takes up to 100 MB of inline data per request, 50 MB
+for a PDF.
 
 ## Assistant messages: readable fields and native
 
