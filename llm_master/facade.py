@@ -62,9 +62,11 @@ class LLM:
         return await run(self, candidates, messages, stream, moderation)
 
     async def async_query(self, candidates: Model | Sequence[Model], requests: Sequence[fanout.Request], *,
-                          concurrency: int = 128, progress_callback: Callable[[int, int], None] | None = None
+                          concurrency: int | None = None,
+                          progress_callback: Callable[[int, int], None] | None = None
                           ) -> list[Response]:
-        """Many query() calls at once, at most concurrency in flight; the Responses in request order.
+        """Many query() calls at once, at most concurrency in flight (128 when unset, as in v1); the Responses
+        in request order.
 
         progress_callback(done, total) runs after each request finishes. See SPEC.md Fan-out.
         """

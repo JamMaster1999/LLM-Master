@@ -18,7 +18,7 @@ class Request(TypedDict):
     moderation: NotRequired[bool]
 
 
-async def run(llm: "LLM", candidates: Model | Sequence[Model], requests: Sequence[Request], concurrency: int,
+async def run(llm: "LLM", candidates: Model | Sequence[Model], requests: Sequence[Request], concurrency: int | None,
               progress: Callable[[int, int], None] | None) -> list[Response]:
     keys = Request.__required_keys__ | Request.__optional_keys__
     for request in requests:  # before anything is sent: a dropped v1 key would change the answers
@@ -26,7 +26,7 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], requests: Sequenc
             raise ValueError(f"a request takes only {sorted(keys)}, not {sorted(unknown)}: config and fallbacks "
                              "live on the candidates")
     histories = [validate(request["messages"]) for request in requests]
-    gate, done = asyncio.Semaphore(concurrency), 0
+    gate, done = asyncio.Semaphore(concurrency or 128), 0  # v1's default, and its reading of 0
 
     async def one(history: list[Message], moderation: bool) -> Response:
         nonlocal done
