@@ -51,7 +51,7 @@ async def image(llm: "LLM", candidates: Model | Sequence[Model], prompt: str, im
                 raise UnsupportedField("image", "provider", "fireworks makes no images")
             case _:
                 assert_never(candidate.provider)
-    return await _make("image", candidates, once)
+    return await _make(llm, "image", candidates, once)
 
 
 async def speech(llm: "LLM", candidates: Model | Sequence[Model], text: str) -> Media:
@@ -70,17 +70,18 @@ async def speech(llm: "LLM", candidates: Model | Sequence[Model], text: str) -> 
                 raise UnsupportedField("speech", "provider", "fireworks makes no audio")
             case _:
                 assert_never(candidate.provider)
-    return await _make("speech", candidates, once)
+    return await _make(llm, "speech", candidates, once)
 
 
-async def _make(call: str, candidates: Model | Sequence[Model], once: Callable[[Model], Awaitable[Media]]) -> Media:
+async def _make(llm: "LLM", call: str, candidates: Model | Sequence[Model],
+                once: Callable[[Model], Awaitable[Media]]) -> Media:
     chain = pipeline.chain(candidates)
     for candidate in chain:
         if set_fields := candidate.config.model_dump(exclude_defaults=True).keys() - {"timeout"}:
             raise UnsupportedField(call, min(set_fields), "media calls take only timeout")
         if candidate.extra.get("n", 1) != 1:  # a Media holds one file: more would be dropped unseen
             raise UnsupportedField(call, "n", "a media call makes one file; make one call per file")
-    return await pipeline.run(chain, once)
+    return await pipeline.run(llm, chain, once)
 
 
 def _made(candidate: Model, data: bytes, mime: str, usage: Usage | None) -> Media:

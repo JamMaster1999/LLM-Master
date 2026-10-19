@@ -16,7 +16,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
-5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
+5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
@@ -63,6 +63,18 @@ Live-checked 2026-10-18:
 * openai doubles the nucleus and keeps the rest; a gemini-made image edits cleanly on openai; gemini edits keep the image but understate the change. 
 * The media tools own the files and the lineage record (TOOLS.md). 
 * OpenAI speech reports its usage only in its streamed format, which `speech()` asks for unless `extra` sets `stream_format`.
+
+**Rate limits.** Each `LLM` holds one limiter: a sliding window per (provider, model), from
+`registry.limit()`. At most `requests` tries may start in any `interval` seconds.
+
+- Every try waits for a slot before it sends, retries and fallback hops included, which is why
+  the limiter sits before retries. Moderation waits in its own window,
+  `omni-moderation-latest`'s.
+- The wait counts toward `response.latency` but not an attempt's latency, which starts with the
+  try.
+- The windows are local to one `LLM`, so other processes don't share them. A provider's 429 still
+  surfaces typed, for the retries.
+- A model without a row of its own still gets its own window, at the provider's default limit.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
