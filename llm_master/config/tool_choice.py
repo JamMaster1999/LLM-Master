@@ -37,14 +37,14 @@ class ToolChoice(BaseModel, extra="forbid"):
         return self
 
 
-def translate(choice: ToolChoice, api: API) -> dict:
+def translate(choice: ToolChoice | None, api: API) -> dict:
     match api:
         case "completion":
-            return _openai(choice, flat=False)
+            return {} if choice is None else _openai(choice, flat=False)
         case "messages":
-            return _anthropic(choice)
+            return {} if choice is None else _anthropic(choice)
         case "responses":
-            return _openai(choice, flat=True)
+            return {} if choice is None else _openai(choice, flat=True)
         case _:
             assert_never(api)
 

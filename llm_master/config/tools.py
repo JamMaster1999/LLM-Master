@@ -16,17 +16,19 @@ def _function_only(tool: Any) -> Any:
 Tool = Annotated[Any, AfterValidator(_function_only)]  # an openai-format function dict or a python callable
 
 
-def translate(tools: list[Any], api: API) -> dict:
-    specs = [tool if isinstance(tool, dict) else callable_to_tool(tool) for tool in map(_function_only, tools)]
+def translate(tools: list[Any] | None, api: API) -> dict:
+    specs = [tool if isinstance(tool, dict) else callable_to_tool(tool) for tool in map(_function_only, tools or [])]
     match api:
         case "completion":
-            return {"tools": specs}  # openai nested form as-is; any-llm converts per provider
+            return {} if tools is None else {"tools": specs}  # openai nested form as-is; any-llm converts per provider
         case "messages":
+            if tools is None:
+                return {}
             functions = [dict(spec["function"]) for spec in specs]
             for f in functions:  # rename only; every other key rides through and the provider judges it
                 f["input_schema"] = f.pop("parameters", {})
             return {"tools": functions}
         case "responses":
-            return {"tools": [{"type": "function", **spec["function"]} for spec in specs]}  # flat form
+            return {} if tools is None else {"tools": [{"type": "function", **spec["function"]} for spec in specs]}
         case _:
             assert_never(api)

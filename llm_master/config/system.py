@@ -4,13 +4,13 @@ from typing import assert_never
 from llm_master.providers import API
 
 
-def translate(text: str, api: API) -> dict:
+def translate(text: str | None, api: API) -> dict:
     match api:
         case "completion":
             return {}  # no param exists: prepended as a system-role message at assembly (io/messages)
         case "messages":
-            return {"system": text}
+            return {} if text is None else {"system": text}
         case "responses":
-            return {"instructions": text}
+            return {} if text is None else {"instructions": text}
         case _:
             assert_never(api)
