@@ -56,10 +56,22 @@ async def test_deliver_file_sends_a_document_once_its_current_version_is_reviewe
         True, "pages.docx has changed since it was reviewed. Review it again before sending it.")
 
 
+async def test_a_document_without_a_view_is_reviewed_unseen_and_sent_alone(box):
+    breaks = "<p style=\"page-break-before: always\">x</p>" * 100
+    await bash(box, f"printf '%s' '<p>x</p>{breaks}' > long.html && "
+                    "soffice --headless --infilter='HTML (StarWriter)' --convert-to docx long.html >/dev/null")
+    reviewed = await box.run("review_file", {"path": "long.docx"})
+    assert reviewed.content == ("long.docx can't be shown: long.docx has 101 pages, too long for read, which takes 100 "
+                                "at most. Use bash to work with it. The review still counts: deliver_file will send it "
+                                "as it is.")
+    sent = await box.run("deliver_file", {"path": "long.docx"})
+    assert (sent.content, [file.name for file in sent.files]) == (
+        "Sent long.docx to the user. It has no view, so no PDF copy went with it.", ["long.docx"])
+
+
 async def test_an_image_or_a_pdf_goes_alone_once_reviewed(box):
     await bash(box, DOCUMENT.format(first="First page") +
                " && python -c \"from PIL import Image; Image.new('RGB', (40, 30), 'red').save('chart.png')\"")
-    assert (await box.run("deliver_file", {"path": "chart.png"})).error
     assert [part["type"] for part in (await box.run("review_file", {"path": "chart.png"})).content] == ["text", "image"]
     await box.run("review_file", {"path": "pages.pdf"})
     for path in ("chart.png", "pages.pdf"):

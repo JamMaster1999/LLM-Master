@@ -225,9 +225,9 @@ comes back whole, numbered like a search result, and a failed page doesn't fail 
 `generate_image(prompt, image?)` makes an image with `image()`, or edits the image at `image`. An
 edit sends the parent and the prompt together (SPEC.md, Media). A parent the edit endpoint doesn't
 take, such as HEIC or BMP, goes as JPEG, or as PNG when it's transparent. The image is saved under
-`images/` with a record beside it naming its parent, prompt and candidate. The model sees the image,
-so it counts as reviewed. Openai makes it alone until llm_master falls back (SPEC.md step 7); then
-gemini is the fallback.
+`images/` with a record beside it naming its parent, prompt and candidate. It reviews the image
+itself, since the image has reached the user already. Openai makes it alone until llm_master falls
+back (SPEC.md step 7); then gemini is the fallback.
 
 ### generate_audio
 
@@ -244,11 +244,13 @@ Code's rule that Edit refuses a file not yet read.
   contact sheet is every page as a numbered thumbnail on one image, under the shared image rule. It
   builds the view if it's missing (Files).
 - **An image**: the image.
+- **A file that can't get a view**, over 100 pages or one LibreOffice or PDFium can't open: the
+  reason. The review still counts, so the file can still go out.
 - **Anything else** is an error that points at read.
 - **For detail**, the model reads pages with `read(path, pages=...)`.
-- **It marks this version reviewed**: a `reviewed` file in its view, by hash. An image gets a view
-  that holds only the mark. The mark names the path, so deliver_file can tell a changed file from
-  one never reviewed.
+- **It marks the version it read reviewed**: a file at `.agent/reviews/<hash>`, by the view's hash.
+  The mark names the path, so deliver_file can tell a changed file from one never reviewed. Marks
+  live apart from views, so a file without a view can carry one.
 
 ### deliver_file
 
@@ -258,8 +260,8 @@ Code's rule that Edit refuses a file not yet read.
   then deliver_file refuses, in Claude Code's words: `report.docx has not been reviewed yet. Review
   it with review_file before sending it.`, or `report.docx has changed since it was reviewed. Review
   it again before sending it.` This holds for images a program made too.
-- **A document or slides** goes out as the original plus `<stem>.pdf`, its view's PDF. A PDF or
-  image goes alone.
+- **A document or slides** goes out as the original plus `<stem>.pdf`, its view's PDF. Without a
+  view, the original goes alone, and the result says so. A PDF or image goes alone.
 - **Text files and spreadsheets** have no gate.
 
 ### todo
@@ -338,8 +340,6 @@ Rules:
   would miss the prompt cache, so nothing drops them; read's paging keeps each render small.
 - Fireworks' text-only models reject an image in a tool result, so the first image a tool returns
   takes them out of the fallback chain.
-- A made file over 100 pages has no view, so review_file can't review it and deliver_file won't
-  send it.
 - Page text is fast extraction, not Uflo's ingestion: math and figures can come out wrong. The page
   images show what the text misses.
 - A deploy that changes a skill updates its instructions at once, but a running sandbox keeps the

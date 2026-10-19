@@ -26,6 +26,8 @@ IMAGE_SIDE = 1568  # px on the long side
 IMAGE_BYTES = 3_750_000  # an image passed through as is: 5 MB as base64, the strictest provider's cap
 VIEWS = "/workspace/.agent/views"
 SOURCE, TRANSCRIPT, DURATION, TEXT = "source.pdf", "transcript.jsonl", "duration", "text.txt"  # in a view
+REVIEWS = "/workspace/.agent/reviews"  # a file per reviewed version, by hash, naming the paths it was reviewed at
+REVIEWED = {"pages", "image"}  # the families deliver_file sends only once reviewed
 VIEW_VERSION = b"1"  # hashed with each file's bytes: a change to what views hold builds them all anew
 
 FAMILIES = {
@@ -62,7 +64,7 @@ def read(path: str, shown: str, offset: int | None, limit: int | None, pages: st
     if family == "sheet":
         return [_text(_sheets(path))]
     if family in ("pages", "audio", "book"):
-        view = _view(path, family, shown)
+        view = _view(_load(path), family, shown)
         if pages:
             return _page_images(view, pages, shown)
         text, source = _transcript(view, family)
@@ -74,26 +76,27 @@ def read(path: str, shown: str, offset: int | None, limit: int | None, pages: st
 
 def review(path: str, shown: str) -> list[dict]:
     """review_file's parts: a PDF, document or slides as its page count, a contact sheet and each
-    page's first line, or an image as itself. Marks this version reviewed, for deliver_file; the
-    mark names the path, so deliver_file can tell a changed file from one never reviewed."""
+    page's first line, or an image as itself. Marks the version it read reviewed, for deliver_file."""
     _check(path, shown)
-    family = family_of(path)
-    if family == "image":
-        data = _load(path)  # one read, shown and marked
-        view = f"{VIEWS}/{view_hash(data)}"  # an image's view holds only the mark
-        parts = [_text(f"Reviewed {shown}."), _image(data)]
-        os.makedirs(view, exist_ok=True)
-    elif family == "pages":
-        view = _view(path, family, shown)
-        with open(f"{view}/{TRANSCRIPT}") as f:
-            entries = [json.loads(line) for line in f]
-        firsts = "\n".join(f"{entry['page']}. " + next((line.strip(" #")[:100] for line in entry["text"].splitlines()
-                                                         if line.strip(" #")), "(no text)") for entry in entries)
-        parts = [_text(f"Reviewed {shown} ({len(entries)} pages). The first line of each page:\n{firsts}\n\n"
-                       f"To see a page in detail, read it with pages."), _contact_sheet(view, len(entries))]
-    else:
+    family, data = family_of(path), _load(path)
+    if family not in REVIEWED:
         raise Problem(f"review_file checks PDFs, documents, slides and images. Use read for {shown}.")
-    with open(f"{view}/reviewed", "a") as f:
+    if family == "image":
+        parts = [_text(f"Reviewed {shown}."), _image(data)]
+    else:
+        try:
+            view = _view(data, family, shown)
+        except Problem as problem:  # nothing to show, but the model has looked, and the file can still go
+            parts = [_text(f"{shown} can't be shown: {problem} The review still counts: deliver_file will send it "
+                           f"as it is.")]
+        else:
+            with open(f"{view}/{TRANSCRIPT}") as f:
+                entries = [json.loads(line) for line in f]
+            firsts = "\n".join(f"{entry['page']}. {_first_line(entry['text'])}" for entry in entries)
+            parts = [_text(f"Reviewed {shown} ({len(entries)} pages). The first line of each page:\n{firsts}\n\n"
+                           f"To see a page in detail, read it with pages."), _contact_sheet(view, len(entries))]
+    os.makedirs(REVIEWS, exist_ok=True)
+    with open(f"{REVIEWS}/{view_hash(data)}", "a") as f:  # the path, so deliver_file can tell changed from new
         f.write(path + "\n")
     return parts
 
@@ -106,14 +109,14 @@ def attach(path: str, shown: str) -> list[dict]:
     if family == "sheet":
         return [_text(attached(shown))]
     if family in ("pages", "audio"):
-        view = _view(path, family, shown)
+        view = _view(_load(path), family, shown)
         text, source = _transcript(view, family)
         size = f"{len(os.listdir(f'{view}/pages'))} pages" if family == "pages" else _clock(_duration(view))
         note = (f"Its transcript is too long to show here. Search {_shown(source)} with bash (rg, grep), and read "
                 f"{shown} with offset and limit" + (", or with pages to see page images." if family == "pages" else "."))
         return [_text(attached(f"{shown} ({size})", text if fits(text) else note))]
     if family == "book":
-        text, source = _transcript(_view(path, family, shown), family)
+        text, source = _transcript(_view(_load(path), family, shown), family)
         return [_text(attached(shown, page(text, _shown(source), None, None)))]
     if family == "text" and (text := _decode(_load(path))) is not None:
         return [_text(attached(shown, page(text, shown, None, None)))]
@@ -216,12 +219,11 @@ def _decode(data: bytes) -> str | None:
                      and (match.chaos, match.coherence) == (best.chaos, best.coherence)), best))
 
 
-def _view(path: str, family: str, shown: str) -> str:
-    """The file's view folder, built if it's missing (TOOLS.md, Files). The build uses the bytes
-    that were hashed, so a file changed meanwhile can't land under another version's hash. It
-    happens in a temp folder renamed into place, so a crash leaves no half-made view and parallel
-    builds don't collide."""
-    data = _load(path)
+def _view(data: bytes, family: str, shown: str) -> str:
+    """The view folder of the file `shown` holding `data`, built if it's missing (TOOLS.md, Files).
+    The build uses the bytes that were hashed, so a file changed meanwhile can't land under another
+    version's hash. It happens in a temp folder renamed into place, so a crash leaves no half-made
+    view and parallel builds don't collide."""
     view = f"{VIEWS}/{view_hash(data)}"
     if os.path.isdir(view):
         return view
@@ -231,7 +233,7 @@ def _view(path: str, family: str, shown: str) -> str:
     os.makedirs(work)
     try:
         with tempfile.TemporaryDirectory() as local:  # the snapshot, off the volume
-            snapshot = f"{local}/{os.path.basename(path)}"
+            snapshot = f"{local}/{os.path.basename(shown)}"
             with open(snapshot, "wb") as f:
                 f.write(data)
             if family == "pages":
@@ -321,6 +323,10 @@ def _page_images(view: str, pages: str, shown: str) -> list[dict]:
         with open(f"{view}/pages/{number}.jpg", "rb") as f:
             parts += [_text(f"Page {number} of {total}"), _image_part(f.read(), "image/jpeg")]
     return parts
+
+
+def _first_line(text: str) -> str:
+    return next((line.strip(" #")[:100] for line in text.splitlines() if line.strip(" #")), "(no text)")
 
 
 def _contact_sheet(view: str, total: int) -> dict:

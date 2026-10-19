@@ -12,7 +12,8 @@ from modal.types import FileType
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
-from agent.reader import DURATION, MAX_FILE, TRANSCRIPT, VIEWS, attached, family_of, format_size, view_hash
+from agent.reader import (DURATION, MAX_FILE, REVIEWED, REVIEWS, SOURCE, TRANSCRIPT, VIEWS, attached, family_of,
+                          format_size, view_hash)
 from agent.result import Result, ToolError, UserFile
 from agent.sandbox import Sandbox, resolve
 from agent.shell import MAX_ARGUMENT
@@ -96,18 +97,12 @@ _EDITS: TypeAdapter[list[Edit] | Edit] = TypeAdapter(list[Edit] | Edit)
 
 async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] | None = None,
                limit: Annotated[int, Field(ge=1)] | None = None, pages: str | int | None = None) -> Result:
-    content = await _reader(sandbox, "read", path, offset=offset, limit=limit,
-                            pages=None if pages is None else str(pages))
-    return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
+    return _result(await _reader(sandbox, "read", path, offset=offset, limit=limit,
+                                 pages=None if pages is None else str(pages)))
 
 
 async def review_file(sandbox: Sandbox, path: str) -> Result:
-    return Result(await _reader(sandbox, "review", path))
-
-
-async def mark_reviewed(sandbox: Sandbox, path: str, data: bytes) -> None:
-    """Marks a file the model has already seen as reviewed, as review_file does."""
-    await sandbox.write(f"{VIEWS}/{view_hash(data)}/reviewed", (resolve(path) + "\n").encode())
+    return _result(await _reader(sandbox, "review", path))
 
 
 async def upload(sandbox: Sandbox, name: str, data: bytes) -> str:
@@ -135,6 +130,10 @@ async def attach(sandbox: Sandbox, path: str) -> list[dict]:
         return await _reader(sandbox, "attach", path)
     except ToolError as error:
         return [{"type": "text", "text": attached(path, str(error))}]
+
+
+def _result(content: list[dict]) -> Result:
+    return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
 
 
 async def _reader(sandbox: Sandbox, do: str, path: str, **arguments) -> list[dict]:
@@ -208,20 +207,23 @@ async def deliver_file(sandbox: Sandbox, path: str) -> Result:
     out only once its current version is reviewed. A document or slides goes with its view's PDF."""
     data = await load(sandbox, path)
     name = posixpath.basename(path)
-    sent = [UserFile(name, mimetypes.guess_type(name)[0] or "application/octet-stream", data)]
-    if (family := family_of(path)) in ("pages", "image"):
-        view = f"{VIEWS}/{view_hash(data)}"
+    sent, note = [UserFile(name, mimetypes.guess_type(name)[0] or "application/octet-stream", data)], ""
+    if (family := family_of(path)) in REVIEWED:
         try:
-            await sandbox.stat(f"{view}/reviewed")
+            await sandbox.stat(f"{REVIEWS}/{view_hash(data)}")
         except SandboxFilesystemNotFoundError:
-            # each mark names the paths reviewed at that version, so an older one names this path
-            code, _, _ = await sandbox.exec("grep", "-rqxF", "--include=reviewed", "--", resolve(path), VIEWS, timeout=30)
+            # each mark names the paths reviewed at its version, so an older one names this path
+            code, _, _ = await sandbox.exec("grep", "-rqxF", "--", resolve(path), REVIEWS, timeout=30)
             raise ToolError(f"{path} has changed since it was reviewed. Review it again before sending it." if code == 0
                             else f"{path} has not been reviewed yet. Review it with review_file before sending it.") from None
         if family == "pages" and not name.lower().endswith(".pdf"):
-            sent.append(UserFile(f"{posixpath.splitext(name)[0]}.pdf", "application/pdf",
-                                 await sandbox.read(f"{view}/source.pdf")))
-    return Result(f"Sent {' and '.join(file.name for file in sent)} to the user.", files=sent)
+            try:
+                pdf = await load(sandbox, f"{VIEWS}/{view_hash(data)}/{SOURCE}")
+            except ToolError:  # it has no view: over 100 pages, or LibreOffice couldn't open it
+                note = " It has no view, so no PDF copy went with it."
+            else:
+                sent.append(UserFile(f"{posixpath.splitext(name)[0]}.pdf", "application/pdf", pdf))
+    return Result(f"Sent {' and '.join(file.name for file in sent)} to the user.{note}", files=sent)
 
 
 def apply_edits(text: str, edits: list[Edit], path: str) -> str:
