@@ -1,19 +1,16 @@
 """Telemetry: one PostHog event per call, against a stand-in PostHog. See SPEC.md Telemetry."""
 import json
 import logging
-import threading
-from http.server import BaseHTTPRequestHandler
-from socketserver import ThreadingTCPServer
 
 import pytest
-from conftest import POSTHOG_KEY
-from test_query import CONFIGURED
+from cases import CHAIN, CUT, GREET
+from conftest import POSTHOG_KEY, failing, local_server
 
 from llm_master.facade import LLM
+from llm_master.io.response import CutCall
 from llm_master.types import Model
 
-GREET = [{"role": "user", "content": "Say good morning to Toronto."}]
-CHAIN = [CONFIGURED["anthropic"], CONFIGURED["openai"]]
+RATE_LIMITED = {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}}
 
 
 @pytest.fixture
@@ -21,28 +18,20 @@ def posthog(monkeypatch, request) -> list[dict]:
     """Points telemetry at a local PostHog; returns the events it receives."""
     events: list[dict] = []
 
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            events.extend(json.loads(self.rfile.read(int(self.headers["Content-Length"])))["batch"])
-            self.send_response(200)
-            self.send_header("Content-Length", "2")
-            self.end_headers()
-            self.wfile.write(b"{}")
-
-        def log_message(self, format, *args):
-            pass
-
-    server = ThreadingTCPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
-    request.addfinalizer(server.server_close)
-    request.addfinalizer(server.shutdown)
+    def answer(handler, body):
+        events.extend(json.loads(body)["batch"])
+        handler.send_response(200)
+        handler.send_header("Content-Length", "2")
+        handler.end_headers()
+        handler.wfile.write(b"{}")
     monkeypatch.setenv("POSTHOG_API_KEY", "test")
-    monkeypatch.setenv("POSTHOG_HOST", f"http://127.0.0.1:{server.server_address[1]}")
+    monkeypatch.setenv("POSTHOG_HOST", f"http://127.0.0.1:{local_server(request, answer)}")
     return events
 
 
-async def test_an_answered_call_reports_its_tries_and_spend_but_no_content(posthog, recorded):
-    recorded("anthropic_429_five_times_then_openai")
+async def test_an_answered_call_reports_its_tries_and_spend(posthog, recorded):
+    recorded(failing("anthropic_configured", 429, RATE_LIMITED, times=5, headers={"retry-after": "0"}),
+             "openai_configured")
     llm = LLM(update_prices=False)
     r = await llm.query(CHAIN, GREET)
     await llm.aclose()  # sends what's queued
@@ -50,23 +39,23 @@ async def test_an_answered_call_reports_its_tries_and_spend_but_no_content(posth
     p = event["properties"]
     assert event["event"] == "$ai_generation" and p["$ai_span_name"] == "query"
     assert (p["$ai_provider"], p["$ai_model"]) == ("openai", "gpt-5.6-luna")
-    assert (p["retries"], p["fallbacks"], len(p["errors"])) == (5, 1, 5)
+    assert (p["failed_tries"], p["fallbacks"]) == (5, 1)
+    assert p["errors"] == ["anthropic/claude-haiku-5-5: RateLimitError 429"] * 5
     assert r.usage and (p["$ai_input_tokens"], p["$ai_output_tokens"]) == (r.usage.input, r.usage.output)
     assert (p["$ai_total_cost_usd"], p["$ai_latency"], p["$ai_stop_reason"]) == (r.cost, r.latency, "stop")
-    sent = json.dumps(event, ensure_ascii=False)
-    assert "Toronto" not in sent and str(r.message.content) not in sent, "content reached PostHog"
 
 
-async def test_a_failed_call_reports_its_error(posthog, recorded):
-    recorded("anthropic_400_then_openai_400")
+async def test_no_content_reaches_posthog(posthog, recorded):
+    recorded("openai_cut_call")  # its arguments, cut at '{"content":"At', land in the CutCall's message
     llm = LLM(update_prices=False)
-    with pytest.raises(Exception):
-        await llm.query(CHAIN, GREET)
+    with pytest.raises(CutCall):
+        await llm.query(CUT["openai"], [{"role": "user", "content": "Call write_file with a 300-word poem as content."}])
     await llm.aclose()
     [event] = posthog
     p = event["properties"]
-    assert p["$ai_is_error"] and p["$ai_http_status"] == 400 and "max_output_tokens" in p["$ai_error"]
-    assert (p["$ai_provider"], p["retries"], p["fallbacks"]) == ("openai", 2, 1) and "$ai_total_cost_usd" not in p
+    assert p["$ai_is_error"] and p["$ai_error"] == "CutCall" and p["errors"] == ["openai/gpt-5.6-luna: CutCall"]
+    sent = json.dumps(event, ensure_ascii=False)
+    assert "poem" not in sent and "content" not in sent, "content reached PostHog"
 
 
 @pytest.mark.live

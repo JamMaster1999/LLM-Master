@@ -13,7 +13,6 @@ from llm_master.config import UnsupportedField, merge
 from llm_master.io.messages import Origin
 from llm_master.io.parts import Image, decode, uri
 from llm_master.io.response import Attempt, Usage, completion_usage
-from llm_master.telemetry import Call
 from llm_master.types import Model
 
 if TYPE_CHECKING:
@@ -74,16 +73,16 @@ async def speech(llm: "LLM", candidates: Model | Sequence[Model], text: str) -> 
     return await _make(llm, "speech", candidates, once)
 
 
-async def _make(llm: "LLM", call: Call, candidates: Model | Sequence[Model],
+async def _make(llm: "LLM", kind: pipeline.CallKind, candidates: Model | Sequence[Model],
                 once: Callable[[Model], Awaitable[Media]]) -> Media:
     async def checked(candidate: Model) -> Media:
         """once(), for a candidate a media call can take: one that can't fails alone, and fallback moves on."""
         if set_fields := candidate.config.model_dump(exclude_defaults=True).keys() - {"timeout"}:
-            raise UnsupportedField(call, min(set_fields), "media calls take only timeout")
+            raise UnsupportedField(kind, min(set_fields), "media calls take only timeout")
         if candidate.extra.get("n", 1) != 1:  # a Media holds one file: more would be dropped unseen
-            raise UnsupportedField(call, "n", "a media call makes one file; make one call per file")
+            raise UnsupportedField(kind, "n", "a media call makes one file; make one call per file")
         return await once(candidate)
-    return await pipeline.run(llm, call, pipeline.chain(candidates), checked)
+    return await pipeline.run(llm, kind, pipeline.chain(candidates), checked)
 
 
 def _made(candidate: Model, data: bytes, mime: str, usage: Usage | None) -> Media:

@@ -20,7 +20,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it. Done.
-9. **Telemetry** — PostHog events over the finished pipeline.
+9. **Telemetry** — PostHog events over the finished pipeline. Done.
 
 ## Decisions
 
@@ -186,17 +186,18 @@ model, tokens, latency, cost, retry and fallback outcome, and errors.
   - `$ai_latency`: the call's latency. `$ai_total_cost_usd`: its cost, with `$ai_cost_passthrough`
     so PostHog keeps genai-prices' price. Both cost keys are absent when the cost is unknown.
   - `$ai_stop_reason`: a query's `finish`.
-  - `retries` counts the failed tries, `fallbacks` the candidates tried after the first, and
-    `errors` holds one `provider/model: Type: message` line per failed try.
-  - A failed call adds `$ai_is_error`, `$ai_error` with the raised error's text, and
-    `$ai_http_status` when the error has one.
-- No content leaves: no messages, prompts, answers or media, so a user's work never reaches
-  PostHog. Events are personless (`$process_person_profile: false`).
-- Telemetry is on when `POSTHOG_API_KEY` is set. `POSTHOG_HOST` overrides the host, PostHog's US
-  cloud by default, where the project lives.
+  - `failed_tries` counts the tries that failed, `fallbacks` the candidates tried after the
+    first, and `errors` holds one `provider/model: Type status code` line per failed try.
+  - A failed call adds `$ai_is_error`, `$ai_error` with the raised error's type, status and code,
+    and `$ai_http_status` when the error has one.
+- No content leaves: no messages, prompts, answers or media. An error goes as its type, status and
+  code, never its message, since a message can quote the model, as a `CutCall` does. Events are
+  personless (`$process_person_profile: false`).
+- Telemetry is on when `POSTHOG_API_KEY` is set when `LLM()` is built. `POSTHOG_HOST` overrides
+  the host, PostHog's US cloud by default, where the project lives.
 - Each `LLM` holds one PostHog `AsyncClient`. Events queue and go out in batches from tasks on
-  the event loop, and `aclose()` sends what's left. A PostHog failure never fails a call: the SDK
-  logs it.
+  the event loop. `aclose()` closes the providers first, then sends what's left, with one 5-second
+  retry at most. A PostHog failure never fails a call: the SDK logs it.
 
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two

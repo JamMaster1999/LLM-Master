@@ -84,7 +84,7 @@ class LLM:
 
     async def aclose(self) -> None:
         self._prices.stop()
-        await self.telemetry.aclose()
         http, self._http, self._clients = self._http, [], {}
         for client in http:
             await client.aclose()
+        await self.telemetry.aclose()  # last: a slow PostHog can't keep the providers' connections open
