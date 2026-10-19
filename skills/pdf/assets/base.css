@@ -1,0 +1,44 @@
+/* A print stylesheet for WeasyPrint: Letter pages, page numbers, and classes for handouts.
+   Override any of it in the page's own <style>, such as @page { size: A4; } or the --accent color. */
+
+:root { --ink: #1F2937; --muted: #6B7280; --accent: #1F4E79; --tint: #E8EEF5; --rule: #9CA3AF; }
+
+@page {
+  size: Letter;
+  margin: 0.75in;
+  @bottom-center { content: counter(page) " of " counter(pages); font: 9pt Calibri, sans-serif; color: #6B7280; }
+}
+
+html { font-family: Calibri, sans-serif; font-size: 11.5pt; line-height: 1.4; color: var(--ink); }
+body { margin: 0; }
+
+h1 { font-size: 24pt; line-height: 1.15; color: var(--accent); margin: 0 0 4pt; }
+h2 { font-size: 15pt; color: var(--accent); margin: 16pt 0 6pt; break-after: avoid; }
+h3 { font-size: 12pt; margin: 12pt 0 4pt; break-after: avoid; }
+p, li { margin: 0 0 6pt; }
+ul, ol { padding-left: 18pt; margin: 0 0 8pt; }
+img, svg { max-width: 100%; }
+figure { margin: 8pt 0; break-inside: avoid; }
+figcaption { font-size: 9.5pt; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; margin: 6pt 0 10pt; }
+tr { break-inside: avoid; }
+th, td { border: 0.75pt solid var(--rule); padding: 4pt 6pt; text-align: left; vertical-align: top; }
+th { background: var(--tint); }
+
+/* <p class="subtitle"> under the h1 */
+.subtitle { font-size: 13pt; color: var(--muted); margin: 0 0 14pt; }
+/* <p class="name-line">Name: <span></span> Date: <span></span></p> */
+.name-line { display: flex; gap: 10pt; margin-bottom: 14pt; }
+.name-line span { flex: 1; border-bottom: 0.75pt solid var(--ink); }
+/* one ruled line to write on; repeat the div for more */
+.line { height: 0.38in; border-bottom: 0.75pt solid var(--rule); }
+/* a shaded box that stays on one page */
+.box { background: var(--tint); border-radius: 6pt; padding: 10pt 12pt; margin: 8pt 0; break-inside: avoid; }
+/* columns of boxes: <div class="grid"> or <div class="grid three"> */
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12pt; }
+.grid.three { grid-template-columns: 1fr 1fr 1fr; }
+/* cut-apart cards, such as flashcards or exit tickets: dashed edges, fixed height */
+.card { border: 1pt dashed var(--rule); padding: 12pt; height: 2.2in; break-inside: avoid; }
+.page-break { break-before: page; }
+.small { font-size: 9.5pt; color: var(--muted); margin-top: 10pt; }
