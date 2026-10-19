@@ -2,13 +2,16 @@
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
 from any_llm.tools import callable_to_tool
-from pydantic import ConfigDict, ValidationError, validate_call
+from pydantic import ConfigDict, ValidationError
+from pydantic.experimental.arguments_schema import generate_arguments_schema
+from pydantic_core import ArgsKwargs, SchemaValidator
 
 from agent import files, loop, reader, shell, web
 from agent.result import Result, ToolError
@@ -23,31 +26,32 @@ CUT_THEIR_OWN = {"read", "bash", "run_program"}  # every other tool's long text 
 
 
 class Toolbox:
-    def __init__(self, conversation_id: str, tools: Sequence[Callable] = (), sources: Sequence[dict] = (),
+    def __init__(self, conversation_id: str, *, tools: Sequence[Callable] = (), sources: Sequence[dict] = (),
                  urls: Sequence[str] = ()) -> None:
         """`tools` are the caller's own functions; `sources` the source parts already sent in this
         conversation; `urls` the ones the user wrote, which fetch_url may read."""
         self.sandbox = Sandbox(conversation_id)
         self.web = Web(list(sources), urls)
-        self._program_tools = PROGRAM_TOOLS + [tool.__name__ for tool in tools]
+        custom = [(callable_to_tool(tool), tool) for tool in tools]
+        program_tools = PROGRAM_TOOLS + [spec["function"]["name"] for spec, _ in custom]
         run_program = dict(shell.RUN_PROGRAM, function={**shell.RUN_PROGRAM["function"], "description":
-                           shell.RUN_PROGRAM["function"]["description"].format(tools=", ".join(self._program_tools))})
+                           shell.RUN_PROGRAM["function"]["description"].format(tools=", ".join(program_tools))})
         builtins = [
             (files.READ, partial(files.read, self.sandbox)),
             (files.WRITE, partial(files.write, self.sandbox)),
             (files.EDIT, partial(files.edit, self.sandbox)),
             (shell.BASH, partial(shell.bash, self.sandbox)),
-            (run_program, partial(shell.run_program, self.sandbox, self._run_from_program, self._program_tools)),
+            (run_program, partial(shell.run_program, self.sandbox, self._run_from_program, program_tools)),
             (web.SEARCH, self.web.search),
             (web.FETCH, self.web.fetch),
             (files.DELIVER, partial(files.deliver_file, self.sandbox)),
             (loop.TODO, loop.todo),
             (loop.ASK_USER, loop.ask_user),
         ]
-        self.tools = {spec["function"]["name"]: (spec, run)  # each one's schema and function
-                      for spec, run in [*builtins, *((callable_to_tool(tool), tool) for tool in tools)]}
-        if len(self.tools) < len(builtins) + len(tools):
-            raise ValueError("a custom tool can't share its name with another tool")
+        names = [spec["function"]["name"] for spec, _ in builtins + custom]
+        if repeated := sorted({name for name in names if names.count(name) > 1}):
+            raise ValueError(f"Tool names must be unique; repeated: {', '.join(repeated)}")
+        self.tools = dict(zip(names, builtins + custom))  # each one's schema and function
         self._checked = {name: _checked(run) for name, (_, run) in self.tools.items()}
         self._serial = asyncio.Lock()
 
@@ -85,13 +89,17 @@ class Toolbox:
     async def _call(self, name: str, arguments: dict) -> Result:
         if name not in self.tools:
             raise ToolError(f"Unknown tool: {name}")
+        check, run = self._checked[name]
+        try:  # the check alone: a ValidationError the tool itself raises is its bug, not bad arguments
+            args, kwargs = check.validate_python(ArgsKwargs((), arguments))
+        except ValidationError as error:
+            problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+            raise ToolError(f"Invalid arguments for {name}: {problems}") from None
         async with self._serial if name in SERIAL else contextlib.nullcontext():
-            try:
-                out = await self._checked[name](**arguments)
-            except ValidationError as error:
-                problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
-                raise ToolError(f"Invalid arguments for {name}: {problems}") from None
-        return out if isinstance(out, Result) else Result(str(out))
+            out = await run(*args, **kwargs)
+        if isinstance(out, Result):
+            return out
+        return Result(out if isinstance(out, str) else json.dumps(out, ensure_ascii=False))
 
     async def _cut(self, name: str, content: str | list[dict]) -> str | list[dict]:
         """Long text cut at pi's limits, keeping the start even mid-line, and saved whole in the sandbox."""
@@ -114,10 +122,9 @@ class Toolbox:
         return await self._run(name, arguments, cut=False)
 
 
-def _checked(run: Callable) -> Callable:
-    """The tool as one async function that checks its arguments against its type hints first: a
-    wrong type or a missing argument is the model's to fix, and models send "30" for 30."""
-    checked = validate_call(config=ConfigDict(arbitrary_types_allowed=True))(run)
-    if inspect.iscoroutinefunction(run):
-        return checked
-    return lambda **arguments: asyncio.to_thread(checked, **arguments)
+def _checked(run: Callable) -> tuple[SchemaValidator, Callable[..., Awaitable]]:
+    """validate_call's check of the tool's arguments against its type hints, without the call, and
+    the tool as an async function. A wrong type or a missing argument is the model's to fix, and
+    models send "30" for 30."""
+    schema = generate_arguments_schema(run, "arguments", config=ConfigDict(arbitrary_types_allowed=True))
+    return SchemaValidator(schema), run if inspect.iscoroutinefunction(run) else partial(asyncio.to_thread, run)
