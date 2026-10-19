@@ -47,6 +47,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
             "gpt-4o-audio-preview": {"requests": 5000},
             "omni-moderation-latest": {"requests": 1000},
             "gpt-image-1": {"requests": 50},
+            "gpt-image-2": {"requests": 50},
         },
     },
     "anthropic": {
