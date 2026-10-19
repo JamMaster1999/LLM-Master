@@ -19,7 +19,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
-8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
+8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it. Done.
 9. **Telemetry** — PostHog events over the finished pipeline.
 
 ## Decisions
@@ -125,6 +125,22 @@ and that transport retries a connection error once on its own, after 1–10 seco
 `max_retries`. HTTP errors are unaffected. A drop after the server received the request can
 bill one generation twice
 ([googleapis/python-genai#3160](https://github.com/googleapis/python-genai/issues/3160)).
+
+**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=None, progress_callback=None)`
+runs many `query()` calls at once and returns their `Response`s in request order. It keeps v1's
+signature, with v2's candidates in place of v1's model name.
+
+- Each request is a dict: `messages`, and `moderation`, False by default. Any other key raises
+  `ValueError` before anything is sent: a v1 request's `kwargs` and `fallback_*` now live on the
+  candidates, and dropping them silently would change the answers.
+- Every request's messages validate before the first request is sent.
+- At most `concurrency` requests run at once, 128 when it's None or 0, as in v1. The rate limiter
+  still gates every try.
+- Each request runs the whole pipeline: moderation, retries, fallback and cost.
+- `progress_callback(done, total)` runs after each request finishes.
+- When a request fails, the others are cancelled and its error raises, as a single call's would.
+  The responses already made are lost with them.
+- An empty list returns `[]` and sends nothing.
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
