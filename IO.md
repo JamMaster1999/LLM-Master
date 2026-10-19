@@ -173,8 +173,9 @@ any-llm's converters expect OpenAI's chat format, so this case writes it.
 - tool: `{"role": "tool", "tool_call_id", "content"}`, parts renamed as for user.
   - Gemini 3 receives image and PDF parts as `functionResponse.parts` (any-llm fork PRs #17 and
     #20). Without them it never sees the media and invents an answer (live-tested).
-  - Fireworks accepts text only, so any other part raises `UnsupportedField`. The provider row's
-    `tool_media` holds that fact.
+  - Fireworks passes image parts to the models that read images: kimi-k3 and deepseek-v4p1-flash
+    read one in a tool result (live-tested). A text-only model such as glm-5p3, or a PDF part,
+    gets Fireworks' own 400.
 
 ### messages → `{"messages": [...]}`
 

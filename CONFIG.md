@@ -63,8 +63,8 @@ The shape is llm_master's own; IO.md is its law and holds every per-dialect spel
   only, so an openai candidate carrying audio input routes to completion. anthropic and the responses dialect have no audio input: typed unsupported.
   Live-verified on gemini and gpt-audio — a spoken sentence transcribes word for word on both.
   Video input has no part; no consumer needs it.
-- Tool results: the `tool` role, carrying text, image and file parts (field 6). Fireworks takes
-  text only.
+- Tool results: the `tool` role, carrying text, image and file parts (field 6). Fireworks rejects
+  PDFs, and images on its text-only models, with its own 400.
 - Assistant turns: a model's own turns replay to it verbatim; every other model sees their text
   and calls, never their reasoning (IO.md, the echo law).
 

@@ -17,5 +17,4 @@ class ProviderRow(TypedDict):
     requests: int
     interval: int                  # seconds
     models: dict[str, ModelRow]    # exceptions only; {} means none
-    tool_media: bool               # tool results may carry image and file parts, not just text
     price_id: NotRequired[str]     # genai-prices name, only when it differs
