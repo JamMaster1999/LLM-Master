@@ -50,6 +50,7 @@ async def generate_image(sandbox: Sandbox, llm: LLM, prompt: str, image: str | N
     parents = [await asyncio.to_thread(_editable, await files.load(sandbox, image), image)] if image else []
     made = await llm.image(IMAGE_MODELS, prompt, parents)
     path, sent = await _save(sandbox, "images", made)
+    await files.mark_reviewed(sandbox, path, made.data)  # the model sees it below
     record = {"parent": image, "prompt": prompt, "candidate": made.origin.model_dump()}
     await sandbox.write(f"{posixpath.splitext(path)[0]}.json", json.dumps(record, ensure_ascii=False).encode())
     shown = await files.read(sandbox, path)  # read's image rule: at most 1568 px, JPEG unless transparent

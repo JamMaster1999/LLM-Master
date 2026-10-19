@@ -51,6 +51,7 @@ async def test_an_image_is_made_then_edited_with_its_parent_on_record(box):
     assert await record(box, saved(made)) == {"parent": None, "prompt": DRAW, "candidate": candidate}
     assert await record(box, saved(edited)) == {"parent": "a.bmp", "prompt": "Make the circle blue.",
                                                 "candidate": candidate}
+    assert not (await box.run("deliver_file", {"path": saved(made)})).error  # the model saw it, so it's reviewed
     for result in (made, edited):  # the model sees the image; the user gets the file
         [file] = result.files
         assert saved(result) == f"images/{file.name}" and file.name.endswith("." + file.mime.split("/")[1])

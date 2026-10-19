@@ -1,5 +1,5 @@
-"""The file tools: read, write and edit copy pi's; deliver_file hands a file to the user. And uploads,
-which the caller attaches to the user's message."""
+"""The file tools: read, write and edit copy pi's; review_file checks what the model made, and
+deliver_file hands it to the user. And uploads, which the caller attaches to the user's message."""
 import json
 import mimetypes
 import posixpath
@@ -12,7 +12,7 @@ from modal.types import FileType
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict  # pydantic takes typing's only from Python 3.12
 
-from agent.reader import DURATION, MAX_FILE, TRANSCRIPT, VIEWS, attached, format_size, view_hash
+from agent.reader import DURATION, MAX_FILE, TRANSCRIPT, VIEWS, attached, family_of, format_size, view_hash
 from agent.result import Result, ToolError, UserFile
 from agent.sandbox import Sandbox, resolve
 from agent.shell import MAX_ARGUMENT
@@ -66,10 +66,21 @@ EDIT = {"type": "function", "function": {
                   }, "required": ["oldText", "newText"]}},
     }, "required": ["path", "edits"]}}}
 
+REVIEW = {"type": "function", "function": {
+    "name": "review_file",
+    "description": "Check a PDF, document, slides or image before sending it with deliver_file, which refuses one "
+                   "not reviewed since it last changed. Returns the page count, every page as a numbered thumbnail "
+                   "on one image, and each page's first line; for an image, the image. To see a page in detail, use "
+                   "read with pages.",
+    "parameters": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "Path to the file to review (relative or absolute)"},
+    }, "required": ["path"]}}}
+
 DELIVER = {"type": "function", "function": {
     "name": "deliver_file",
     "description": "Send a file from the sandbox to the user, who can open or download it. Use it for every file "
-                   "the user asked for, once it is finished.",
+                   "the user asked for, once it is finished. A PDF, document, slides or image must be reviewed with "
+                   "review_file first. A document or slides also goes out as a PDF.",
     "parameters": {"type": "object", "properties": {
         "path": {"type": "string", "description": "Path to the file to send (relative or absolute)"},
     }, "required": ["path"]}}}
@@ -88,6 +99,15 @@ async def read(sandbox: Sandbox, path: str, offset: Annotated[int, Field(ge=1)] 
     content = await _reader(sandbox, "read", path, offset=offset, limit=limit,
                             pages=None if pages is None else str(pages))
     return Result(content[0]["text"] if len(content) == 1 and content[0]["type"] == "text" else content)
+
+
+async def review_file(sandbox: Sandbox, path: str) -> Result:
+    return Result(await _reader(sandbox, "review", path))
+
+
+async def mark_reviewed(sandbox: Sandbox, path: str, data: bytes) -> None:
+    """Marks a file the model has already seen as reviewed, as review_file does."""
+    await sandbox.write(f"{VIEWS}/{view_hash(data)}/reviewed", (resolve(path) + "\n").encode())
 
 
 async def upload(sandbox: Sandbox, name: str, data: bytes) -> str:
@@ -184,10 +204,24 @@ async def edit(sandbox: Sandbox, path: str, edits: list[Edit] | Edit | str) -> s
 
 
 async def deliver_file(sandbox: Sandbox, path: str) -> Result:
+    """Claude Code's rule that Edit refuses a file not yet read: a PDF, document, slides or image goes
+    out only once its current version is reviewed. A document or slides goes with its view's PDF."""
     data = await load(sandbox, path)
     name = posixpath.basename(path)
-    return Result(f"Sent {name} to the user.",
-                  files=[UserFile(name, mimetypes.guess_type(name)[0] or "application/octet-stream", data)])
+    sent = [UserFile(name, mimetypes.guess_type(name)[0] or "application/octet-stream", data)]
+    if (family := family_of(path)) in ("pages", "image"):
+        view = f"{VIEWS}/{view_hash(data)}"
+        try:
+            await sandbox.stat(f"{view}/reviewed")
+        except SandboxFilesystemNotFoundError:
+            # each mark names the paths reviewed at that version, so an older one names this path
+            code, _, _ = await sandbox.exec("grep", "-rqxF", "--include=reviewed", "--", resolve(path), VIEWS, timeout=30)
+            raise ToolError(f"{path} has changed since it was reviewed. Review it again before sending it." if code == 0
+                            else f"{path} has not been reviewed yet. Review it with review_file before sending it.") from None
+        if family == "pages" and not name.lower().endswith(".pdf"):
+            sent.append(UserFile(f"{posixpath.splitext(name)[0]}.pdf", "application/pdf",
+                                 await sandbox.read(f"{view}/source.pdf")))
+    return Result(f"Sent {' and '.join(file.name for file in sent)} to the user.", files=sent)
 
 
 def apply_edits(text: str, edits: list[Edit], path: str) -> str:

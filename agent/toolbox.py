@@ -51,6 +51,7 @@ class Toolbox:
             (web.SEARCH, self.web.search),
             (web.FETCH, self.web.fetch),
             *generate,
+            (files.REVIEW, partial(files.review_file, self.sandbox)),
             (files.DELIVER, partial(files.deliver_file, self.sandbox)),
             (loop.TODO, loop.todo),
             (loop.ASK_USER, loop.ask_user),

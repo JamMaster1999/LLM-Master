@@ -1,12 +1,14 @@
-"""read's and attach's work, done inside the sandbox where Pillow, openpyxl, LibreOffice, poppler, pandoc
-and Indra live: one call in, one JSON result out, so a read is one round trip and only its result leaves
-the sandbox. The host runs this file's source with `python -c` and imports it for pi's text limits."""
+"""read's, attach's and review_file's work, done inside the sandbox where Pillow, openpyxl, LibreOffice,
+poppler, pandoc and Indra live: one call in, one JSON result out, so a call is one round trip and only its
+result leaves the sandbox. The host runs this file's source with `python -c` and imports it for pi's text
+limits and the view hash."""
 import base64
 import codecs
 import glob
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -50,13 +52,7 @@ class Transcribe(Exception):
 
 def read(path: str, shown: str, offset: int | None, limit: int | None, pages: str | None) -> list[dict]:
     """The result's parts for the file at `path`, which the model calls `shown`."""
-    if not os.path.exists(path):
-        raise Problem(f"File not found: {shown}")
-    if os.path.isdir(path):
-        raise Problem(f"{shown} is a directory. Use bash to list it.")
-    size = os.path.getsize(path)
-    if size > MAX_FILE:
-        raise Problem(f"{shown} is {format_size(size)}, over the {format_size(MAX_FILE)} limit. Use bash to work with it.")
+    _check(path, shown)
     family = family_of(path)
     if pages and family != "pages":
         raise Problem(f"{shown} has no pages. pages works on PDFs, documents and slides.")
@@ -74,6 +70,32 @@ def read(path: str, shown: str, offset: int | None, limit: int | None, pages: st
     if family == "text" and (text := _decode(_load(path))) is not None:
         return [_text(page(text, shown, offset, limit))]
     raise Problem(f"read doesn't support {UNSUPPORTED[family].lower()} yet. Use bash to work with {shown}.")
+
+
+def review(path: str, shown: str) -> list[dict]:
+    """review_file's parts: a PDF, document or slides as its page count, a contact sheet and each
+    page's first line, or an image as itself. Marks this version reviewed, for deliver_file; the
+    mark names the path, so deliver_file can tell a changed file from one never reviewed."""
+    _check(path, shown)
+    family = family_of(path)
+    if family == "image":
+        data = _load(path)  # one read, shown and marked
+        view = f"{VIEWS}/{view_hash(data)}"  # an image's view holds only the mark
+        parts = [_text(f"Reviewed {shown}."), _image(data)]
+        os.makedirs(view, exist_ok=True)
+    elif family == "pages":
+        view = _view(path, family, shown)
+        with open(f"{view}/{TRANSCRIPT}") as f:
+            entries = [json.loads(line) for line in f]
+        firsts = "\n".join(f"{entry['page']}. " + next((line.strip(" #")[:100] for line in entry["text"].splitlines()
+                                                         if line.strip(" #")), "(no text)") for entry in entries)
+        parts = [_text(f"Reviewed {shown} ({len(entries)} pages). The first line of each page:\n{firsts}\n\n"
+                       f"To see a page in detail, read it with pages."), _contact_sheet(view, len(entries))]
+    else:
+        raise Problem(f"review_file checks PDFs, documents, slides and images. Use read for {shown}.")
+    with open(f"{view}/reviewed", "a") as f:
+        f.write(path + "\n")
+    return parts
 
 
 def attach(path: str, shown: str) -> list[dict]:
@@ -156,6 +178,16 @@ def family_of(path: str) -> str:
 def view_hash(data: bytes) -> str:
     """The name of a file's view folder."""
     return hashlib.sha256(VIEW_VERSION + data).hexdigest()[:16]
+
+
+def _check(path: str, shown: str) -> None:
+    if not os.path.exists(path):
+        raise Problem(f"File not found: {shown}")
+    if os.path.isdir(path):
+        raise Problem(f"{shown} is a directory. Use bash to list it.")
+    size = os.path.getsize(path)
+    if size > MAX_FILE:
+        raise Problem(f"{shown} is {format_size(size)}, over the {format_size(MAX_FILE)} limit. Use bash to work with it.")
 
 
 def _load(path: str) -> bytes:
@@ -291,6 +323,26 @@ def _page_images(view: str, pages: str, shown: str) -> list[dict]:
     return parts
 
 
+def _contact_sheet(view: str, total: int) -> dict:
+    """Every page as a numbered thumbnail on one image, IMAGE_SIDE px at most."""
+    from PIL import Image, ImageDraw, ImageFont  # pyright: ignore[reportMissingImports]
+    columns = math.ceil(math.sqrt(total))
+    cell = IMAGE_SIDE // columns
+    sheet = Image.new("RGB", (columns * cell, math.ceil(total / columns) * cell), (200, 200, 200))
+    draw, font = ImageDraw.Draw(sheet), ImageFont.load_default(size=max(12, cell // 10))
+    for number in range(1, total + 1):
+        x, y = (number - 1) % columns * cell, (number - 1) // columns * cell
+        with Image.open(f"{view}/pages/{number}.jpg") as thumbnail:
+            thumbnail.thumbnail((cell - 6, cell - 6))
+            sheet.paste(thumbnail, (x + (cell - thumbnail.width) // 2, y + (cell - thumbnail.height) // 2))
+        box = draw.textbbox((x + 8, y + 6), str(number), font=font)
+        draw.rectangle((box[0] - 4, box[1] - 3, box[2] + 4, box[3] + 3), fill="black")
+        draw.text((x + 8, y + 6), str(number), fill="white", font=font)
+    out = io.BytesIO()
+    sheet.save(out, "JPEG", quality=85)
+    return _image_part(out.getvalue(), "image/jpeg")
+
+
 def _clock(seconds: float) -> str:
     minutes, second = divmod(int(seconds), 60)
     return f"{minutes // 60:02d}:{minutes % 60:02d}:{second:02d}"
@@ -389,7 +441,7 @@ def _image_part(data: bytes, mime: str) -> dict:
 if __name__ == "__main__":
     request = json.loads(sys.argv[1])
     try:
-        print(json.dumps({"content": {"read": read, "attach": attach}[request.pop("do")](**request)}))
+        print(json.dumps({"content": {"read": read, "attach": attach, "review": review}[request.pop("do")](**request)}))
     except Problem as problem:
         print(json.dumps({"problem": str(problem)}))
     except Transcribe:

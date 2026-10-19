@@ -16,6 +16,7 @@ SKILLS-LIST.md, and the code in `agent/`.
 | fetch_url | host (Exa) | exa-py's `get_contents` | text and sources |
 | generate_image | host (`image()`) | | text and the image; the image goes to the user |
 | generate_audio | host (`speech()`) | | text; the audio goes to the user |
+| review_file | sandbox | Claude Code's rule that Edit refuses a file not yet read | text and an image |
 | deliver_file | host | | text; the file goes to the user |
 | todo | host | Codex's `update_plan` | text |
 | ask_user | the user | Claude Code's `AskUserQuestion` | text, once the user answers |
@@ -197,7 +198,7 @@ print(max(pages, key=len)[:2000])
   failed call raises `ToolError`.
 - **Which tools**: web_search, fetch_url, generate_image, generate_audio, deliver_file and every
   custom tool. The program has a shell already, todo and ask_user draw UI, and skill's
-  instructions are for the model.
+  instructions and review_file's review are for the model.
 - **At most 100 calls** per program.
 - **The host checks every call**, since the program can send anything. Keys stay on the host.
 - **Files and sources** from the calls inside reach the user, at most 50 MB of files per program.
@@ -224,8 +225,9 @@ comes back whole, numbered like a search result, and a failed page doesn't fail 
 `generate_image(prompt, image?)` makes an image with `image()`, or edits the image at `image`. An
 edit sends the parent and the prompt together (SPEC.md, Media). A parent the edit endpoint doesn't
 take, such as HEIC or BMP, goes as JPEG, or as PNG when it's transparent. The image is saved under
-`images/` with a record beside it naming its parent, prompt and candidate. Openai makes it alone until
-llm_master falls back (SPEC.md step 7); then gemini is the fallback.
+`images/` with a record beside it naming its parent, prompt and candidate. The model sees the image,
+so it counts as reviewed. Openai makes it alone until llm_master falls back (SPEC.md step 7); then
+gemini is the fallback.
 
 ### generate_audio
 
@@ -233,9 +235,32 @@ llm_master falls back (SPEC.md step 7); then gemini is the fallback.
 The audio is saved under `audio/` and goes to the user. Openai speaks it alone until llm_master falls
 back (SPEC.md step 7); then gemini is the fallback.
 
+### review_file
+
+`review_file(path)` checks a file the model made before deliver_file sends it. It copies Claude
+Code's rule that Edit refuses a file not yet read.
+
+- **A PDF, document or slides**: the page count, a contact sheet, and each page's first line. The
+  contact sheet is every page as a numbered thumbnail on one image, under the shared image rule. It
+  builds the view if it's missing (Files).
+- **An image**: the image.
+- **Anything else** is an error that points at read.
+- **For detail**, the model reads pages with `read(path, pages=...)`.
+- **It marks this version reviewed**: a `reviewed` file in its view, by hash. An image gets a view
+  that holds only the mark. The mark names the path, so deliver_file can tell a changed file from
+  one never reviewed.
+
 ### deliver_file
 
 `deliver_file(path)` sends a sandbox file to the user, one file per call.
+
+- **A PDF, document, slides or image** goes out only once its current version is reviewed. Until
+  then deliver_file refuses, in Claude Code's words: `report.docx has not been reviewed yet. Review
+  it with review_file before sending it.`, or `report.docx has changed since it was reviewed. Review
+  it again before sending it.` This holds for images a program made too.
+- **A document or slides** goes out as the original plus `<stem>.pdf`, its view's PDF. A PDF or
+  image goes alone.
+- **Text files and spreadsheets** have no gate.
 
 ### todo
 
@@ -313,6 +338,8 @@ Rules:
   would miss the prompt cache, so nothing drops them; read's paging keeps each render small.
 - Fireworks' text-only models reject an image in a tool result, so the first image a tool returns
   takes them out of the fallback chain.
+- A made file over 100 pages has no view, so review_file can't review it and deliver_file won't
+  send it.
 - Page text is fast extraction, not Uflo's ingestion: math and figures can come out wrong. The page
   images show what the text misses.
 - A deploy that changes a skill updates its instructions at once, but a running sandbox keeps the
