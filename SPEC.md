@@ -80,6 +80,25 @@ Live-checked 2026-10-18:
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
 timeout expiry is a typed `ProviderError`, retryable like the rest.
 
+Retries (step 6), the same for every call and stream:
+
+- A candidate gets 5 tries. A try that fails transiently is tried again:
+  - a `RateLimitError`, `GatewayTimeoutError` or `UpstreamProviderError`;
+  - a `ProviderError` with no HTTP status, a 5xx, or a 2xx: timeouts, dropped connections, cut
+    streams, OpenAI's `failed` status, Gemini's answer with no choice, and Anthropic's
+    `overloaded_error` inside a 200 stream.
+- Any other error skips the retries: a bad key or request (any 4xx), a content filter, an unknown
+  model, a context too long, our `UnsupportedField` and `MissingMedia`, and a `CutCall`, which the
+  same request would cut again.
+- Between tries, the provider's `Retry-After` when a `RateLimitError` carries one, capped at
+  60 seconds. Otherwise a random wait of up to 0.5 × 2ⁿ⁻¹ seconds before try n + 1 (full jitter),
+  so 7.5 seconds at most over a candidate's five tries.
+- Every failed try's error lands, in order, on its candidate's `Attempt.errors`. An attempt's
+  latency sums its tries; the waits count only toward the call's latency.
+- A streamed try that fails after its `start-step` yields `reset-step`, and the next try streams
+  from the start under a new `start-step`.
+- When a candidate's last try fails, its error goes to fallback (step 7).
+
 Known limit: gemini and vertexai keep google-genai's aiohttp transport for async throughput,
 and that transport retries a connection error once on its own, after 1–10 seconds, ignoring
 `max_retries`. HTTP errors are unaffected. A drop after the server received the request can

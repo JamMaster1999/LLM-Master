@@ -318,8 +318,9 @@ For each model call, llm_master yields:
 
 The caller sends everything else: the message-level `start` and `finish`, tool outputs, files
 and `data-*` widgets. When every candidate fails, the stream raises the same typed error a normal
-call raises; llm_master never sends an `error` chunk. A stream cut off before it finishes raises a
-typed `ProviderError` after its `reset-step`. A half-streamed tool call can't be run: tools run
+call raises; llm_master never sends an `error` chunk. A stream cut off before it finishes is a
+typed `ProviderError`: its step resets and the try runs again (SPEC.md Failures). A half-streamed
+tool call can't be run: tools run
 from `response.message.calls` after the loop ends.
 
 To abort, leave the loop or cancel the task that iterates it: the provider's stream closes.
