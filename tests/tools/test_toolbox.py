@@ -1,9 +1,13 @@
 """The toolbox's own behaviour, for the tools that need neither Modal nor Exa, and its schemas at each provider."""
+from pathlib import Path
+
 import pytest
 from pydantic import TypeAdapter
 
 from agent import Toolbox
 from llm_master.types import Config, Model
+
+SKILLS = Path(__file__).parent / "skills"
 
 PLAN = [{"step": "Draft the quiz", "status": "in_progress"}, {"step": "Write the key", "status": "pending"}]
 QUESTIONS = [{"question": "Which grade level?", "header": "Grade", "multiSelect": False,
@@ -60,9 +64,13 @@ def shape(schema: dict, defs: dict) -> dict:
 def test_each_schema_matches_its_function():
     """The schema the model reads and the type hints its arguments are checked against are written
     apart, so this keeps them in step."""
-    for name, (spec, function) in Toolbox("c").tools.items():
+    for name, (spec, function) in Toolbox("c", skills=SKILLS).tools.items():
         hinted = TypeAdapter(function).json_schema()
-        assert shape(spec["function"]["parameters"], {}) == shape(hinted, hinted.get("$defs", {})), name
+        written, expected = shape(spec["function"]["parameters"], {}), shape(hinted, hinted.get("$defs", {}))
+        for field, hint in expected["properties"].items():
+            if hint == {"type": "string"}:  # a closed list on a str the tool checks itself, like skill's names
+                written["properties"].get(field, {}).pop("enum", None)
+        assert written == expected, name
 
 
 @pytest.mark.live
@@ -72,5 +80,5 @@ def test_each_schema_matches_its_function():
                                        Model(provider="fireworks", model="accounts/fireworks/models/deepseek-v4p1-flash")],
                          ids=lambda m: m.provider)
 async def test_every_provider_takes_the_tools(candidate, llm):
-    candidate = candidate.model_copy(update={"config": Config(tools=Toolbox("c").specs, max_tokens=64)})
+    candidate = candidate.model_copy(update={"config": Config(tools=Toolbox("c", skills=SKILLS).specs, max_tokens=64)})
     await llm.query(candidate, [{"role": "user", "content": "Reply with the word ok."}])

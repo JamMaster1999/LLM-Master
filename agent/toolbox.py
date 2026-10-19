@@ -7,6 +7,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
+from pathlib import Path
 
 from any_llm.tools import callable_to_tool
 from pydantic import ConfigDict, ValidationError
@@ -16,6 +17,7 @@ from pydantic_core import ArgsKwargs, SchemaValidator
 from agent import files, loop, reader, shell, web
 from agent.result import Result, ToolError
 from agent.sandbox import SCRATCH, Sandbox
+from agent.skills import Skills
 from agent.web import Web
 
 log = logging.getLogger(__name__)
@@ -27,10 +29,11 @@ CUT_THEIR_OWN = {"read", "bash", "run_program"}  # every other tool's long text 
 
 class Toolbox:
     def __init__(self, conversation_id: str, *, tools: Sequence[Callable] = (), sources: Sequence[dict] = (),
-                 urls: Sequence[str] = ()) -> None:
+                 urls: Sequence[str] = (), skills: str | Path | None = None) -> None:
         """`tools` are the caller's own functions; `sources` the source parts already sent in this
-        conversation; `urls` the ones the user wrote, which fetch_url may read."""
-        self.sandbox = Sandbox(conversation_id)
+        conversation; `urls` the ones the user wrote, which fetch_url may read; `skills` a folder of
+        skill folders. A broken skill raises ValueError."""
+        self.sandbox = Sandbox(conversation_id, skills)
         self.web = Web(list(sources), urls)
         custom = [(callable_to_tool(tool), tool) for tool in tools]
         program_tools = PROGRAM_TOOLS + [spec["function"]["name"] for spec, _ in custom]
@@ -48,6 +51,8 @@ class Toolbox:
             (loop.TODO, loop.todo),
             (loop.ASK_USER, loop.ask_user),
         ]
+        if skills and (library := Skills(skills)).skills:  # an empty enum is a schema some providers reject
+            builtins.append((library.spec, library.load))
         names = [spec["function"]["name"] for spec, _ in builtins + custom]
         if repeated := sorted({name for name in names if names.count(name) > 1}):
             raise ValueError(f"Tool names must be unique; repeated: {', '.join(repeated)}")

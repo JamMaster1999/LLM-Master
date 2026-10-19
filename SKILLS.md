@@ -4,6 +4,10 @@ A skill teaches what the model doesn't already know: a widget's format, how to b
 Uflo's own output structure. Persona prompts that ask for what models do unprompted are not
 skills. The tools they use are in TOOLS.md.
 
+Each skill is an Agent Skills folder: SKILL.md, whose frontmatter gives its `name` and
+`description`, then the instructions, with optional scripts and references beside it. The model
+loads one through the `skill` tool.
+
 | skill | kind | covers |
 |---|---|---|
 | desmos | widget | graphs on the graphing calculator |
