@@ -126,6 +126,21 @@ and that transport retries a connection error once on its own, after 1–10 seco
 bill one generation twice
 ([googleapis/python-genai#3160](https://github.com/googleapis/python-genai/issues/3160)).
 
+**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=128, progress_callback=None)`
+runs many `query()` calls at once and returns their `Response`s in request order. It keeps v1's
+signature, with v2's candidates in place of v1's model name.
+
+- Each request is a dict: `messages`, and `moderation`, False by default. Any other key raises
+  `ValueError` before anything is sent: a v1 request's `kwargs` and `fallback_*` now live on the
+  candidates, and dropping them silently would change the answers.
+- Every request's messages validate before the first request is sent.
+- At most `concurrency` requests run at once, and the rate limiter still gates every try.
+- Each request runs the whole pipeline: moderation, retries, fallback and cost.
+- `progress_callback(done, total)` runs after each request finishes.
+- When a request fails, the others are cancelled and its error raises, as a single call's would.
+  The responses already made are lost with them.
+- An empty list returns `[]` and sends nothing.
+
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
 discount manually.
