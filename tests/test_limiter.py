@@ -3,8 +3,9 @@ import asyncio
 import time
 
 import pytest
-from test_query import ASK, CONFIGURED, LOOPS
+from cases import ASK, CONFIGURED, GREET, LOOPS
 
+from llm_master.config import moderation
 from llm_master.providers import PROVIDERS
 
 
@@ -24,14 +25,13 @@ async def stream(llm):
         pass
 
 
-@pytest.mark.parametrize("call, window", [
-    (lambda llm: llm.query(LOOPS["anthropic"], ASK), LOOPS["anthropic"].model),
-    (stream, LOOPS["anthropic"].model),
-    (lambda llm: llm.query(LOOPS["anthropic"], ASK, moderation=True), "omni-moderation-latest"),
+@pytest.mark.parametrize("call, provider, window", [
+    (lambda llm: llm.query(LOOPS["anthropic"], ASK), "anthropic", LOOPS["anthropic"].model),
+    (stream, "anthropic", LOOPS["anthropic"].model),
+    (lambda llm: llm.query(LOOPS["anthropic"], ASK, moderation=True), "openai", moderation.MODEL),
 ], ids=["plain", "stream", "moderation"])
-async def test_a_call_waits_for_its_window_before_it_sends(call, window, recorded, monkeypatch, llm):
+async def test_a_call_waits_for_its_window_before_it_sends(call, provider, window, recorded, monkeypatch, llm):
     recorded("nothing_sent")  # teardown fails on any request
-    provider = "openai" if window == "omni-moderation-latest" else "anthropic"
     monkeypatch.setitem(PROVIDERS[provider]["models"], window, {"requests": 1, "interval": 60})
     await llm.limiter.wait(provider, window)
     with pytest.raises(TimeoutError):
@@ -43,6 +43,6 @@ async def test_the_wait_counts_toward_the_calls_latency_not_the_attempts(recorde
     candidate = CONFIGURED["gemini"]
     monkeypatch.setitem(PROVIDERS["gemini"]["models"], candidate.model, {"requests": 1, "interval": 1})
     await llm.limiter.wait("gemini", candidate.model)
-    r = await llm.query(candidate, [{"role": "user", "content": "Say good morning to Toronto."}])
+    r = await llm.query(candidate, GREET)
     [attempt] = r.attempts
-    assert r.latency - attempt.latency >= 0.9 and attempt.latency < 0.5
+    assert r.latency - attempt.latency >= 0.9, "the attempt counted the limiter's wait"

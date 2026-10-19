@@ -16,7 +16,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 2. **Facade + persistent clients** — one held `AnyLLM.create(provider, unified_exceptions=True, max_retries=0)` per provider. Everything sits on it. Done.
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
-5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries.
+5. **Rate limiter** — a local sliding-window bucket per (provider, model), wired in before retries. Done.
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
