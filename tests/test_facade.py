@@ -42,7 +42,7 @@ async def ask(llm, provider):
 
 
 def test_one_held_client_per_provider():
-    llm = LLM()
+    llm = LLM(update_prices=False)
     roster = get_args(ProviderName)
     assert [llm.client(p).PROVIDER_NAME for p in roster] == list(roster)
     assert llm.client("openai") is llm.client("openai")
@@ -50,7 +50,7 @@ def test_one_held_client_per_provider():
 
 def test_unknown_provider_raises():
     with pytest.raises(KeyError):  # any-llm serves mistral; the roster does not
-        LLM().client("mistral")  # pyright: ignore[reportArgumentType]
+        LLM(update_prices=False).client("mistral")  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize("provider", UPSTREAM)
@@ -81,7 +81,7 @@ async def test_errors_come_back_typed(provider, serve, llm, monkeypatch):
 
 async def test_aclose_closes_and_forgets_every_client(serve):
     hits = serve(500)
-    llm = LLM()
+    llm = LLM(update_prices=False)
     for provider in UPSTREAM:
         with pytest.raises(ProviderError):
             await ask(llm, provider)
