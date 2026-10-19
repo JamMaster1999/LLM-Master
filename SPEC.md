@@ -204,8 +204,11 @@ model, tokens, latency, cost, retry and fallback outcome, and errors.
 
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
-benchmark gates run before migration: conversion overhead at concurrency 50, and streaming time
-to first token.
+benchmark gates run live, outside the test suite, in `bench/gates.py`: `async_query` with 250
+requests in flight, plain and failing over, and streaming time to first token. Each sends the same
+requests straight through any-llm on the same transport, so the gap is our code. On 2026-10-19
+llm_master's p50 came within 0.1 seconds of any-llm's, at 250 connections in flight, and its first
+token came no later.
 
 ## Not rebuilt
 
