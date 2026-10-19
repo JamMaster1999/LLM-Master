@@ -38,8 +38,7 @@ class Sandbox:
 
     def __init__(self, conversation_id: str, skills: str | Path | None = None) -> None:
         self.conversation_id = conversation_id
-        # copy=False, the default: Modal adds the files as the sandbox starts, without a build
-        self.image = IMAGE.add_local_dir(skills, SKILLS) if skills else IMAGE
+        self.image = image(Path(skills)) if skills else IMAGE
         self._box: modal.Sandbox | None = None
         self._lock = asyncio.Lock()
 
@@ -77,22 +76,22 @@ class Sandbox:
             nonlocal room
             data = bytearray()
             async for chunk in stream:
-                if room < 0:  # the other stream ran over
-                    break
                 room -= len(chunk)
                 if room < 0:  # the model is root in there, so only Modal can be sure to stop it
                     await box.terminate.aio(wait=True)
-                    break
+                    raise OverflowError(f"{args[0]} printed over {MAX_OUTPUT} bytes, so its sandbox was stopped")
                 data += chunk
             return bytes(data)
 
-        stdout, stderr = await asyncio.gather(take(process.stdout), take(process.stderr))
-        if room < 0:
-            raise OverflowError(f"{args[0]} printed over {MAX_OUTPUT} bytes, so its sandbox was stopped")
+        try:  # an overflow cancels the other stream's reader, which Modal would leave waiting for seconds
+            async with asyncio.TaskGroup() as group:
+                stdout, stderr = group.create_task(take(process.stdout)), group.create_task(take(process.stderr))
+        except* Exception as failed:
+            raise failed.exceptions[0] from None
         code = await process.wait.aio()
         if code and time.monotonic() - start >= timeout:  # 124, 137 or Modal's -1, depending on who killed it
             raise TimeoutError(f"{args[0]} ran past {timeout:g} seconds")
-        return code, stdout, stderr
+        return code, stdout.result(), stderr.result()
 
     async def stat(self, path: str) -> FileInfo:
         return await (await self.running()).filesystem.stat.aio(resolve(path))
@@ -102,6 +101,19 @@ class Sandbox:
 
     async def write(self, path: str, data: bytes) -> None:
         await (await self.running()).filesystem.write_bytes.aio(data, resolve(path))
+
+
+def image(skills: Path) -> modal.Image:
+    """IMAGE with the packages the skills list, apt.txt's Debian ones and requirements.txt's pip ones,
+    and the skills themselves at /skills."""
+    built = IMAGE
+    if (apt := skills / "apt.txt").is_file():  # one package per line; # starts a comment
+        packages = [line.split("#")[0].strip() for line in apt.read_text().splitlines()]
+        built = built.apt_install(*filter(None, packages))
+    if (pip := skills / "requirements.txt").is_file():
+        built = built.uv_pip_install(requirements=[str(pip)])
+    # copy=False, the default: Modal adds the files as the sandbox starts, without a build
+    return built.add_local_dir(skills, SKILLS)
 
 
 def resolve(path: str) -> str:

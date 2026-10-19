@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 os.environ["ANY_LLM_UNIFIED_EXCEPTIONS"] = "1"
+os.environ.setdefault("MODAL_ENVIRONMENT", "dev")  # sandboxes and apps never run beside production's
 _ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 if _ENV.exists():  # absent on fresh checkouts: offline tests need no keys
     for _line in _ENV.read_text().splitlines():
@@ -34,8 +35,13 @@ def pytest_xdist_auto_num_workers(config):
     return os.cpu_count() if config.option.markexpr == "not live" else 32
 
 
-def pytest_collection_modifyitems(items):
-    """Live tests first, so no parallel worker starts a slow one last."""
+def pytest_collection_modifyitems(config, items):
+    """Agentic tests only when -m names them. Live tests first, so no parallel worker starts a slow
+    one last."""
+    if "agentic" not in config.option.markexpr:
+        if skipped := [item for item in items if item.get_closest_marker("agentic")]:
+            config.hook.pytest_deselected(items=skipped)
+            items[:] = [item for item in items if not item.get_closest_marker("agentic")]
     items.sort(key=lambda item: item.get_closest_marker("live") is None)
 
 
