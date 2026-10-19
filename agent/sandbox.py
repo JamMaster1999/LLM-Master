@@ -15,6 +15,7 @@ IMAGE = (modal.Image.debian_slim(python_version="3.13")
          .uv_pip_install("pillow", "pillow-heif", "openpyxl"))
 IDLE_TIMEOUT = 15 * 60  # seconds without a command before Modal stops it
 LIFETIME = 24 * 60 * 60  # Modal's ceiling
+MAX_OUTPUT = 64 * 1024 * 1024  # bytes exec takes back; read's largest result, 10 pages as base64, is about 50 MB
 
 
 class Sandbox:
@@ -36,19 +37,36 @@ class Sandbox:
             return self._box
 
     async def exec(self, *args: str, timeout: float) -> tuple[int, bytes, bytes]:
-        """Runs args in /workspace with stdin closed; returns the exit code, stdout and stderr. Every
-        byte comes back into memory, so callers bound the output. Past `timeout` seconds the command
-        and everything it started are killed, and TimeoutError is raised."""
+        """Runs args in /workspace with stdin closed; returns the exit code, stdout and stderr. Past
+        `timeout` seconds the command and everything it started are killed, and TimeoutError is
+        raised. Past MAX_OUTPUT bytes of output the sandbox is stopped, and OverflowError is raised."""
         box = await self.running()
         start = time.monotonic()
         # coreutils timeout kills the command's whole process group; Modal's deadline, the backstop,
-        # kills only the process it started
+        # kills only the process it started, which ends its output
         process = await box.exec.aio("timeout", "-k", "5", f"{timeout:g}", *args,
                                      timeout=math.ceil(timeout) + 30, text=False)
         process.stdin.write_eof()
         await process.stdin.drain.aio()
-        code, stdout, stderr = await asyncio.gather(process.wait.aio(), process.stdout.read.aio(),
-                                                    process.stderr.read.aio())
+        room = MAX_OUTPUT
+
+        async def take(stream) -> bytes:
+            nonlocal room
+            data = bytearray()
+            async for chunk in stream:
+                if room < 0:  # the other stream ran over
+                    break
+                room -= len(chunk)
+                if room < 0:  # the model is root in there, so only Modal can be sure to stop it
+                    await box.terminate.aio(wait=True)
+                    break
+                data += chunk
+            return bytes(data)
+
+        stdout, stderr = await asyncio.gather(take(process.stdout), take(process.stderr))
+        if room < 0:
+            raise OverflowError(f"{args[0]} printed over {MAX_OUTPUT} bytes, so its sandbox was stopped")
+        code = await process.wait.aio()
         if code and time.monotonic() - start >= timeout:  # 124, 137 or Modal's -1, depending on who killed it
             raise TimeoutError(f"{args[0]} ran past {timeout:g} seconds")
         return code, stdout, stderr

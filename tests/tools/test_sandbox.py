@@ -43,6 +43,12 @@ async def test_exec_timeout_kills_everything_the_command_started(sandbox):
     assert code == 1
 
 
+async def test_exec_stops_a_command_that_floods_its_output(sandbox):
+    with pytest.raises(OverflowError):
+        await sandbox.exec("yes", timeout=600)
+    assert await sandbox.exec("echo", "back", timeout=30) == (0, b"back\n", b"")
+
+
 async def test_image_has_what_the_tools_need(sandbox):
     code, stdout, stderr = await sandbox.exec(
         "bash", "-c", "soffice --version && pdftoppm -v && ps --version && python -c 'import PIL, pillow_heif, openpyxl'",

@@ -104,6 +104,8 @@ Each conversation gets one Modal sandbox, named after it and started on its firs
 - **Names**: the conversation id must fit a Modal name: letters, digits, `-`, `_` and `.`, at
   most 54 characters. A UUID fits. Each deployment uses its own Modal environment.
 - **No network**, DNS included (Keeping data in).
+- **Output**: a command that prints over 64 MB stops the sandbox, since the model is root in it
+  and nothing inside can be trusted to stop it. The next call starts a new one, with every file.
 - **The image** is Debian slim with Python 3.13, LibreOffice, poppler, Pillow and openpyxl.
   Nothing installs at run time, so a skill that needs a package adds it to the image. A new image
   reaches a conversation when its sandbox next starts.
