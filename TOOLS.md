@@ -387,7 +387,8 @@ A PDF, document, slide deck or recording gets a **view**: a folder at `.agent/vi
 for a hash of the file's bytes.
 
 - `source.pdf`: the PDF, or LibreOffice's rendering of a document or deck.
-- `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule.
+- `pages/1.jpg`, `pages/2.jpg`, …: one image per page, under the shared image rule. PDFium draws them,
+  since poppler 22 loses the check in a filled form's checkbox.
 - `transcript.jsonl`: per page `{"page", "text"}`, or per line of a recording
   `{"start", "end", "speaker", "text"}`. A line is a Whisper segment, split where the speaker
   changes.
