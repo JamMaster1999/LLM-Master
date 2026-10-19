@@ -5,6 +5,7 @@ import wave
 
 import pytest
 from any_llm.exceptions import ProviderError
+from cases import DRAW, GEMINI_IMAGE, OPENAI_IMAGE, parent
 from PIL import Image as Pillow
 
 from llm_master.config import UnsupportedField
@@ -12,24 +13,12 @@ from llm_master.io.parts import Image
 from llm_master.media import Media, MissingMedia
 from llm_master.types import Config, Model
 
-# small outputs keep the recordings small; an explicit None config field means unset, as everywhere
-OPENAI = Model(provider="openai", model="gpt-image-2", config=Config(timeout=120, system=None),
-               extra={"size": "1024x1024", "quality": "low", "output_format": "jpeg", "output_compression": 20})
-GEMINI = Model(provider="gemini", model="gemini-3.1-flash-image", extra={"image_config": {"image_size": "512"}})
-DRAW = "A small red circle on a white background, flat."
-
 
 def kind(media: Media) -> str:
     return Pillow.open(io.BytesIO(media.data)).format or ""
 
 
-def parent() -> Image:
-    out = io.BytesIO()
-    Pillow.new("RGB", (64, 64), "red").save(out, "PNG")
-    return Image("data:image/png;base64," + base64.b64encode(out.getvalue()).decode())
-
-
-@pytest.mark.parametrize("candidate", [OPENAI, GEMINI], ids=lambda m: m.provider)
+@pytest.mark.parametrize("candidate", [OPENAI_IMAGE, GEMINI_IMAGE], ids=lambda m: m.provider)
 async def test_an_image_comes_back_as_bytes(candidate, recorded, llm):
     recorded(f"{candidate.provider}_image")
     made = await llm.image(candidate, DRAW)
@@ -37,7 +26,7 @@ async def test_an_image_comes_back_as_bytes(candidate, recorded, llm):
     assert made.origin.model == candidate.model and made.usage and made.usage.output > 0
 
 
-@pytest.mark.parametrize("candidate", [OPENAI, GEMINI], ids=lambda m: m.provider)
+@pytest.mark.parametrize("candidate", [OPENAI_IMAGE, GEMINI_IMAGE], ids=lambda m: m.provider)
 async def test_an_edit_sends_the_parent_with_the_instruction(candidate, recorded, llm):
     recorded(f"{candidate.provider}_edit")  # the recorded request body pins the parent and the instruction
     edited = await llm.image(candidate, "Make the square blue.", [parent()])
@@ -92,7 +81,7 @@ async def test_a_media_call_that_cant_be_made_sends_nothing(candidate, recorded,
 
 @pytest.mark.live
 async def test_one_providers_image_edits_on_another(llm):
-    made = await llm.image(GEMINI, DRAW)
+    made = await llm.image(GEMINI_IMAGE, DRAW)
     source = Image(f"data:{made.mime};base64,{base64.b64encode(made.data).decode()}")
-    edited = await llm.image(OPENAI, "Make the circle blue.", [source])
+    edited = await llm.image(OPENAI_IMAGE, "Make the circle blue.", [source])
     assert kind(edited) == "JPEG" and edited.origin.provider == "openai"
