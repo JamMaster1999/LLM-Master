@@ -29,8 +29,9 @@ EDITABLE = ("PNG", "JPEG", "WEBP")  # what OpenAI's edit endpoint takes
 GENERATE_IMAGE = {"type": "function", "function": {
     "name": "generate_image",
     "description": "Generate an image from a text description, or edit an image by passing its path. The new image is "
-                   "saved under images/, sent to the user, and shown to you. An edit starts from that image and your "
-                   "prompt alone, not from earlier prompts, so describe the change fully.",
+                   "saved under images/ and shown to you, and the user already has it: it needs no review_file or "
+                   "deliver_file. An edit starts from that image and your prompt alone, not from earlier prompts, so "
+                   "describe the change fully.",
     "parameters": {"type": "object", "properties": {
         "prompt": {"type": "string", "description": "What the image should show, or for an edit, the change to make"},
         "image": {"type": "string", "description": "Path to the image to edit (relative or absolute). Omit it to make "
@@ -39,8 +40,8 @@ GENERATE_IMAGE = {"type": "function", "function": {
 
 GENERATE_AUDIO = {"type": "function", "function": {
     "name": "generate_audio",
-    "description": "Turn text into speech. The audio is saved under audio/ and sent to the user. At most 4096 "
-                   "characters per call.",
+    "description": "Turn text into speech. The audio is saved under audio/, and the user already has it: it needs no "
+                   "deliver_file. At most 4096 characters per call.",
     "parameters": {"type": "object", "properties": {
         "text": {"type": "string", "description": "The text to speak, at most 4096 characters"},
     }, "required": ["text"]}}}
