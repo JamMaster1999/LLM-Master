@@ -76,22 +76,22 @@ class Sandbox:
             nonlocal room
             data = bytearray()
             async for chunk in stream:
-                if room < 0:  # the other stream ran over
-                    break
                 room -= len(chunk)
                 if room < 0:  # the model is root in there, so only Modal can be sure to stop it
                     await box.terminate.aio(wait=True)
-                    break
+                    raise OverflowError(f"{args[0]} printed over {MAX_OUTPUT} bytes, so its sandbox was stopped")
                 data += chunk
             return bytes(data)
 
-        stdout, stderr = await asyncio.gather(take(process.stdout), take(process.stderr))
-        if room < 0:
-            raise OverflowError(f"{args[0]} printed over {MAX_OUTPUT} bytes, so its sandbox was stopped")
+        try:  # an overflow cancels the other stream's reader, which Modal would leave waiting for seconds
+            async with asyncio.TaskGroup() as group:
+                stdout, stderr = group.create_task(take(process.stdout)), group.create_task(take(process.stderr))
+        except* Exception as failed:
+            raise failed.exceptions[0] from None
         code = await process.wait.aio()
         if code and time.monotonic() - start >= timeout:  # 124, 137 or Modal's -1, depending on who killed it
             raise TimeoutError(f"{args[0]} ran past {timeout:g} seconds")
-        return code, stdout, stderr
+        return code, stdout.result(), stderr.result()
 
     async def stat(self, path: str) -> FileInfo:
         return await (await self.running()).filesystem.stat.aio(resolve(path))
