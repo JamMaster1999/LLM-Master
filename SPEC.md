@@ -52,8 +52,9 @@ on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetr
 `Media`: the file's bytes, its mime type, the candidate that made it, usage, cost, attempts and
 latency. Gemini, Vertex AI and OpenAI make both; Anthropic and Fireworks raise
 `UnsupportedField`. A media candidate takes only `timeout` from its config; the provider's own
-options (size, quality, format, voice) ride its `extra`. A candidate that answers without the
-media raises `MissingMedia`, so fallback moves on.
+options (size, quality, format, voice) ride its `extra`, and OpenAI speech uses the `alloy` voice
+unless `extra` names one. A candidate that answers without the media raises `MissingMedia`, so
+fallback moves on.
 
 An edit is lineage, not a conversation: the parent image plus the new instruction, one
 request, no history and no server state. Any provider can edit any provider's image.
@@ -61,7 +62,7 @@ request, no history and no server state. Any provider can edit any provider's im
 Live-checked 2026-10-18: 
 * openai doubles the nucleus and keeps the rest; a gemini-made image edits cleanly on openai; gemini edits keep the image but understate the change. 
 * The media tools own the files and the lineage record (TOOLS.md). 
-* OpenAI speech reports its usage only in its streamed format, which `speech()` asks for.
+* OpenAI speech reports its usage only in its streamed format, which `speech()` asks for unless `extra` sets `stream_format`.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A

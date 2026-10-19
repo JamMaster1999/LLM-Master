@@ -1,14 +1,15 @@
 """image() and speech(): media calls, one case per provider, on query()'s pipeline. See SPEC.md Media."""
 import base64
-import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, assert_never, cast
 
+from any_llm.exceptions import ProviderError
 from any_llm.types.completion import ChatCompletion
+from openai._streaming import SSEDecoder
 
 from llm_master import pipeline
-from llm_master.config import UnsupportedField
+from llm_master.config import UnsupportedField, merge
 from llm_master.io.messages import Origin
 from llm_master.io.parts import Image, decode, uri
 from llm_master.io.response import Attempt, Usage, completion_usage
@@ -87,9 +88,9 @@ def _made(candidate: Model, data: bytes, mime: str, usage: Usage | None) -> Medi
 
 
 def _request(candidate: Model, base: dict[str, Any]) -> dict[str, Any]:
-    """Our keys, then the timeout, then the candidate's extra: the caller's last word wins."""
+    """Our keys, then the timeout, then the candidate's extra: the caller's last word wins, as in query()."""
     timeout = candidate.config.timeout
-    return base | ({"timeout": timeout} if timeout is not None else {}) | candidate.extra
+    return merge(base, {"timeout": timeout} if timeout is not None else {}, candidate.extra)
 
 
 async def _openai_image(llm: "LLM", candidate: Model, prompt: str, images: Sequence[Image]) -> Media:
@@ -117,13 +118,17 @@ async def _gemini_image(llm: "LLM", candidate: Model, prompt: str, images: Seque
 async def _openai_speech(llm: "LLM", candidate: Model, text: str) -> Media:
     # a voice is required; only the streamed format reports usage, in its last event
     request = _request(candidate, {"model": candidate.model, "input": text, "voice": "alloy", "stream_format": "sse"})
-    reply = await llm.client("openai").aspeech(**request)
-    events = [json.loads(line[6:]) for line in reply.decode().splitlines() if line.startswith("data: {")]
-    audio = b"".join(base64.b64decode(e["audio"]) for e in events if e["type"] == "speech.audio.delta")
+    audio = await llm.client("openai").aspeech(**request)
+    usage = None
+    if request["stream_format"] == "sse":  # else extra asked for the plain format: the reply is the audio itself
+        events = [e.json() for e in SSEDecoder().iter_bytes(iter([audio])) if e.data != "[DONE]"]
+        done = next((e for e in events if e["type"] == "speech.audio.done"), None)
+        if done is None:
+            raise ProviderError("the speech stream ended before it finished", provider_name="openai")
+        audio = b"".join(base64.b64decode(e["audio"]) for e in events if e["type"] == "speech.audio.delta")
+        usage = Usage(input=done["usage"]["input_tokens"], output=done["usage"]["output_tokens"])
     if not audio:
         raise MissingMedia(f"openai/{candidate.model} answered without audio")
-    u = next((e["usage"] for e in events if e["type"] == "speech.audio.done"), None)
-    usage = Usage(input=u["input_tokens"], output=u["output_tokens"]) if u else None
     return _made(candidate, audio, f"audio/{request.get('response_format', 'mp3')}", usage)
 
 
