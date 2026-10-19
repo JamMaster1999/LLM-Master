@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # agent/, the tools beside llm_master: the sandbox and web search
-agent = ["modal>=1.6.2", "exa-py>=2.25.0", "pydantic>=2.11"]
+agent = ["modal>=1.6.2", "exa-py>=2.25.0", "pydantic>=2.11", "pyyaml>=6.0.3"]
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "llm-master[agent]"]
