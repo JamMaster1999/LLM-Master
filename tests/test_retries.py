@@ -3,12 +3,14 @@
 The failures are crafted in front of recorded exchanges: providers don't fail on cue.
 """
 import json
+import time
 
 import pytest
 from any_llm.exceptions import InvalidRequestError, ProviderError, RateLimitError
 from cases import ASK, CONFIGURED, GREET, LOOPS
 from conftest import cut, exchanges, failing
 
+from llm_master import pipeline
 from llm_master.types import Model
 
 SERVER_ERROR = {"type": "error", "error": {"type": "api_error", "message": "Internal server error"}}
@@ -74,6 +76,15 @@ async def test_a_rate_limit_waits_for_its_retry_after(recorded, llm):
     r = await llm.query(CONFIGURED["anthropic"], GREET)
     assert isinstance(r.attempts[0].errors[0], RateLimitError)
     assert r.latency - r.attempts[0].latency >= 0.9, "the second try started before Retry-After passed"
+
+
+async def test_a_rate_limit_without_retry_after_waits_a_minute_once(recorded, monkeypatch, llm):
+    recorded(failing("anthropic_configured", 429, RATE_LIMITED, times=2))  # teardown fails on a third try
+    monkeypatch.setattr(pipeline, "MINUTE", 0.3)
+    started = time.monotonic()
+    with pytest.raises(RateLimitError):
+        await llm.query(CONFIGURED["anthropic"], GREET)
+    assert time.monotonic() - started >= 0.3, "the second try didn't wait its minute"
 
 
 @pytest.mark.parametrize("steps, candidate", [

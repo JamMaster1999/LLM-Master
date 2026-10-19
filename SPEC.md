@@ -101,9 +101,15 @@ Retries (step 6), the same for every call and stream:
   model, a context too long, our `UnsupportedField` and `MissingMedia`, and a `CutCall`, which the
   same request would cut again. Any other OpenAI `failed` code (`invalid_prompt`, `bio_policy`, an
   image error) raises an `InvalidRequestError`, so the prompt isn't sent again.
-- Between tries, the provider's `Retry-After` when a `RateLimitError` carries one, capped at
-  60 seconds. Otherwise a random wait of up to 0.5 × 2ⁿ⁻¹ seconds before try n + 1 (full jitter),
-  so 7.5 seconds at most over a candidate's five tries.
+- Between tries, a random wait of up to 0.5 × 2ⁿ⁻¹ seconds before try n + 1 (full jitter), so
+  7.5 seconds at most over a candidate's five tries.
+- A `RateLimitError` (a 429) waits longer, since a per-minute limit can take a minute to clear:
+  - with a `Retry-After`, it waits that long, capped at 60 seconds, and tries again;
+  - without one, it waits 60 seconds and tries once more. A second 429 without `Retry-After` ends
+    the candidate's tries, because a limit that outlasts a minute, such as a spend cap, won't
+    clear in time.
+  - Checked live on 2026-10-19: Gemini sends no `Retry-After` and no rate-limit headers,
+    Fireworks only `x-ratelimit-over-limit`, and Anthropic's spend-cap 429 no `retry-after`.
 - Every failed try's error lands, in order, on its candidate's `Attempt.errors`. Its frames drop
   their locals there, so a kept error doesn't hold the request and its media. An attempt's latency
   sums its tries; the waits count only toward the call's latency.

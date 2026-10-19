@@ -36,6 +36,7 @@ class CallReturn(Protocol):
 
 A = TypeVar("A", bound=CallReturn)
 TRIES = 5  # per candidate
+MINUTE = 60.0  # the longest a 429 waits: a per-minute limit clears within one
 
 
 @dataclass
@@ -72,9 +73,9 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
             attempt.latency += time.monotonic() - began
             traceback.clear_frames(e.__traceback__)  # the error stays on the attempt; its request needn't
             attempt.errors.append(e)
-            if n == TRIES or not _retryable(e):
+            if (pause := _pause(e, n, attempt.errors)) is None:
                 raise
-            await asyncio.sleep(_pause(e, n))
+            await asyncio.sleep(pause)
             continue
         assert final is not None, "a try yields its Final last"
         ended = time.monotonic()
@@ -106,10 +107,21 @@ def _retryable(e: Exception) -> bool:
     return isinstance(e, ProviderError) and not isinstance(e, CutCall) and not 400 <= (e.status_code or 0) < 500
 
 
-def _pause(e: Exception, n: int) -> float:
-    """Seconds before try n + 1: the provider's Retry-After, else full jitter."""
-    after = _seconds(e.retry_after) if isinstance(e, RateLimitError) and e.retry_after else None
-    return min(after, 60) if after is not None else random.uniform(0, 0.5 * 2 ** (n - 1))
+def _pause(e: Exception, n: int, errors: list[Exception]) -> float | None:
+    """Seconds before try n + 1, or None when the candidate stops: its last try, an error a retry would
+    repeat, or a second 429 without Retry-After. errors holds the candidate's errors so far, e last."""
+    if n == TRIES or not _retryable(e):
+        return None
+    if not isinstance(e, RateLimitError):
+        return random.uniform(0, 0.5 * 2 ** (n - 1))  # full jitter
+    if (after := _after(e)) is not None:
+        return min(after, MINUTE)
+    blind = [x for x in errors if isinstance(x, RateLimitError) and _after(x) is None]
+    return MINUTE if len(blind) == 1 else None  # a per-minute limit clears in a minute; a spend cap never
+
+
+def _after(e: RateLimitError) -> float | None:
+    return _seconds(e.retry_after) if e.retry_after else None
 
 
 def _seconds(retry_after: str) -> float | None:
