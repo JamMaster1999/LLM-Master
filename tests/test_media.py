@@ -44,9 +44,10 @@ async def test_an_edit_sends_the_parent_with_the_instruction(candidate, recorded
 
 
 async def test_extra_has_the_last_word(recorded, llm):
-    recorded("gemini_text_and_image")  # the request asks for TEXT and IMAGE, not our IMAGE alone
-    candidate = GEMINI.model_copy(update={"extra": {**GEMINI.extra, "response_modalities": ["TEXT", "IMAGE"]}})
-    assert kind(await llm.image(candidate, DRAW)) == "JPEG"
+    recorded("openai_speech_voice")  # the request carries the caller's voice, not our default alloy
+    spoken = await llm.speech(Model(provider="openai", model="gpt-4o-mini-tts", extra={"voice": "verse"}),
+                              "Say: hello there.")
+    assert spoken.data
 
 
 async def test_openai_speech_is_typed_by_its_reply_and_reports_no_usage(recorded, llm):
