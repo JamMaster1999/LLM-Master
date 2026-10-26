@@ -68,12 +68,6 @@ Live-checked 2026-10-18:
 providers); the wrapper owns all retries. Each candidate gets its full retry budget — 3 candidates × 5 retries = 15 tries, by design. Any typed error hands off to the next candidate, and a fallback hop just re-runs assembly. A
 timeout expiry is a typed `ProviderError`, retryable like the rest.
 
-Known limit: gemini and vertexai keep google-genai's aiohttp transport for async throughput,
-and that transport retries a connection error once on its own, after 1–10 seconds, ignoring
-`max_retries`. HTTP errors are unaffected. A drop after the server received the request can
-bill one generation twice
-([googleapis/python-genai#3160](https://github.com/googleapis/python-genai/issues/3160)).
-
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
 discount manually.
