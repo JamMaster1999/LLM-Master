@@ -5,6 +5,7 @@ import os
 import pathlib
 import threading
 from collections.abc import Callable
+from itertools import takewhile
 from http.server import BaseHTTPRequestHandler
 from socketserver import ThreadingTCPServer
 
@@ -87,22 +88,19 @@ def failing(name: str, status: int, error: dict, *, times: int = 1, headers: dic
 def cut(name: str, before: str, tail: str = "") -> list[dict]:
     """name's first exchange, its stream ended before the first event holding `before`, then `tail`."""
     first = exchanges(name)[0]
-    body = first["response"]["body"]
-    end = "\r\n\r\n" if "\r\n\r\n" in body else "\n\n"  # openai's speech stream ends events with CRLFs
-    events = body.split(end)
-    kept = events[:next(i for i, event in enumerate(events) if before in event)]
-    return [{**first, "response": {**first["response"], "body": "".join(e + end for e in kept) + tail}}]
+    kept = takewhile(lambda event: before.encode() not in event, _events(first["response"]["body"].encode()))
+    return [{**first, "response": {**first["response"], "body": b"".join(kept).decode() + tail}}]
 
 
-def paced(steps: list[dict], pause: float) -> list[dict]:
-    """steps, each reply sent an event at a time, pause seconds before each: a slow provider, or a quiet one.
-    The stand-in stops waiting at teardown."""
-    return [{**e, "response": {**e["response"], "pause": pause}} for e in steps]
+def paced(steps: list[dict], *pauses: float) -> list[dict]:
+    """steps, each reply sent an event at a time after its pause in seconds, the last pause repeating: (0.3,) is a
+    slow stream, (0, 60) one event and then quiet. The stand-in stops waiting at teardown."""
+    return [{**e, "response": {**e["response"], "pauses": pauses}} for e in steps]
 
 
 def _events(payload: bytes) -> list[bytes]:
     """payload in its stream's events, ends kept: a JSON body is one."""
-    end = b"\r\n\r\n" if b"\r\n\r\n" in payload else b"\n\n"
+    end = b"\r\n\r\n" if b"\r\n\r\n" in payload else b"\n\n"  # openai's speech stream ends events with CRLFs
     *events, rest = payload.split(end)
     return [e + end for e in events] + ([rest] if rest else [])
 
@@ -111,16 +109,13 @@ def _events(payload: bytes) -> list[bytes]:
 def recorded(provider_server, request):
     """Stands in for every provider, answering from the steps in order, and checks at teardown that each
     request body matches the recorded one: the goldens of the same-bytes rule. A step is a fixture name,
-    fixtures/<name>.json, or a list of exchanges built by failing() or cut(), which replay as given.
-    RECORD=1 forwards a named step's requests to the real provider and rewrites its file (bodies only,
+    fixtures/<name>.json, or a list of exchanges built by failing(), cut() or paced(), which replay as given.
+    RECORD=1 with one name forwards its requests to the real provider and rewrites its file (bodies only,
     never keys). A multipart body (an image edit) is pinned as base64 with its random boundary blanked."""
     def serve(*steps: str | list[dict]) -> None:
-        live = os.environ.get("RECORD") == "1"
-        new = live and len(steps) == 1 and isinstance(steps[0], str)  # one name, recorded afresh
-        plan = [] if new else [(step if isinstance(step, str) else None, e)
-                               for step in steps for e in (exchanges(step) if isinstance(step, str) else step)]
+        live = os.environ.get("RECORD") == "1" and len(steps) == 1 and isinstance(steps[0], str)
+        plan = [] if live else [e for step in steps for e in (exchanges(step) if isinstance(step, str) else step)]
         received: list[dict] = []
-        recordings: dict[str, list[dict]] = {}
         torn_down = threading.Event()
 
         def answer(handler: BaseHTTPRequestHandler, provider: str, path: str, body: bytes) -> None:
@@ -130,8 +125,7 @@ def recorded(provider_server, request):
             else:
                 pinned = json.loads(body)
             received.append({"path": path, "body": pinned})
-            name, exchange = (steps[0], None) if new else plan[len(received) - 1]
-            if live and isinstance(name, str):
+            if live:
                 headers = {k: v for k, v in handler.headers.items()
                            if k.lower() not in ("host", "content-length", "accept-encoding")}
                 upstream = httpx.post(f"{UPSTREAM[provider][1]}{path}", content=body, headers=headers, timeout=600)
@@ -139,10 +133,9 @@ def recorded(provider_server, request):
                 text = kind.startswith(("application/json", "text/"))  # else binary, kept as base64
                 reply = {"status": upstream.status_code, "type": kind, **(
                     {"body": upstream.text} if text else {"base64": base64.b64encode(upstream.content).decode()})}
-                recordings.setdefault(name, []).append({"request": received[-1], "response": reply})
+                plan.append({"request": received[-1], "response": reply})
             else:
-                assert exchange is not None
-                reply = exchange["response"]
+                reply = plan[len(received) - 1]["response"]
             payload = reply["body"].encode() if "body" in reply else base64.b64decode(reply["base64"])
             handler.send_response(reply["status"])
             for header, value in reply.get("headers", {}).items():  # a crafted Retry-After, say
@@ -150,8 +143,9 @@ def recorded(provider_server, request):
             handler.send_header("Content-Type", reply["type"])
             handler.send_header("Content-Length", str(len(payload)))
             handler.end_headers()
-            for event in _events(payload) if "pause" in reply else [payload]:
-                if torn_down.wait(reply.get("pause", 0)):
+            pauses = reply.get("pauses", [0])
+            for i, event in enumerate(_events(payload)):
+                if torn_down.wait(pauses[min(i, len(pauses) - 1)]):
                     return
                 handler.wfile.write(event)
 
@@ -159,10 +153,10 @@ def recorded(provider_server, request):
         request.addfinalizer(torn_down.set)  # ahead of the server's close, which waits for every reply
 
         def check():
-            for name, recording in recordings.items():
-                (FIXTURES / f"{name}.json").write_text(json.dumps(recording, indent=1) + "\n")
-            if not live:
+            if live:
+                (FIXTURES / f"{steps[0]}.json").write_text(json.dumps(plan, indent=1) + "\n")
+            else:
                 names = " + ".join(step if isinstance(step, str) else "crafted" for step in steps)
-                assert received == [e["request"] for _, e in plan], f"{names}: the request changed"
+                assert received == [e["request"] for e in plan], f"{names}: the request changed"
         request.addfinalizer(check)
     return serve

@@ -57,7 +57,7 @@ async def _streamed(llm: "LLM", candidate: Model, history: list[Message]
     convert, opened = adapter(api), False
     try:
         async with aclosing(await _send(llm, candidate, api, request)) as events:
-            async for event in events:
+            while (event := await timeout.bounded(anext(events, None), candidate.provider, request)) is not None:
                 if not opened:  # the request opened: the provider's first event arrived
                     opened = True
                     yield {"type": "start-step"}
@@ -76,16 +76,18 @@ async def _streamed(llm: "LLM", candidate: Model, history: list[Message]
 
 
 async def _send(llm: "LLM", candidate: Model, api: API, request: dict) -> Any:
+    """The answer, or an opened stream: its first chunk has come."""
     client: AnyLLM = llm.client(candidate.provider)
     match api:
         case "completion":
-            return await client.acompletion(model=candidate.model, **request)
+            sent = client.acompletion(model=candidate.model, **request)
         case "messages":
-            return await client.amessages(model=candidate.model, **request)
+            sent = client.amessages(model=candidate.model, **request)
         case "responses":
-            return await client.aresponses(model=candidate.model, **request)
+            sent = client.aresponses(model=candidate.model, **request)
         case _:
             assert_never(api)
+    return await timeout.bounded(sent, candidate.provider, request)
 
 
 def _api(candidate: Model, history: list[Message]) -> API:

@@ -207,8 +207,9 @@ save → reload → next call is lossless by construction.
 - All three dialects take any-llm's `timeout` param. Enforcement live-verified on all three: a
   1ms timeout raises the typed error (test_trivials).
 - None → the SDK's own default applies, except on messages, which sends `600` (field 9). genai has
-  none, so a gemini or vertexai try fails after 600 seconds with nothing new instead, a timer that
-  starts over with each chunk of a stream (SPEC.md Failures).
+  none, so a gemini or vertexai read fails after 600 seconds with nothing new instead: the answer,
+  or each chunk of a stream (`timeout.bounded`, SPEC.md Failures). A `timeout` in `extra` counts as
+  set.
 - An expiry surfaces as the typed timeout error, a retryable failure — the retry and fallback
   layers decide what happens next, not this field.
 

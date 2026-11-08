@@ -9,7 +9,7 @@ from any_llm.types.completion import ChatCompletion
 from openai._streaming import SSEDecoder
 
 from llm_master import pipeline
-from llm_master.config import UnsupportedField, merge
+from llm_master.config import UnsupportedField, merge, timeout
 from llm_master.io.messages import Origin
 from llm_master.io.parts import Image, decode, uri
 from llm_master.io.response import Attempt, Usage, completion_usage
@@ -146,5 +146,6 @@ async def _gemini_speech(llm: "LLM", candidate: Model, text: str) -> Media:
 async def _gemini(llm: "LLM", candidate: Model, content: str | list[dict], modality: str) -> ChatCompletion:
     request = _request(candidate, {"model": candidate.model, "messages": [{"role": "user", "content": content}],
                                    "response_modalities": [modality]})
-    return cast(ChatCompletion, await llm.client(candidate.provider).acompletion(**request))  # not streamed
+    reply = llm.client(candidate.provider).acompletion(**request)  # not streamed
+    return cast(ChatCompletion, await timeout.bounded(reply, candidate.provider, request))
 

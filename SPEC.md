@@ -113,10 +113,11 @@ Retries (step 6), the same for every call and stream:
 - A candidate's waits between tries add up to 2 minutes at most. A wait that would go past that
   ends its tries instead, so a `Retry-After` of 60 seconds allows three tries, and one of 300 ends
   the candidate at once. Only the waits count, never the time inside a try or the limiter's.
-- A genai candidate (gemini, vertexai) with no `timeout` set fails a try after 600 seconds with
-  nothing new: no answer, or no next chunk of a stream. genai sets no timeout of its own, and its
-  `timeout` would cap a whole stream, cutting a long agent turn. The other SDKs already end a read
-  after 600 quiet seconds.
+- A genai request (gemini, vertexai) that sets no `timeout`, in its config or its `extra`, fails a
+  try after 600 seconds with nothing new: no answer, or no next chunk of a stream. The timer wraps
+  each read from the provider, so a stall mid-stream yields `reset-step` like any other failure.
+  genai sets no timeout of its own, and its `timeout` would cap a whole stream, cutting a long
+  agent turn. The other SDKs already end a read after 600 quiet seconds.
 - Every failed try's error lands, in order, on its candidate's `Attempt.errors`. There every
   error in its chain drops its frames' locals and the HTTP request and response the SDK kept, so a
   kept error holds no copy of the request and its media. Request ids, statuses and codes stay. An

@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 from any_llm.exceptions import GatewayTimeoutError, ProviderError, RateLimitError, UpstreamProviderError
 
 from llm_master.cost import price
-from llm_master.io.response import Attempt, CutCall, Usage
-from llm_master.providers import PROVIDERS
+from llm_master.io.response import Attempt, Usage
 from llm_master.types import Model
 
 if TYPE_CHECKING:
@@ -36,10 +35,8 @@ class CallReturn(Protocol):
 
 
 A = TypeVar("A", bound=CallReturn)
-T = TypeVar("T")
 TRIES = 5  # per candidate
 BUDGET = 120.0  # the longest a candidate's waits between tries add up to
-QUIET = 600.0  # a genai try with no timeout set fails after this long without an item
 
 
 @dataclass
@@ -62,13 +59,13 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
     started = time.monotonic()
     candidate = chain[0]
     attempt = Attempt(candidate.provider, candidate.model, 0.0)
-    waited, quiet = 0.0, _quiet(candidate)  # waited counts only the pauses: not the tries, not the limiter
+    waited = 0.0  # the pauses alone: not the tries, not the limiter
     for n in range(1, TRIES + 1):
         await llm.limiter.wait(candidate.provider, candidate.model)
         began, final = time.monotonic(), None  # an attempt's latency counts its tries, not the waits
         try:
             async with aclosing(once(candidate)) as items:
-                while (item := await _next(items, quiet, candidate.provider)) is not None:
+                async for item in items:
                     if isinstance(item, Final):
                         final = item
                     else:
@@ -77,7 +74,7 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
             attempt.latency += time.monotonic() - began
             _unload(e)  # the error stays on the attempt; its request needn't
             attempt.errors.append(e)
-            if (pause := _pause(e, n)) is None or waited + pause > BUDGET:
+            if (pause := _pause(e, n, waited)) is None:
                 raise
             waited += pause
             await asyncio.sleep(pause)
@@ -104,38 +101,23 @@ async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[
     raise AssertionError("stream() ends with a Final or raises")
 
 
-def _quiet(candidate: Model) -> float | None:
-    """genai sets no timeout of its own, and its timeout would cap a whole stream, so a genai candidate with none
-    set gets QUIET seconds for each item instead: its answer, or a stream's next chunk."""
-    unset = candidate.config.timeout is None
-    return QUIET if unset and PROVIDERS[candidate.provider]["sdk"] == "genai" else None
-
-
-async def _next(items: AsyncGenerator[T, None], quiet: float | None, provider: str) -> T | None:
-    """items' next item, None at its end, or a retryable ProviderError when it takes longer than quiet seconds."""
-    try:
-        async with asyncio.timeout(quiet):
-            return await anext(items, None)
-    except TimeoutError as e:
-        raise ProviderError(f"nothing came in {quiet:g} seconds", provider_name=provider) from e
-
-
 def _retryable(e: Exception) -> bool:
     """Transient: a rate limit, a gateway or upstream failure, or a provider fault that isn't a 4xx."""
     if isinstance(e, (RateLimitError, GatewayTimeoutError, UpstreamProviderError)):
         return True
     # a 2xx is a fault inside a 200: an unreadable body, or anthropic's overloaded_error mid-stream
-    return isinstance(e, ProviderError) and not isinstance(e, CutCall) and not 400 <= (e.status_code or 0) < 500
+    return isinstance(e, ProviderError) and not 400 <= (e.status_code or 0) < 500
 
 
-def _pause(e: Exception, n: int) -> float | None:
-    """Seconds before try n + 1, after try n failed with e, or None when the candidate stops: its last try, or an
-    error a retry would repeat. A 429 waits as long as the provider asks; anything else, full jitter."""
+def _pause(e: Exception, n: int, waited: float) -> float | None:
+    """Seconds before try n + 1, after try n failed with e and waited seconds of pauses, or None when the candidate
+    stops: its last try, an error a retry would repeat, or a pause past the budget. A 429 waits as long as the
+    provider asks; anything else, full jitter."""
     if n == TRIES or not _retryable(e):
         return None
-    if isinstance(e, RateLimitError) and (after := _after(e)) is not None:
-        return after
-    return random.uniform(0, 0.5 * 2 ** (n - 1))
+    after = _after(e) if isinstance(e, RateLimitError) else None
+    pause = random.uniform(0, 0.5 * 2 ** (n - 1)) if after is None else after
+    return pause if waited + pause <= BUDGET else None
 
 
 def _after(e: RateLimitError) -> float | None:
