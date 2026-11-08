@@ -3,6 +3,7 @@ import asyncio
 import json
 import socket
 import threading
+import time
 from contextlib import aclosing
 
 import pytest
@@ -58,6 +59,7 @@ def echo(provider_server):
         else:
             echo.count("now")
             pair.wait()
+            time.sleep(0.1)  # held, so a request past the cap would arrive while two are in
             echo.count("now", -1)
         data = json.dumps(reply).encode()
         handler.send_response(status)

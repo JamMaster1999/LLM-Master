@@ -73,8 +73,8 @@ class LLM:
         """Many query() calls at once, at most concurrency in flight. Yields (index, result) as
         each request finishes: its Response, or the error it raised. One failure never stops the others.
 
-        Leaving the loop early cancels the requests still running; inside contextlib.aclosing, the exit also
-        waits for them. See SPEC.md Fan-out.
+        To stop early, loop inside contextlib.aclosing: its exit cancels the requests still running and waits for
+        them. A bare break cancels nothing while the generator is still held. See SPEC.md Fan-out.
         """
         return fanout.run(self, candidates, requests, concurrency)
 

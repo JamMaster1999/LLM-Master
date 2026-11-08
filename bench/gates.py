@@ -1,17 +1,17 @@
 """SPEC.md's two benchmark gates, live: async_query at 250 in flight, and streaming time to first token.
 Each runs the same requests through llm_master and straight through any-llm, on the same aiohttp
-transport, so the gap is our code. About 2,500 short requests; a few cents.
+transport, so the gap is our code. About 2,500 short requests; a few cents. Each latency runs from the batch's
+start to that result's arrival, on both paths.
 
-    uv run --frozen python bench/gates.py
+    uv run --frozen --env-file llm_master/.env python bench/gates.py
 
-Prints markdown tables. Keys come from the environment, else llm_master/.env, as in the tests.
+Prints markdown tables. Keys already in the environment win over the file's.
 """
 import asyncio
-import os
-import pathlib
 import statistics
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 import aiohttp
@@ -22,12 +22,11 @@ from llm_master.io.messages import Message, validate
 from llm_master.query import build
 from llm_master.types import Config, Model
 
-ENV = pathlib.Path(__file__).parent.parent / "llm_master" / ".env"
 N = 250  # requests per run, all in flight at once
 FIRST_TOKENS = 20  # streams per path
 LUNA = Model(provider="openai", model="gpt-5.6-luna", config=Config(thinking="none", max_tokens=16))
 HAIKU = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(thinking="none", max_tokens=16))
-BAD_KEY = "sk-bench-not-a-key"  # luna answers every call with a 401, so each one fails over
+GONE = LUNA.model_copy(update={"model": "gpt-no-such-model"})  # a 404 on every call, so each one fails over
 
 _connectors: list[aiohttp.BaseConnector] = []
 _init = aiohttp.BaseConnector.__init__
@@ -44,6 +43,7 @@ aiohttp.BaseConnector.__init__ = _register  # every SDK's pool, so a run can wat
 @dataclass
 class Run:
     name: str
+    started: float = 0.0
     wall: float = 0.0
     latencies: list[float] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -77,36 +77,32 @@ async def watched(run: Run, work: Awaitable[None]) -> Run:
             await asyncio.sleep(0.01)
 
     sampler = asyncio.create_task(sample())
-    started = time.monotonic()
+    run.started = time.monotonic()
     try:
         await work
     finally:
-        run.wall = time.monotonic() - started
+        run.wall = time.monotonic() - run.started
         sampler.cancel()
+        with suppress(asyncio.CancelledError):
+            await sampler  # a sampler that crashed raises here, rather than print a peak of 0
     return run
 
 
-def facade(*, per_minute: int | None = None, bad_openai: bool = False) -> LLM:
-    """A fresh LLM, so its pools start cold. bad_openai builds its openai client on a bad key: luna fails fast."""
-    llm = LLM(per_minute=per_minute, update_prices=False)  # no price fetch inside the measured burst
-    if bad_openai:
-        key, os.environ["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"], BAD_KEY
-        llm.client("openai")  # the client reads the key once, when it's built
-        os.environ["OPENAI_API_KEY"] = key
-    return llm
+def facade(per_minute: int | None = None) -> LLM:
+    """A fresh LLM, so its pools start cold."""
+    return LLM(per_minute=per_minute, update_prices=False)  # no price fetch inside the measured burst
 
 
-async def llm_master(name: str, candidates: list[Model], *, per_minute: int | None = None,
-                     bad_openai: bool = False) -> Run:
-    llm, run = facade(per_minute=per_minute, bad_openai=bad_openai), Run(name)
+async def llm_master(name: str, candidates: list[Model], *, per_minute: int | None = None) -> Run:
+    llm, run = facade(per_minute), Run(name)
+    requests: list[Request] = [{"messages": history(n)} for n in range(N)]
 
     async def work():
-        requests: list[Request] = [{"messages": history(n)} for n in range(N)]
         async for _, result in llm.async_query(candidates, requests, concurrency=N):
             if isinstance(result, Exception):
                 run.errors.append(type(result).__name__)
             else:
-                run.latencies.append(result.latency)
+                run.latencies.append(time.monotonic() - run.started)
                 run.failed_tries += sum(len(a.errors) for a in result.attempts)
     try:
         return await watched(run, work())
@@ -114,22 +110,25 @@ async def llm_master(name: str, candidates: list[Model], *, per_minute: int | No
         await llm.aclose()
 
 
-async def direct(name: str, send: Callable[[LLM, int, Run], Awaitable[object]], *, bad_openai: bool = False) -> Run:
-    """The same requests through the facade's own any-llm clients, so the transport is the same."""
-    llm, run, gate = facade(bad_openai=bad_openai), Run(name), asyncio.Semaphore(N)
+Send = Callable[[LLM, dict, dict, Run], Awaitable[object]]
 
-    async def one(n: int):
-        async with gate:
-            began = time.monotonic()
-            try:
-                await send(llm, n, run)
-            except Exception as e:
-                run.errors.append(type(e).__name__)
-                return
-            run.latencies.append(time.monotonic() - began)
+
+async def direct(name: str, send: Send) -> Run:
+    """The same requests through the facade's own any-llm clients, so the transport is the same. Each request's
+    SDK payloads are built before the clock starts: building them is our code, not any-llm's."""
+    llm, run = facade(), Run(name)
+    payloads = [(luna_request(n), build(HAIKU, history(n), False)[1]) for n in range(N)]
+
+    async def one(luna_payload: dict, haiku_payload: dict):
+        try:
+            await send(llm, luna_payload, haiku_payload, run)
+        except Exception as e:
+            run.errors.append(type(e).__name__)
+            return
+        run.latencies.append(time.monotonic() - run.started)
 
     async def work():
-        await asyncio.gather(*(one(n) for n in range(N)))
+        await asyncio.gather(*(one(*p) for p in payloads))
     try:
         return await watched(run, work())
     finally:
@@ -140,16 +139,16 @@ def luna_request(n: int, stream: bool = False) -> dict:
     return build(LUNA, history(n), stream)[1]
 
 
-async def luna(llm: LLM, n: int, run: Run):
-    return await llm.client("openai").aresponses(model=LUNA.model, **luna_request(n))
+async def luna(llm: LLM, luna_payload: dict, haiku_payload: dict, run: Run):
+    return await llm.client("openai").aresponses(model=LUNA.model, **luna_payload)
 
 
-async def failover(llm: LLM, n: int, run: Run):
+async def failover(llm: LLM, luna_payload: dict, haiku_payload: dict, run: Run):
     try:
-        return await luna(llm, n, run)
+        return await llm.client("openai").aresponses(model=GONE.model, **luna_payload)
     except Exception:
         run.failed_tries += 1
-        return await llm.client("anthropic").amessages(model=HAIKU.model, **build(HAIKU, history(n), False)[1])
+        return await llm.client("anthropic").amessages(model=HAIKU.model, **haiku_payload)
 
 
 async def fan_out() -> list[Run]:
@@ -159,10 +158,10 @@ async def fan_out() -> list[Run]:
     def theirs():
         return direct("luna answers · any-llm", luna)
     runs = [await ours(), await theirs(), await theirs(), await ours()]  # ABBA, so drift hits both alike
-    runs.append(await llm_master("luna fails, Haiku answers · llm_master", [LUNA, HAIKU], bad_openai=True))
-    runs.append(await direct("luna fails, Haiku answers · any-llm", failover, bad_openai=True))
-    runs.append(await llm_master("luna fails, Haiku answers · llm_master, per_minute=250", [LUNA, HAIKU],
-                                 per_minute=N, bad_openai=True))
+    runs.append(await llm_master("a missing model fails, Haiku answers · llm_master", [GONE, HAIKU]))
+    runs.append(await direct("a missing model fails, Haiku answers · any-llm", failover))
+    runs.append(await llm_master("a missing model fails, Haiku answers · llm_master, per_minute=250", [GONE, HAIKU],
+                                 per_minute=N))
     return runs
 
 
@@ -190,10 +189,6 @@ async def first_tokens() -> tuple[list[float], list[float]]:
 
 
 async def main():
-    for line in ENV.read_text().splitlines() if ENV.exists() else ():
-        key, sep, value = line.partition("=")
-        if sep:
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
     print(f"## async_query, {N} requests, all in flight\n")
     print("| run | wall (s) | p50 (s) | p95 (s) | max (s) | errors | failed tries | peak connections |")
     print("|---|---|---|---|---|---|---|---|")

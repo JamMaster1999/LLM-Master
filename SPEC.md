@@ -162,13 +162,16 @@ async for index, result in llm.async_query(candidates, requests, concurrency=50)
   validation and moderation included, are its result.
 - Results come in the order requests finish. v1's list in request order and its
   `progress_callback` are gone: the loop itself shows progress, and the index places each result.
-- Leaving the loop early cancels the requests still running. Inside `contextlib.aclosing`, the
-  exit also waits for them; after a bare `break`, Python closes the iterator, and so cancels and
-  waits, one event-loop turn later.
+- To stop early, loop inside `contextlib.aclosing`: its exit cancels the requests still running
+  and waits for them. A bare `break` cancels nothing while anything still holds the generator, such
+  as a variable, so those requests run on and are billed.
 - An empty list yields nothing and sends nothing.
-- Each request in flight holds one pooled connection, since aiohttp speaks HTTP/1.1. The OpenAI
-  and Anthropic SDKs' aiohttp clients allow 1000 connections each (Fireworks rides OpenAI's), and
-  google-genai's has no limit, so the pool never caps `concurrency` below 1000.
+- Each request in flight holds one pooled connection, since aiohttp speaks HTTP/1.1. The OpenAI,
+  Anthropic and Fireworks SDKs' pools allow 1000 connections each, and google-genai's has no
+  limit, so the pool never caps `concurrency` below 1000.
+- The process's open-file limit can. Each connection is a file, and a request that fails over holds
+  about two for a few seconds. Under a limit of 256, macOS's default outside `uv run`, a batch of
+  250 failed a few requests with `OSError: Too many open files`. Check `ulimit -n` on the host.
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
