@@ -140,7 +140,7 @@ Fallback (step 7), the same for every call and stream:
 - A stream that fails over mid-answer yields `reset-step`, then the next candidate streams from
   the start under a new `start-step`.
 - When every candidate fails, the call raises the last candidate's last error, typed as a single
-  candidate's would be. A note on it lists every earlier error, one line per try.
+  candidate's would be. Notes on it list every earlier error, one per try.
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%
@@ -150,7 +150,9 @@ discount manually.
   try's usage with genai-prices' `calc_price` when the call ends, streams included.
 - It is None when usage is None, when genai-prices doesn't know the model, or when a price entry
   can't split the usage: unknown, never zero, and the answered call still returns.
-- Only the answering try is priced. A failed try reports no usage, so its spend goes uncounted.
+- Only the answering try is priced, so a failed try's spend goes uncounted. That includes replies
+  the provider billed in full, a `CutCall` or a `MissingMedia`: fallback moves past them, so an
+  answered call can cost more than its `cost`.
 - The genai-prices provider is the row's `price_id`, else the provider's own name. An import-time
   check rejects a name genai-prices doesn't know, so a typo can't pass for an unpriced model.
 - `Usage` breaks out the parts providers price apart. Each is part of `input` or `output`:

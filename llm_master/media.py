@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from llm_master.facade import LLM
 
 class MissingMedia(Exception):
-    """The candidate answered without the image or audio. Typed, so fallback moves on."""
+    """The candidate answered without the image or audio. Not retried: the next candidate takes over."""
 
 
 @dataclass

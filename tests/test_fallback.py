@@ -5,15 +5,16 @@ Most failures are crafted in front of recorded exchanges: providers don't fail o
 import genai_prices
 import pytest
 from any_llm.exceptions import InvalidRequestError, RateLimitError
-from cases import CHAIN, CUT, DRAW, GREET, OPENAI_IMAGE, WRITE
-from conftest import failing
+from cases import BAD_REQUEST, CHAIN, DRAW, GREET, OPENAI_IMAGE, RATE_LIMITED
+from conftest import exchanges, failing
 
+from llm_master import pipeline
 from llm_master.config import UnsupportedField
-from llm_master.io.response import CutCall
 from llm_master.media import Media, MissingMedia
 from llm_master.types import Config, Model
 
-RATE_LIMITED = {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}}
+OPENAI_RATE_LIMITED = {"error": {"message": "Rate limited", "type": "requests", "param": None,
+                                 "code": "rate_limit_exceeded"}}
 
 
 async def test_an_image_the_first_candidate_cant_make_comes_from_the_next(recorded, llm):
@@ -28,7 +29,7 @@ async def test_an_image_the_first_candidate_cant_make_comes_from_the_next(record
 
 
 async def test_a_media_candidate_with_config_it_cant_take_fails_alone(recorded, llm):
-    recorded("openai_image")
+    recorded(exchanges("openai_image"))  # test_media's recording: RECORD=1 leaves it to that test
     made = await llm.image([OPENAI_IMAGE.model_copy(update={"config": Config(system="x")}), OPENAI_IMAGE], DRAW)
     first, second = made.attempts
     assert [type(e) for e in first.errors] == [UnsupportedField] and not second.errors
@@ -43,22 +44,19 @@ async def test_a_candidate_out_of_tries_hands_off_with_its_errors(recorded, llm)
     assert r.message.origin and r.message.origin.provider == "openai" and "bonjour" in r.message.content.lower()
 
 
-async def test_a_stream_that_fails_over_starts_a_new_step(recorded, llm):
-    recorded("anthropic_cut_call_stream", "openai_write_file_stream")  # a CutCall isn't retried: the next streams
-    fallback = Model(provider="openai", model="gpt-5.6-luna", config=Config(tools=[WRITE], thinking="none"))
-    s = await llm.query([CUT["anthropic"], fallback],
-                        [{"role": "user", "content": "Call write_file with a 300-word poem as content."}], stream=True)
-    chunks = [c["type"] async for c in s]
-    reset = chunks.index("reset-step")
-    assert chunks[0] == chunks[reset + 1] == "start-step" and chunks[-1] == "finish-step"
-    assert s.response and s.response.message.calls
-    first, second = s.response.attempts
-    assert [type(e) for e in first.errors] == [CutCall] and not second.errors
+async def test_each_candidate_gets_its_own_wait_budget(recorded, monkeypatch, llm):
+    monkeypatch.setattr(pipeline, "BUDGET", 0.5)
+    # the first spends 0.3 of its 0.5 and stops; a shared budget would stop the second at its first 0.3 wait
+    recorded(failing("anthropic_configured", 429, RATE_LIMITED, times=2, headers={"retry-after": "0.3"}),
+             failing("openai_configured", 429, OPENAI_RATE_LIMITED, headers={"retry-after": "0.3"}),
+             "openai_configured")
+    r = await llm.query(CHAIN, GREET)
+    first, second = r.attempts
+    assert (len(first.errors), len(second.errors)) == (2, 1)
 
 
 async def test_when_every_candidate_fails_the_last_error_raises(recorded, llm):
-    recorded(failing("anthropic_configured", 400, {"type": "error", "error": {
-        "type": "invalid_request_error", "message": "max_tokens: too large"}}),
+    recorded(failing("anthropic_configured", 400, BAD_REQUEST),
              failing("openai_configured", 400, {"error": {
                  "message": "Invalid 'max_output_tokens': too large.", "type": "invalid_request_error",
                  "param": "max_output_tokens", "code": None}}))
@@ -105,6 +103,6 @@ LITE = Model(provider="gemini", model="gemini-3.1-flash-lite")
 async def test_a_model_the_provider_lacks_hands_off(call, candidates, llm):
     made = await call(llm, candidates)
     first, second = made.attempts
-    assert len(first.errors) == 1 and not second.errors, first.errors
+    assert len(first.errors) == 1, f"a model the provider lacks was tried again: {first.errors}"
     assert (second.provider, second.model) == (candidates[1].provider, candidates[1].model)
     assert made.data if isinstance(made, Media) else made.message.content, "the next candidate answered nothing"

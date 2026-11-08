@@ -8,7 +8,7 @@ import types
 
 import pytest
 from any_llm.exceptions import AnyLLMError, InvalidRequestError, RateLimitError
-from cases import ASK, CONFIGURED, GREET, LOOPS
+from cases import ASK, BAD_REQUEST, CONFIGURED, GREET, LOOPS, RATE_LIMITED
 from conftest import cut, exchanges, failing, paced
 
 from llm_master import pipeline
@@ -16,10 +16,8 @@ from llm_master.config import timeout
 from llm_master.types import Model
 
 SERVER_ERROR = {"type": "error", "error": {"type": "api_error", "message": "Internal server error"}}
-RATE_LIMITED = {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}}
 GEMINI_RATE_LIMITED = {"error": {"code": 429, "message": "Resource exhausted", "status": "RESOURCE_EXHAUSTED",
                                  "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "1s"}]}}
-BAD_REQUEST = {"type": "error", "error": {"type": "invalid_request_error", "message": "max_tokens: too large"}}
 OVERLOADED = 'event: error\ndata: {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}\n\n'
 SPEECH = Model(provider="openai", model="gpt-4o-mini-tts")
 GEMINI_SPEECH = Model(provider="gemini", model="gemini-3.8-flash-tts")

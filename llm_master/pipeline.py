@@ -104,9 +104,8 @@ async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[
 
 def _last(attempts: list[Attempt]) -> Exception:
     """The last candidate's last error, noting every earlier one: what a call raises when all fail."""
-    errors = [(a, e) for a in attempts for e in a.errors]
-    last = errors[-1][1]
-    for a, e in errors[:-1]:
+    *earlier, (_, last) = [(a, e) for a in attempts for e in a.errors]
+    for a, e in earlier:
         last.add_note(f"earlier, {a.provider}/{a.model}: {type(e).__name__}: {e}")
     return last
 
