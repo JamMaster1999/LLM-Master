@@ -6,13 +6,13 @@ requires-python = ">=3.11"
 dependencies = [
     "any-llm-sdk[gemini,fireworks]==1.47.0",
     # aiohttp transports for the SDKs any-llm drives
-    "openai[aiohttp]",
+    "openai[aiohttp]>=3.1.0",  # 3.1 adds the prompt image_tokens that usage reads
     "anthropic[aiohttp]",
     "google-genai[aiohttp]>=2.33.0",  # 2.33 stops retrying a dropped connection behind max_retries
     "pillow>=13.0.0",
     "pillow-heif>=1.8.1",
     "httpx>=0.28.1",
-    "genai-prices>=0.1.13",
+    "genai-prices>=0.2.1",
 ]
 
 [project.optional-dependencies]

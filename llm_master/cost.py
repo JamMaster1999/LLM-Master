@@ -18,6 +18,6 @@ def price(usage: Usage | None, provider: ProviderName, model: str) -> float | No
     try:
         return float(genai_prices.calc_price(tokens, model, provider_id=price_id(provider)).total_price)
     # a model genai-prices doesn't know yet (registry.py checks the provider at import), or usage its price
-    # entry can't split, such as cached audio on a model with no such rate
+    # entry can't split: Gemini audio with a cache hit, where any-llm drops how much of the cache was audio
     except (LookupError, ValueError):
         return None

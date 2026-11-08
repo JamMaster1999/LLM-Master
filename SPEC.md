@@ -89,8 +89,9 @@ discount manually.
   genai-prices holds: its bundled snapshot, unless a refresh ran. The tests' `llm` fixture uses
   it, so a replayed call never fetches prices.
 - Known limits:
-  - The bundled snapshot lags. On 2026-10-19 it lacked Fireworks' glm-5p3 and deepseek-v4p1-flash
-    and priced gemini-3.8-flash-tts as gemini-3.8-flash; the refreshed prices had all three.
+  - A Gemini call with audio input and a cache hit costs None. any-llm drops Gemini's split of the
+    cached tokens by modality, and on a model with its own cached-audio rate, such as
+    gemini-3.1-flash-lite, genai-prices won't guess how much of the cache read was audio.
   - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
     no caller sets `service_tier` yet.
 

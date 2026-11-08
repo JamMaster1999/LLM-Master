@@ -10,6 +10,7 @@ from conftest import KEYS, UPSTREAM
 from llm_master.facade import LLM
 from llm_master.providers import ProviderName
 
+
 @pytest.fixture(autouse=True)
 def credentials(monkeypatch):
     for var in (*KEYS, "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"):
@@ -48,17 +49,10 @@ def test_unknown_provider_raises():
         LLM(update_prices=False).client("mistral")  # pyright: ignore[reportArgumentType]
 
 
+@pytest.mark.parametrize("status", [500, None], ids=["500", "hang-up"])  # the SDKs retry both by default
 @pytest.mark.parametrize("provider", UPSTREAM)
-async def test_sdk_retries_are_off(provider, serve, llm):
-    hits = serve(500)  # the openai and anthropic SDKs retry a 500 by default
-    with pytest.raises(ProviderError):
-        await ask(llm, provider)
-    assert len(hits) == 1, hits
-
-
-@pytest.mark.parametrize("provider", UPSTREAM)
-async def test_dropped_connection_is_not_retried(provider, serve, llm):
-    hits = serve(None)
+async def test_sdk_retries_are_off(provider, status, serve, llm):
+    hits = serve(status)
     with pytest.raises(ProviderError):
         await ask(llm, provider)
     assert len(hits) == 1, hits
