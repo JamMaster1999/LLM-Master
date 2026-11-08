@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 API = Literal["completion", "messages", "responses"]
 ProviderName = Literal["openai", "anthropic", "gemini", "vertexai", "fireworks"]
-SDK = Literal["openai", "anthropic", "genai"]
+SDK = Literal["openai", "anthropic", "genai", "fireworks"]
 
 _GEMINI_MODELS: dict[str, ModelRow] = {
     "gemini-2.5-flash-lite": {"requests": 30000},
@@ -74,7 +74,7 @@ PROVIDERS: dict[ProviderName, ProviderRow] = {
     },
     "fireworks": {
         "api": "completion",
-        "sdk": "openai",
+        "sdk": "fireworks",
         "requests": 600,
         "interval": 60,
         "models": {},

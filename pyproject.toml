@@ -4,7 +4,7 @@ version = "2.0.0a0"
 description = "Lite multi-provider LLM wrapper on any-llm"
 requires-python = ">=3.11"
 dependencies = [
-    "any-llm-sdk[gemini]==1.38.0",
+    "any-llm-sdk[gemini,fireworks]==1.47.0",
     # aiohttp transports for the SDKs any-llm drives
     "openai[aiohttp]",
     "anthropic[aiohttp]",
@@ -27,7 +27,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_master", "agent"]
-
-[tool.uv.sources]
-# 1.38.0 plus one fix until released: Gemini tool-result media without display_name or a $ref
-any-llm-sdk = { git = "https://github.com/JamMaster1999/any-llm", branch = "llm-master" }

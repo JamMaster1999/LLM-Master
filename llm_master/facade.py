@@ -1,10 +1,11 @@
 """The facade: one held any-llm client per provider, so every call reuses its connection pool."""
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal, get_args, overload
 
 import anthropic
 import openai
 from any_llm import AnyLLM
+from any_llm.providers.fireworks.fireworks import FireworksProvider
 
 from llm_master import media
 from llm_master.io.messages import Message
@@ -16,9 +17,10 @@ from llm_master.providers import PROVIDERS, SDK, ProviderName
 from llm_master.query import run
 from llm_master.types import Model
 
-# genai picks aiohttp by itself and closes its own session on garbage collection
+# genai picks aiohttp by itself and closes its own session on garbage collection. fireworks builds an
+# openai client (httpx2) and a fireworks one (httpx) from the same arguments, so no one client fits both.
 _AIOHTTP: dict[SDK, type | None] = {"openai": openai.DefaultAioHttpClient,
-                                     "anthropic": anthropic.DefaultAioHttpClient, "genai": None}
+                                     "anthropic": anthropic.DefaultAioHttpClient, "genai": None, "fireworks": None}
 assert set(_AIOHTTP) == set(get_args(SDK)), "every SDK needs an aiohttp decision"
 
 
@@ -27,14 +29,17 @@ class LLM:
 
     def __init__(self) -> None:
         self._clients: dict[ProviderName, AnyLLM] = {}
-        self._http: list = []
+        self._closers: list[Callable[[], Awaitable[None]]] = []
 
     def client(self, provider: ProviderName) -> AnyLLM:
         if provider not in self._clients:
             make = _AIOHTTP[PROVIDERS[provider]["sdk"]]  # KeyError off the roster
             kwargs = {"http_client": make()} if make else {}
-            self._http.extend(kwargs.values())
-            self._clients[provider] = AnyLLM.create(provider, unified_exceptions=True, max_retries=0, **kwargs)
+            client = AnyLLM.create(provider, unified_exceptions=True, max_retries=0, **kwargs)
+            self._closers.extend(http.aclose for http in kwargs.values())
+            if isinstance(client, FireworksProvider):  # its SDK opens an aiohttp session any-llm never closes
+                self._closers.append(client.fireworks_client.close)
+            self._clients[provider] = client
         return self._clients[provider]
 
     @overload
@@ -63,6 +68,6 @@ class LLM:
         return await media.speech(self, candidates, text)
 
     async def aclose(self) -> None:
-        http, self._http, self._clients = self._http, [], {}
-        for client in http:
-            await client.aclose()
+        closers, self._closers, self._clients = self._closers, [], {}
+        for close in closers:
+            await close()

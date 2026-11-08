@@ -25,7 +25,7 @@ FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 UPSTREAM = {"openai": ("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             "anthropic": ("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
             "gemini": ("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
-            "fireworks": ("FIREWORKS_API_BASE", "https://api.fireworks.ai/inference/v1")}
+            "fireworks": ("FIREWORKS_API_BASE", "https://api.fireworks.ai/inference")}
 KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "FIREWORKS_API_KEY")
 
 
@@ -65,7 +65,9 @@ def provider_server(monkeypatch, request):
         request.addfinalizer(server.server_close)
         request.addfinalizer(server.shutdown)
         for provider, (var, _) in UPSTREAM.items():
-            monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_address[1]}/{provider}")
+            # any-llm wants fireworks' base to end in /v1, and the fireworks SDK puts it back on each path
+            v1 = "/v1" if provider == "fireworks" else ""
+            monkeypatch.setenv(var, f"http://127.0.0.1:{server.server_address[1]}/{provider}{v1}")
         for key in KEYS if os.environ.get("RECORD") != "1" else ():
             monkeypatch.setenv(key, "test")
     return start
