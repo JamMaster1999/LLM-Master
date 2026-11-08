@@ -1,7 +1,7 @@
 [
  {
   "request": {
-   "path": "/chat/completions",
+   "path": "/v1/chat/completions",
    "body": {
     "messages": [
      {
