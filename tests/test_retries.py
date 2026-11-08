@@ -7,7 +7,7 @@ import json
 import types
 
 import pytest
-from any_llm.exceptions import AnyLLMError, InvalidRequestError, ProviderError, RateLimitError
+from any_llm.exceptions import AnyLLMError, InvalidRequestError, RateLimitError
 from cases import ASK, CONFIGURED, GREET, LOOPS
 from conftest import cut, exchanges, failing, paced
 

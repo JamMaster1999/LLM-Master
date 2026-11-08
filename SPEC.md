@@ -130,8 +130,9 @@ Fallback (step 7), the same for every call and stream:
 
 - A call takes one candidate or a list, tried in order. An empty list raises `ValueError` before
   anything is sent.
-- When a candidate's error skips the retries or its fifth try fails, the next candidate starts
-  with a fresh retry budget. Every error moves on, typed or not. A cancelled call stops.
+- When a candidate's error skips the retries, its fifth try fails, or its next wait would pass the
+  2-minute budget, the next candidate starts afresh: five tries and its own 2 minutes of waits.
+  Every error moves on, typed or not. A cancelled call stops.
 - Each hop builds the request again for the new candidate, so history replays per its own origin
   rule (IO.md).
 - `attempts` holds one entry per candidate tried, in order, each with its own errors. The answering
