@@ -10,7 +10,7 @@ from conftest import failing
 
 from llm_master.config import UnsupportedField
 from llm_master.io.response import CutCall
-from llm_master.media import MissingMedia
+from llm_master.media import Media, MissingMedia
 from llm_master.types import Config, Model
 
 RATE_LIMITED = {"type": "error", "error": {"type": "rate_limit_error", "message": "Rate limited"}}
@@ -74,9 +74,37 @@ async def test_a_call_with_no_candidate_sends_nothing(recorded, llm):
         await llm.query([], GREET)
 
 
+async def plain(llm, candidates):
+    return await llm.query(candidates, GREET)
+
+
+async def streamed(llm, candidates):
+    s = await llm.query(candidates, GREET, stream=True)
+    assert [c["type"] async for c in s][-1] == "finish-step"
+    return s.response
+
+
+async def image(llm, candidates):
+    return await llm.image(candidates, DRAW)
+
+
+async def speech(llm, candidates):
+    return await llm.speech(candidates, "Say: hello there.")
+
+
+LITE = Model(provider="gemini", model="gemini-3.1-flash-lite")
+
+
 @pytest.mark.live
-async def test_a_model_the_provider_lacks_hands_off(llm):
-    r = await llm.query([Model(provider="openai", model="gpt-no-such-model"),
-                         Model(provider="gemini", model="gemini-3.1-flash-lite")], GREET)
-    first, _ = r.attempts
-    assert len(first.errors) == 1 and r.message.origin and r.message.origin.provider == "gemini"
+@pytest.mark.parametrize("call, candidates", [
+    (plain, [Model(provider="openai", model="gpt-no-such-model"), LITE]),
+    (streamed, [Model(provider="anthropic", model="claude-no-such-model"), LITE]),
+    (image, [Model(provider="gemini", model="gemini-no-such-image"), OPENAI_IMAGE]),  # gemini's filter is erratic
+    (speech, [Model(provider="gemini", model="gemini-no-such-tts"), Model(provider="openai", model="gpt-4o-mini-tts")]),
+], ids=["query", "stream", "image", "speech"])
+async def test_a_model_the_provider_lacks_hands_off(call, candidates, llm):
+    made = await call(llm, candidates)
+    first, second = made.attempts
+    assert len(first.errors) == 1 and not second.errors, first.errors
+    assert (second.provider, second.model) == (candidates[1].provider, candidates[1].model)
+    assert made.data if isinstance(made, Media) else made.message.content, "the next candidate answered nothing"
