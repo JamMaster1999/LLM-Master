@@ -69,8 +69,8 @@ class LLM:
         return await run(self, candidates, messages, stream, moderation)
 
     def async_query(self, candidates: Model | Sequence[Model], requests: Iterable[fanout.Request], *,
-                    concurrency: int | None = None) -> AsyncGenerator[tuple[int, Response | Exception], None]:
-        """Many query() calls at once, at most concurrency in flight (128 when unset). Yields (index, result) as
+                    concurrency: int = 250) -> AsyncGenerator[tuple[int, Response | Exception], None]:
+        """Many query() calls at once, at most concurrency in flight. Yields (index, result) as
         each request finishes: its Response, or the error it raised. One failure never stops the others.
 
         Leaving the loop early cancels the requests still running; inside contextlib.aclosing, the exit also

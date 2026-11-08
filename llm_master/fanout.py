@@ -20,7 +20,7 @@ class Request(TypedDict):
 
 
 async def run(llm: "LLM", candidates: Model | Sequence[Model], requests: Iterable[Request],
-              concurrency: int | None) -> AsyncGenerator[tuple[int, Response | Exception], None]:
+              concurrency: int) -> AsyncGenerator[tuple[int, Response | Exception], None]:
     requests, chain = list(requests), pipeline.chain(candidates)  # a batch's mistakes raise before anything is sent
     keys = Request.__required_keys__ | Request.__optional_keys__
     for request in requests:  # a dropped v1 key would change the answers
@@ -28,9 +28,9 @@ async def run(llm: "LLM", candidates: Model | Sequence[Model], requests: Iterabl
             raise ValueError(f"a request takes {sorted(Request.__required_keys__)}, and may take "
                              f"{sorted(Request.__optional_keys__)}, not {sorted(request)}: config and fallbacks "
                              "live on the candidates")
-    if concurrency is not None and concurrency < 1:  # 0 would hold every request forever
-        raise ValueError(f"concurrency is 1 or more, or None for 128, not {concurrency}")
-    gate = asyncio.Semaphore(128 if concurrency is None else concurrency)
+    if concurrency < 1:  # 0 would hold every request forever
+        raise ValueError(f"concurrency is 1 or more, not {concurrency}")
+    gate = asyncio.Semaphore(concurrency)
 
     async def one(index: int, request: Request) -> tuple[int, Response | Exception]:
         async with gate:

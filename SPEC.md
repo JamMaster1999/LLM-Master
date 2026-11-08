@@ -142,7 +142,7 @@ Fallback (step 7), the same for every call and stream:
 - When every candidate fails, the call raises the last candidate's last error, typed as a single
   candidate's would be. Notes on it list every earlier error, one per try.
 
-**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=None)` runs many `query()`
+**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=250)` runs many `query()`
 calls at once. It yields `(index, result)` as each request finishes: the request's position, and
 its `Response` or the error it raised after its last candidate. One failure never stops the
 others, so one unreadable image can't sink a batch.
@@ -156,7 +156,7 @@ async for index, result in llm.async_query(candidates, requests, concurrency=50)
 - Each request is a dict: `messages`, and `moderation`, False by default. Any other key raises
   `ValueError` before anything is sent: config and fallbacks live on the candidates, and a v1
   request's `kwargs` or `fallback_*` dropped silently would change the answers.
-- At most `concurrency` requests run at once, 128 when it's None; below 1 raises `ValueError`. The
+- At most `concurrency` requests run at once, 250 by default; below 1 raises `ValueError`. The
   rate limiter still gates every try.
 - Each request runs the whole pipeline: moderation, retries, fallback and cost. Its errors,
   validation and moderation included, are its result.
