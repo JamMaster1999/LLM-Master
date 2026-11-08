@@ -12,7 +12,7 @@ class Limiter:
     """At most per_minute tries start in any WINDOW seconds, per (provider, model); None means no limit."""
 
     def __init__(self, per_minute: int | None) -> None:
-        if per_minute is not None and per_minute < 1:  # 0 would hold every try forever
+        if per_minute is not None and per_minute < 1:  # a cap of 0 would let no try start
             raise ValueError(f"per_minute is 1 or more, or None for no limit, not {per_minute}")
         self._cap = per_minute
         # the last per_minute starts: a try may start once the oldest of them is a window old

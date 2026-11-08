@@ -3,8 +3,7 @@ from typing import get_args
 
 from genai_prices.types import ProviderID
 
-from llm_master.providers import API, PROVIDERS, SDK, ProviderName
-from llm_master.shapes import ProviderRow
+from llm_master.providers import API, PROVIDERS, SDK, ProviderName, ProviderRow
 
 
 def price_id(provider: ProviderName) -> str:

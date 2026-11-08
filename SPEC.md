@@ -29,8 +29,8 @@ On fireworks: GLM, DeepSeek and Kimi, at lower priority. Rules that only older m
 not written.
 
 **Providers (built).** providers.py is pure data: name-keyed rows, one field per line, no
-code. The rosters (`API`, `ProviderName`, `SDK`) sit at its top, and every type in
-the repo derives from them. shapes.py holds the row TypedDicts. registry.py holds `price_id()`
+code. The rosters (`API`, `ProviderName`, `SDK`) and the row's TypedDict sit at its top, and
+every type in the repo derives from them. registry.py holds `price_id()`
 and import-time asserts. The editor flags a bad row as you type; the asserts
 catch it at import. The page lists no models, so a new model works the day it ships. Unknown
 providers raise. vertexai uses any-llm's first-class provider with full GCP login; v1's express
@@ -70,7 +70,7 @@ lets at most 250 tries start in any 60 seconds per (provider, model), across eve
 that `LLM`. With no cap, the default, nothing waits.
 
 - A sliding window per (provider, model), shared by `query()`, streams, `image()` and `speech()`.
-  Providers count their limits per model too. One window for every model would make a fallback
+  Most providers count their limits per model too. One window for every model would make a fallback
   wait out its failed primary's tries: measured live on 2026-10-19, 250 calls whose primary
   failed at once waited 61 seconds for their fallback under one shared window of 250.
 - Every try waits for a slot in its model's window before it sends, retries and fallback hops
