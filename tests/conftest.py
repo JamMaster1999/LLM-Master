@@ -94,6 +94,19 @@ def cut(name: str, before: str, tail: str = "") -> list[dict]:
     return [{**first, "response": {**first["response"], "body": "".join(e + end for e in kept) + tail}}]
 
 
+def paced(steps: list[dict], pause: float) -> list[dict]:
+    """steps, each reply sent an event at a time, pause seconds before each: a slow provider, or a quiet one.
+    The stand-in stops waiting at teardown."""
+    return [{**e, "response": {**e["response"], "pause": pause}} for e in steps]
+
+
+def _events(payload: bytes) -> list[bytes]:
+    """payload in its stream's events, ends kept: a JSON body is one."""
+    end = b"\r\n\r\n" if b"\r\n\r\n" in payload else b"\n\n"
+    *events, rest = payload.split(end)
+    return [e + end for e in events] + ([rest] if rest else [])
+
+
 @pytest.fixture
 def recorded(provider_server, request):
     """Stands in for every provider, answering from the steps in order, and checks at teardown that each
@@ -108,6 +121,7 @@ def recorded(provider_server, request):
                                for step in steps for e in (exchanges(step) if isinstance(step, str) else step)]
         received: list[dict] = []
         recordings: dict[str, list[dict]] = {}
+        torn_down = threading.Event()
 
         def answer(handler: BaseHTTPRequestHandler, provider: str, path: str, body: bytes) -> None:
             kind = handler.headers.get("Content-Type", "")
@@ -136,9 +150,13 @@ def recorded(provider_server, request):
             handler.send_header("Content-Type", reply["type"])
             handler.send_header("Content-Length", str(len(payload)))
             handler.end_headers()
-            handler.wfile.write(payload)
+            for event in _events(payload) if "pause" in reply else [payload]:
+                if torn_down.wait(reply.get("pause", 0)):
+                    return
+                handler.wfile.write(event)
 
         provider_server(answer)
+        request.addfinalizer(torn_down.set)  # ahead of the server's close, which waits for every reply
 
         def check():
             for name, recording in recordings.items():

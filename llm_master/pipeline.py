@@ -19,6 +19,7 @@ from any_llm.exceptions import GatewayTimeoutError, ProviderError, RateLimitErro
 
 from llm_master.cost import price
 from llm_master.io.response import Attempt, CutCall, Usage
+from llm_master.providers import PROVIDERS
 from llm_master.types import Model
 
 if TYPE_CHECKING:
@@ -35,8 +36,10 @@ class CallReturn(Protocol):
 
 
 A = TypeVar("A", bound=CallReturn)
+T = TypeVar("T")
 TRIES = 5  # per candidate
-MINUTE = 60.0  # the longest a 429 waits: a per-minute limit clears within one
+BUDGET = 120.0  # the longest a candidate's waits between tries add up to
+QUIET = 600.0  # a genai try with no timeout set fails after this long without an item
 
 
 @dataclass
@@ -59,12 +62,13 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
     started = time.monotonic()
     candidate = chain[0]
     attempt = Attempt(candidate.provider, candidate.model, 0.0)
+    waited, quiet = 0.0, _quiet(candidate)  # waited counts only the pauses: not the tries, not the limiter
     for n in range(1, TRIES + 1):
         await llm.limiter.wait(candidate.provider, candidate.model)
         began, final = time.monotonic(), None  # an attempt's latency counts its tries, not the waits
         try:
             async with aclosing(once(candidate)) as items:
-                async for item in items:
+                while (item := await _next(items, quiet, candidate.provider)) is not None:
                     if isinstance(item, Final):
                         final = item
                     else:
@@ -73,8 +77,9 @@ async def stream(llm: "LLM", chain: list[Model], once: Callable[[Model], AsyncGe
             attempt.latency += time.monotonic() - began
             _unload(e)  # the error stays on the attempt; its request needn't
             attempt.errors.append(e)
-            if (pause := _pause(attempt.errors)) is None:
+            if (pause := _pause(e, n)) is None or waited + pause > BUDGET:
                 raise
+            waited += pause
             await asyncio.sleep(pause)
             continue
         assert final is not None, "a try yields its Final last"
@@ -99,6 +104,22 @@ async def run(llm: "LLM", chain: list[Model], once: Callable[[Model], Awaitable[
     raise AssertionError("stream() ends with a Final or raises")
 
 
+def _quiet(candidate: Model) -> float | None:
+    """genai sets no timeout of its own, and its timeout would cap a whole stream, so a genai candidate with none
+    set gets QUIET seconds for each item instead: its answer, or a stream's next chunk."""
+    unset = candidate.config.timeout is None
+    return QUIET if unset and PROVIDERS[candidate.provider]["sdk"] == "genai" else None
+
+
+async def _next(items: AsyncGenerator[T, None], quiet: float | None, provider: str) -> T | None:
+    """items' next item, None at its end, or a retryable ProviderError when it takes longer than quiet seconds."""
+    try:
+        async with asyncio.timeout(quiet):
+            return await anext(items, None)
+    except TimeoutError as e:
+        raise ProviderError(f"nothing came in {quiet:g} seconds", provider_name=provider) from e
+
+
 def _retryable(e: Exception) -> bool:
     """Transient: a rate limit, a gateway or upstream failure, or a provider fault that isn't a 4xx."""
     if isinstance(e, (RateLimitError, GatewayTimeoutError, UpstreamProviderError)):
@@ -107,31 +128,36 @@ def _retryable(e: Exception) -> bool:
     return isinstance(e, ProviderError) and not isinstance(e, CutCall) and not 400 <= (e.status_code or 0) < 500
 
 
-def _pause(errors: list[Exception]) -> float | None:
-    """Seconds before the next try, or None when the candidate stops: its last try, an error a retry would
-    repeat, a Retry-After past a minute, or a second 429 without one. errors holds every try's error so far."""
-    e, n = errors[-1], len(errors)  # every earlier try failed too, or the call would have answered
+def _pause(e: Exception, n: int) -> float | None:
+    """Seconds before try n + 1, after try n failed with e, or None when the candidate stops: its last try, or an
+    error a retry would repeat. A 429 waits as long as the provider asks; anything else, full jitter."""
     if n == TRIES or not _retryable(e):
         return None
-    if not isinstance(e, RateLimitError):
-        return random.uniform(0, 0.5 * 2 ** (n - 1))  # full jitter
-    if (after := _after(e)) is not None:
-        return after if after <= MINUTE else None  # a limit that outlasts the minute won't clear in time
-    blind = [x for x in errors if isinstance(x, RateLimitError) and _after(x) is None]
-    return MINUTE if len(blind) == 1 else None  # a per-minute limit clears in a minute; a spend cap never
+    if isinstance(e, RateLimitError) and (after := _after(e)) is not None:
+        return after
+    return random.uniform(0, 0.5 * 2 ** (n - 1))
 
 
 def _after(e: RateLimitError) -> float | None:
     """The provider's Retry-After in seconds, a number or an HTTP date; None when it sent none."""
-    if not e.retry_after:
+    if not (after := e.retry_after or _retry_delay(e.original_exception)):
         return None
     try:
-        return max(0.0, float(e.retry_after))
+        return max(0.0, float(after))
     except ValueError:
         try:
-            return max(0.0, (parsedate_to_datetime(e.retry_after) - datetime.now(timezone.utc)).total_seconds())
+            return max(0.0, (parsedate_to_datetime(after) - datetime.now(timezone.utc)).total_seconds())
         except (TypeError, ValueError):
             return None
+
+
+def _retry_delay(e: Exception | None) -> str | None:
+    """Gemini's Retry-After, which it sends in the 429's body as a RetryInfo's retryDelay, such as "20s". Remove
+    once any-llm reads it into retry_after: https://github.com/mozilla-ai/any-llm/pull/1622"""
+    body = getattr(e, "details", None)  # google-genai's error keeps its JSON body there
+    infos = body.get("error", {}).get("details", []) if isinstance(body, dict) else []
+    return next((i["retryDelay"].removesuffix("s") for i in infos
+                 if i.get("@type") == "type.googleapis.com/google.rpc.RetryInfo" and "retryDelay" in i), None)
 
 
 def _unload(e: BaseException) -> None:

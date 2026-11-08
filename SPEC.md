@@ -17,7 +17,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 3. **Call paths** — `query()` over completion / messages / responses, plus `image()` and `speech()` (Media below), streaming included for `query()`. The live seeds become tests here, and their captured responses become golden fixtures. Done.
 4. **Cost** — usage → dollars via genai-prices, attached as `response.cost`, streams included. Done.
 5. **Rate limiter** — a local sliding window per (provider, model), its per-minute cap set by the caller on `LLM`, wired in before retries. Done.
-6. **Retries** — a jittered, `retry_after`-aware loop around one candidate. Done.
+6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted or a typed error advances to the next.
 8. **async_query fan-out** — semaphore + progress callback over the finished single-call machinery. The v1 signature survives; consumers depend on it.
 9. **Telemetry** — PostHog events over the finished pipeline.
@@ -103,14 +103,20 @@ Retries (step 6), the same for every call and stream:
   image error) raises an `InvalidRequestError`, so the prompt isn't sent again.
 - Between tries, a random wait of up to 0.5 × 2ⁿ⁻¹ seconds before try n + 1 (full jitter), so
   7.5 seconds at most over a candidate's five tries.
-- A `RateLimitError` (a 429) waits longer, since a per-minute limit can take a minute to clear:
-  - with a `Retry-After` of 60 seconds or less, it waits that long and tries again. A longer one
-    ends the candidate's tries: that limit won't clear within the minute;
-  - without one, it waits 60 seconds and tries once more. A second 429 without `Retry-After` ends
-    the candidate's tries, because a limit that outlasts a minute, such as a spend cap, won't
-    clear in time.
+- A `RateLimitError` (a 429) waits as long as the provider asks:
+  - its `Retry-After`, or Gemini's `retryDelay`, which Gemini sends in the 429's body instead.
+    any-llm doesn't read `retryDelay` yet, so the pipeline does until
+    [mozilla-ai/any-llm#1622](https://github.com/mozilla-ai/any-llm/pull/1622) ships;
+  - without either, full jitter, like any other transient failure.
   - Checked live on 2026-10-19: Gemini sends no `Retry-After` and no rate-limit headers,
     Fireworks only `x-ratelimit-over-limit`, and Anthropic's spend-cap 429 no `retry-after`.
+- A candidate's waits between tries add up to 2 minutes at most. A wait that would go past that
+  ends its tries instead, so a `Retry-After` of 60 seconds allows three tries, and one of 300 ends
+  the candidate at once. Only the waits count, never the time inside a try or the limiter's.
+- A genai candidate (gemini, vertexai) with no `timeout` set fails a try after 600 seconds with
+  nothing new: no answer, or no next chunk of a stream. genai sets no timeout of its own, and its
+  `timeout` would cap a whole stream, cutting a long agent turn. The other SDKs already end a read
+  after 600 quiet seconds.
 - Every failed try's error lands, in order, on its candidate's `Attempt.errors`. There every
   error in its chain drops its frames' locals and the HTTP request and response the SDK kept, so a
   kept error holds no copy of the request and its media. Request ids, statuses and codes stay. An
