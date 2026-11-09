@@ -208,10 +208,14 @@ model, tokens, latency, cost, retry and fallback outcome, and errors.
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
 benchmark gates run live, outside the test suite, in `bench/gates.py`: `async_query` with 250
-requests in flight, plain and failing over, and streaming time to first token. Each sends the same
-requests straight through any-llm on the same transport, so the gap is our code. On 2026-10-19
-llm_master's p50 came within 0.1 seconds of any-llm's, at 250 connections in flight, and its first
-token came no later.
+requests in flight, and streaming time to first token. Each sends the same request bodies straight
+through the provider's own SDK on the same aiohttp transport, so the gap is any-llm's and ours.
+There are three workloads per provider: text, text with an image, and a follow-up to a saved turn.
+On 2026-11-08, on gpt-5.4-nano and claude-haiku-5-5:
+- llm_master's p50 came within 0.09 seconds of the SDK's in five of the six. Anthropic text came
+  in at +0.19 seconds, and at +0.05 over eight more runs. One path's own runs varied by up to 0.4.
+- Its p50 time to first token came within 0.06 seconds. The first call of a process is about 0.5
+  seconds slower, because it builds the provider's client.
 
 ## Not rebuilt
 
