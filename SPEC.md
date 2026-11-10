@@ -20,7 +20,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — a semaphore over the finished single-call machinery, yielding each result as its request finishes. Done.
-9. **Telemetry** — PostHog events over the finished pipeline.
+9. **Telemetry** — moved to the agent loop, where sessions and their messages are tracked.
 
 ## Decisions
 
@@ -142,8 +142,8 @@ Fallback (step 7), the same for every call and stream:
 - When every candidate fails, the call raises the last candidate's last error, typed as a single
   candidate's would be. Notes on it list every earlier error, one per try.
 
-**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=250)` runs many `query()`
-calls at once. It yields `(index, result)` as each request finishes: the request's position, and
+**Fan-out.** `llm.async_query(candidates, requests, *, concurrency=250, moderation=False)` runs
+many `query()` calls at once. It yields `(index, result)` as each request finishes: the request's position, and
 its `Response` or the error it raised after its last candidate. One failure never stops the
 others, so one unreadable image can't sink a batch.
 
@@ -153,9 +153,9 @@ async for index, result in llm.async_query(candidates, requests, concurrency=50)
         ...  # this request failed; the rest go on
 ```
 
-- Each request is a dict: `messages`, and `moderation`, False by default. Any other key raises
-  `ValueError` before anything is sent: config and fallbacks live on the candidates, and a v1
-  request's `kwargs` or `fallback_*` dropped silently would change the answers.
+- Each request is a message list, as `query()` takes. `moderation` applies to every request, as
+  on `query()`. Config and fallbacks live on the candidates, so a v1 request dict fails as that
+  request's result, a validation error, and nothing is sent.
 - At most `concurrency` requests run at once, 250 by default; below 1 raises `ValueError`. The
   rate limiter still gates every try.
 - Each request runs the whole pipeline: moderation, retries, fallback and cost. Its errors,

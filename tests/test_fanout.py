@@ -9,6 +9,7 @@ from contextlib import aclosing
 import pytest
 from any_llm.exceptions import InvalidRequestError
 
+from llm_master.config.moderation import Flagged
 from llm_master.io.response import Response
 from llm_master.types import Model
 
@@ -72,7 +73,7 @@ def echo(provider_server):
 
 
 def ask(*prompts: str) -> list:
-    return [{"messages": [{"role": "user", "content": p}]} for p in prompts]
+    return [[{"role": "user", "content": p}] for p in prompts]
 
 
 def answers(results: dict) -> dict:
@@ -99,17 +100,19 @@ async def test_closing_early_cancels_the_requests_still_running(echo, llm):
     assert await asyncio.to_thread(echo.until, lambda seen: seen["hung up"] == 2), "a slow request ran on"
 
 
-@pytest.mark.parametrize("candidates, requests, concurrency", [
-    (HAIKU, [*ask("hi"), {**ask("hi")[0], "kwargs": {"temperature": 0}}], 250),  # v1's config key
-    (HAIKU, [*ask("hi"), {"moderation": True}], 250),
-    ([], ask("hi"), 250),
-    (HAIKU, ask("hi"), 0),
-], ids=["v1-key", "no-messages", "no-candidate", "zero-concurrency"])
-async def test_a_malformed_batch_sends_nothing(candidates, requests, concurrency, recorded, llm):
+@pytest.mark.parametrize("candidates, concurrency", [([], 250), (HAIKU, 0)], ids=["no-candidate", "zero-concurrency"])
+async def test_a_malformed_batch_sends_nothing(candidates, concurrency, recorded, llm):
     recorded("nothing_sent")
     with pytest.raises(ValueError):
-        async for _ in llm.async_query(candidates, requests, concurrency=concurrency):
+        async for _ in llm.async_query(candidates, ask("hi"), concurrency=concurrency):
             pass
+
+
+async def test_moderation_checks_each_request(recorded, llm):
+    recorded("moderation_flagged")  # one exchange, the moderation call: teardown fails on a model call
+    results = {i: r async for i, r in llm.async_query(HAIKU, ask("I will hunt you down and kill you."),
+                                                      moderation=True)}
+    assert isinstance(results[0], Flagged), results
 
 
 @pytest.mark.live

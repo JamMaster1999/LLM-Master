@@ -25,7 +25,6 @@ import openai
 from PIL import Image as Pillow
 
 from llm_master.facade import LLM
-from llm_master.fanout import Request
 from llm_master.io.messages import Message, validate
 from llm_master.io.parts import Image
 from llm_master.query import build
@@ -137,10 +136,9 @@ def facade(per_minute: int | None = None) -> LLM:
 async def llm_master(name: str, candidates: Sequence[Model], histories: list[list[Message]], *,
                      per_minute: int | None = None) -> Run:
     llm, run = facade(per_minute), Run(name)
-    requests: list[Request] = [{"messages": h} for h in histories]
 
     async def work():
-        async for _, result in llm.async_query(candidates, requests, concurrency=N):
+        async for _, result in llm.async_query(candidates, histories, concurrency=N):
             if isinstance(result, Exception):
                 run.errors.append(type(result).__name__)
             else:

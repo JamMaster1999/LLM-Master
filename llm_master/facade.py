@@ -68,15 +68,17 @@ class LLM:
         """
         return await run(self, candidates, messages, stream, moderation)
 
-    def async_query(self, candidates: Model | Sequence[Model], requests: Iterable[fanout.Request], *,
-                    concurrency: int = 250) -> AsyncGenerator[tuple[int, Response | Exception], None]:
-        """Many query() calls at once, at most concurrency in flight. Yields (index, result) as
-        each request finishes: its Response, or the error it raised. One failure never stops the others.
+    def async_query(self, candidates: Model | Sequence[Model], requests: Iterable[Sequence[Message | dict]], *,
+                    concurrency: int = 250, moderation: bool = False
+                    ) -> AsyncGenerator[tuple[int, Response | Exception], None]:
+        """Many query() calls at once, one per request's messages, at most concurrency in flight. Yields (index,
+        result) as each request finishes: its Response, or the error it raised. One failure never stops the others.
+        moderation checks each request as query() would.
 
         To stop early, loop inside contextlib.aclosing: its exit cancels the requests still running and waits for
         them. A bare break cancels nothing while the generator is still held. See SPEC.md Fan-out.
         """
-        return fanout.run(self, candidates, requests, concurrency)
+        return fanout.run(self, candidates, requests, concurrency, moderation)
 
     async def image(self, candidates: Model | Sequence[Model], prompt: str, images: Sequence[Image] = ()) -> Media:
         """A new image, or an edit of the parent images. See SPEC.md Media."""
