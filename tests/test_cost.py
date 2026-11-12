@@ -2,6 +2,9 @@
 
 The expected dollars come from genai-prices itself, fed the token counts each recording reports.
 """
+import subprocess
+import sys
+
 import genai_prices
 import pytest
 from cases import DRAW, FIXTURES, GEMINI_IMAGE, LONG, OPENAI_IMAGE, parent
@@ -70,3 +73,26 @@ async def test_a_model_genai_prices_lacks_costs_none(recorded, llm):
     r = await llm.query(Model(provider="fireworks", model="accounts/fireworks/models/unpriced"),
                         [{"role": "user", "content": "Say hi."}])
     assert r.usage and r.cost is None
+
+
+PRICED_WITH_NO_FILE_LEFT = """
+import resource
+import llm_master.facade
+from llm_master.cost import price
+from llm_master.io.response import Usage
+resource.setrlimit(resource.RLIMIT_NOFILE, (64, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))
+held = []
+try:
+    while True:
+        held.append(open("/dev/null"))
+except OSError:
+    pass
+print(price(Usage(input=100, output=10), "openai", "gpt-5.6-luna"))
+"""
+
+
+def test_pricing_opens_no_file():
+    """A batch at the open-file limit still gets its cost: genai-prices' data loads with llm_master, not on the
+    first price()."""
+    done = subprocess.run([sys.executable, "-c", PRICED_WITH_NO_FILE_LEFT], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and float(done.stdout) > 0, done.stderr[-500:]

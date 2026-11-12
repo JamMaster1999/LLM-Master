@@ -171,7 +171,9 @@ async for index, result in llm.async_query(candidates, requests, concurrency=50)
   limit, so the pool never caps `concurrency` below 1000.
 - The process's open-file limit can. Each connection is a file, and a request that fails over holds
   about two for a few seconds. Under a limit of 256, macOS's default outside `uv run`, a batch of
-  250 failed a few requests with `OSError: Too many open files`. Check `ulimit -n` on the host.
+  250 failed a few requests with `OSError: Too many open files`. Accepted: Modal sets no such
+  limit. llm_master loads genai-prices' data at import, so the limit never fails a request after
+  it's answered and billed, only one that can't open its connection.
 
 **Money.** genai-prices converts usage to dollars, with its auto-refresh on. `price_id` in
 the provider row is the only pricing fact we keep. Batch calls apply the provider's 50%

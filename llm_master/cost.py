@@ -1,5 +1,10 @@
 """Usage to dollars, through genai-prices. See SPEC.md Money."""
 import genai_prices
+# genai-prices imports these on its first price. Here, at import, a batch at the open-file limit can't fail them
+import genai_prices.data  # noqa: F401
+import genai_prices.data_units  # noqa: F401
+import genai_prices.decompose  # noqa: F401
+import genai_prices.validation  # noqa: F401
 
 from llm_master.io.response import Usage
 from llm_master.providers import ProviderName
