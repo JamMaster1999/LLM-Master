@@ -20,7 +20,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — a semaphore over the finished single-call machinery, yielding each result as its request finishes. Done.
-9. **Telemetry** — moved to the agent loop, where sessions and their messages are tracked.
+9. **Telemetry** — none for now (Sina, 2026-11-13). The agent loop may add it, where sessions and their messages are tracked.
 
 ## Decisions
 
@@ -204,8 +204,9 @@ discount manually.
   - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
     no caller sets `service_tier` yet.
 
-**Telemetry.** PostHog is the only sink; Xano error reporting is dropped. Events carry
-model, tokens, latency, cost, retry and fallback outcome, and errors.
+**Telemetry.** None for now. v1's PostHog wrappers and its Xano error reporting are gone, and
+nothing replaces them yet. A caller that needs a record reads each `Response`'s `latency`,
+`cost`, `usage` and `attempts`.
 
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
