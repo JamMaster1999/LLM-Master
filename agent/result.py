@@ -2,6 +2,12 @@
 from dataclasses import dataclass, field
 
 
+def whole(text: str) -> str:
+    """The text with its split UTF-16 halves rejoined and a lone one replaced: JSON encoders and
+    providers refuse lone halves, and some tools' sources hand them over."""
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+
 class ToolError(Exception):
     """A failure the model caused and can fix; the model reads the message."""
 

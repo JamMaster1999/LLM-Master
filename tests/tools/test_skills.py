@@ -33,6 +33,15 @@ async def test_a_skill_comes_back_with_its_directory_and_files():
         "Relative paths in this skill are relative to the skill directory.\n</skill_content>")
 
 
+async def test_compiled_and_hidden_files_are_not_listed(tmp_path):
+    shutil.copytree(SKILLS / "greet", tmp_path / "greet")
+    for junk in ("scripts/__pycache__/greet.cpython-313.pyc", ".DS_Store"):
+        (tmp_path / "greet" / junk).parent.mkdir(exist_ok=True)
+        (tmp_path / "greet" / junk).write_bytes(b"")
+    loaded = await Toolbox("c", skills=tmp_path).run("skill", {"skill": "greet"})
+    assert "<skill_resources>\n<file>scripts/greet.py</file>\n</skill_resources>" in loaded.text()
+
+
 async def test_an_unknown_skill_is_an_error_result():
     result = await Toolbox("c", skills=SKILLS).run("skill", {"skill": "essay"})
     assert (result.content, result.error) == ("Unknown skill: essay. Available skills: greet, quiz.", True)

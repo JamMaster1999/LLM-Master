@@ -12,7 +12,8 @@ EXA_API = "https://api.exa.ai"
 SEARCH = {"type": "function", "function": {
     "name": "web_search",
     "description": "Search the web for up-to-date, relevant information. Describe the ideal page rather than listing "
-                   "keywords. Results are numbered; cite the ones you use as [n].",
+                   "keywords. Results are numbered; cite each one you use by its number, one number per bracket, "
+                   "as in [2] or [2][5].",
     "parameters": {"type": "object", "properties": {
         "query": {"type": "string", "description": "Natural language search query. Should be a semantically rich "
                   "description of the ideal page, not just keywords."},
@@ -26,7 +27,7 @@ FETCH = {"type": "function", "function": {
     "name": "fetch_url",
     "description": "Read the full contents of web pages you already have URLs for, such as pages returned by a search "
                    "or mentioned by the user. Only those URLs can be fetched; search for anything else. Pages are "
-                   "numbered like search results; cite them as [n].",
+                   "numbered like search results; cite them the same way, one number per bracket, as in [2] or [2][5].",
     "parameters": {"type": "object", "properties": {
         "urls": {"type": "array", "items": {"type": "string"}, "description": "Absolute URLs of the pages to read, "
                  "including the scheme. Pass several URLs to read them in a single call."},

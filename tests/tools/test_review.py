@@ -2,6 +2,7 @@
 import base64
 import io
 import uuid
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -76,3 +77,18 @@ async def test_an_image_or_a_pdf_goes_alone_once_reviewed(box):
     await box.run("review_file", {"path": "pages.pdf"})
     for path in ("chart.png", "pages.pdf"):
         assert [file.name for file in (await box.run("deliver_file", {"path": path})).files] == [path]
+
+
+async def test_a_deck_whose_text_has_emoji_is_reviewed(box):
+    """PDFium hands back some emoji as their two UTF-16 halves; a deck Gemini made broke the view."""
+    await box.sandbox.write("deck.pptx", (Path(__file__).parent.parent / "fixtures" / "emoji_deck.pptx").read_bytes())
+    assert not (await box.run("review_file", {"path": "deck.pptx"})).error
+    assert "🎯 Today's Target" in (await box.run("read", {"path": "deck.pptx"})).text()
+
+
+async def test_a_filled_forms_checkbox_shows_its_check(box):
+    """poppler 22 redrew a filled form's fields from their DA strings and lost the check."""
+    await box.sandbox.write("form.pdf", (Path(__file__).parent.parent / "fixtures" / "filled_form.pdf").read_bytes())
+    _, page = (await box.run("read", {"path": "form.pdf", "pages": "2"})).content
+    inside = Image.open(io.BytesIO(base64.b64decode(page["data"]))).convert("L").crop((120, 195, 136, 211))
+    assert min(inside.tobytes()) < 128  # the Agree box holds something dark: its check
