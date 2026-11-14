@@ -48,6 +48,11 @@ client per provider, so every call reuses its connection pool. Streams always re
 and can abort. `query()` never runs a tool: it returns the model's tool calls, and the loop
 belongs to the caller.
 
+**Imports.** A caller imports from the package's top level: `from llm_master import LLM, Model,
+Config, Message, Call`, the parts (`Text`, `Image`, `File`, `Audio`), what calls return
+(`Response`, `Usage`, `Stream`, `Media`) and the errors (`UnsupportedField`, `Flagged`,
+`PartError`, `MissingMedia`, `CutCall`). The submodules are internal and may move.
+
 **Media.** `query()` is conversation only: text and tool calls, no media out. Images and
 speech get their own calls, `image(candidates, prompt, images)` and `speech(candidates, text)`,
 on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns a
