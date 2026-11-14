@@ -302,14 +302,14 @@ comes back whole, numbered like a search result, and a failed page doesn't fail 
 edit sends the parent and the prompt together (SPEC.md, Media). A parent the edit endpoint doesn't
 take, such as HEIC or BMP, goes as JPEG, or as PNG when it's transparent. The image is saved under
 `images/` with a record beside it naming its parent, prompt and candidate. It reviews the image
-itself, since the image has reached the user already. Openai makes it alone until llm_master falls
-back (SPEC.md step 7); then gemini is the fallback.
+itself, since the image has reached the user already. Openai makes it, and gemini when openai
+fails (SPEC.md, Failures).
 
 ### generate_audio
 
 `generate_audio(text)` is one-shot speech with `speech()`, at most 4096 characters, OpenAI's limit.
-The audio is saved under `audio/` and goes to the user. Openai speaks it alone until llm_master falls
-back (SPEC.md step 7); then gemini is the fallback.
+The audio is saved under `audio/` and goes to the user. Openai speaks it, and gemini when openai
+fails (SPEC.md, Failures).
 
 ### review_file
 

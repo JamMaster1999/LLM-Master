@@ -19,10 +19,11 @@ from llm_master.io.parts import Image
 from llm_master.media import Media
 from llm_master.types import Model
 
-# the models core's media tests run live. gemini-3.1-flash-image and gemini-3.8-flash-tts join as
-# the fallbacks once llm_master falls back (SPEC.md step 7); until then a call takes one candidate
-IMAGE_MODELS = [Model(provider="openai", model="gpt-image-2")]
-SPEECH_MODELS = [Model(provider="openai", model="gpt-4o-mini-tts")]
+# the models core's media tests run live: openai's, then gemini's when openai fails (SPEC.md, Failures)
+IMAGE_MODELS = [Model(provider="openai", model="gpt-image-2"),
+                Model(provider="gemini", model="gemini-3.1-flash-image")]
+SPEECH_MODELS = [Model(provider="openai", model="gpt-4o-mini-tts"),
+                 Model(provider="gemini", model="gemini-3.8-flash-tts")]
 MAX_SPEECH = 4096  # characters, OpenAI's limit
 EDITABLE = ("PNG", "JPEG", "WEBP")  # what OpenAI's edit endpoint takes
 
