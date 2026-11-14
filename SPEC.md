@@ -2,7 +2,9 @@
 
 llm_master v2 is a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm),
 installed from PyPI. Old `main` stays frozen for existing consumers; this branch (`v2`)
-replaces everything. Before v2 becomes `main`, each v1 caller migrates or pins v1. A deploy
+replaces everything. Before v2 becomes `main`, each v1 caller migrates or pins v1: today
+`questions` (grade.py:135, whose Modal image installs `../llm_master/requirements.txt` on Python
+3.12, where v2's offline suite passes) and `grader-benchmark` (benchmark/fr_run.py:45). A deploy
 installs v2 as a package: the repo root holds `pyproject.toml`, the package sits in
 `llm_master/`, and there's no `requirements.txt`.
 
@@ -55,7 +57,7 @@ Config, Message, Call`, the parts (`Text`, `Image`, `File`, `Audio`), what calls
 
 **Media.** `query()` is conversation only: text and tool calls, no media out. Images and
 speech get their own calls, `image(candidates, prompt, images)` and `speech(candidates, text)`,
-on the same pipeline as `query()` — limiter, retries, fallback, cost, telemetry. Each returns a
+on the same pipeline as `query()` — limiter, retries, fallback, cost. Each returns a
 `Media`: the file's bytes, its mime type, the candidate that made it, usage, cost, attempts and
 latency. Gemini, Vertex AI and OpenAI make both; Anthropic and Fireworks raise
 `UnsupportedField`. A media candidate takes only `timeout` from its config. One that sets another
@@ -239,6 +241,10 @@ gpt-5.4-nano and claude-haiku-5-5, passed it everywhere:
 - llm_master's p50 time to first token came within 0.06 seconds. The first call of a process is
   about 0.5 seconds slower, because it builds the provider's client.
 
+One live test can flake: test_query.py's `test_a_saved_conversation_reads_the_cache[gemini]`
+needs Gemini's cache to hit, and under a full live run's 32 workers it sometimes misses. Alone it
+passes.
+
 ## Not rebuilt
 
 any-llm covers these natively, and the wrapper passes them through: tool schemas,
@@ -251,3 +257,7 @@ structured outputs, PDF and audio inputs, cache-token usage, typed errors
   llm_master, not under it. Coding gets its own design round.
 - Consumer migration is a later phase. Old main stays frozen until the last consumer moves.
 - A v2 README.
+- The any-llm bump. v2 pins 1.47.0; 1.48 to 1.50 change nothing llm_master uses (read 2026-11-13).
+  Bump once #1622 and #1649 ship, with their two follow-ups above in one go, then run the full
+  suite and the bench. Both fixes sit on the JamMaster1999/any-llm fork, on branches
+  `fix/gemini-retry-delay` and `fix/gemini-cached-audio`.
