@@ -2,7 +2,9 @@
 
 llm_master v2 is a lite wrapper around [any-llm](https://github.com/mozilla-ai/any-llm),
 installed from PyPI. Old `main` stays frozen for existing consumers; this branch (`v2`)
-replaces everything.
+replaces everything. Before v2 becomes `main`, each v1 caller migrates or pins v1. A deploy
+installs v2 as a package: the repo root holds `pyproject.toml`, the package sits in
+`llm_master/`, and there's no `requirements.txt`.
 
 Three documents split the law. GRAMMAR.md says how config code must be shaped. CONFIG.md
 rules on every config field. This file holds the build order and the project-wide decisions.
@@ -82,6 +84,10 @@ that `LLM`. With no cap, the default, nothing waits.
 - The window is local to one `LLM`, so other processes don't share it. A provider's 429 still
   surfaces typed, for the retries.
 - A cap below 1 raises `ValueError`, since nothing could ever start.
+- A dead primary under a cap delays its fallback. In `async_query`, each request retries the dead
+  model on its own, and those retries queue in its window: 250 requests at `per_minute=250`
+  reach the fallback after about 4 minutes, against about 8 seconds with no cap. Accepted (Sina,
+  2026-11-08), with no shared breaker; `attempts` and `latency` show it.
 
 **Failures.** SDK transport retries are off (`max_retries=0` at create, honored by all five
 providers); the wrapper owns all retries and fallback, below. A timeout expiry is a typed
@@ -106,7 +112,8 @@ Retries (step 6), the same for every call and stream:
 - A `RateLimitError` (a 429) waits as long as the provider asks:
   - its `Retry-After`, or Gemini's `retryDelay`, which Gemini sends in the 429's body instead.
     any-llm doesn't read `retryDelay` yet, so the pipeline does until
-    [mozilla-ai/any-llm#1622](https://github.com/mozilla-ai/any-llm/pull/1622) ships;
+    [mozilla-ai/any-llm#1622](https://github.com/mozilla-ai/any-llm/pull/1622) ships. Then
+    `pipeline._retry_delay` goes;
   - without either, full jitter, like any other transient failure.
   - Checked live on 2026-10-19: Gemini sends no `Retry-After` and no rate-limit headers,
     Fireworks only `x-ratelimit-over-limit`, and Anthropic's spend-cap 429 no `retry-after`.
@@ -201,12 +208,18 @@ discount manually.
   - A Gemini call with audio input and a cache hit costs None. any-llm drops Gemini's split of the
     cached tokens by modality, and on a model with its own cached-audio rate, such as
     gemini-3.1-flash-lite, genai-prices won't guess how much of the cache read was audio.
+    [mozilla-ai/any-llm#1649](https://github.com/mozilla-ai/any-llm/pull/1649) adds the split
+    as `cached_audio_tokens`. Once it ships, `Usage` takes it as `cache_audio_read`, and
+    `cost.py` passes it on as `cache_audio_read_tokens`.
   - OpenAI's flex and priority tiers price at the standard rate. genai-prices can price them, but
     no caller sets `service_tier` yet.
 
 **Telemetry.** None for now. v1's PostHog wrappers and its Xano error reporting are gone, and
 nothing replaces them yet. A caller that needs a record reads each `Response`'s `latency`,
-`cost`, `usage` and `attempts`.
+`cost`, `usage` and `attempts`. Whoever adds telemetry should name each failed try's wrapped
+SDK error (`original_exception`, else `__cause__`), so a timeout reads `ProviderError
+APITimeoutError`. The closed #24 and its branch `core/9-telemetry` hold the earlier PostHog
+design.
 
 **Tests.** Live-first: goldens pin request shapes, live calls prove behavior. Recorded provider
 exchanges replay offline and pin every request body; `RECORD=1` re-records them live. Two
