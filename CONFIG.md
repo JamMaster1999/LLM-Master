@@ -126,7 +126,7 @@ save → reload → next call is lossless by construction.
 - Write tools in openai's function format or as bare callables; append results as `tool`
   turns (IO.md). Callables normalize through any-llm's own `callable_to_tool()` — schema built
   from the signature and docstring. Mixing dicts and callables is fine.
-- Function tools only. Every tool is ours and the caller runs it (TOOLS.md). Provider-hosted
+- Function tools only. Every tool is the caller's, and the caller runs it. Provider-hosted
   tools — search, code execution, image generation, openai's custom tools, and the rest — fail
   validation, typed. Freeform input is a function tool with one string parameter.
 - completion: openai format is the native input; each provider's any-llm converter handles the
@@ -138,8 +138,8 @@ save → reload → next call is lossless by construction.
   results as `function_call_output` items).
 - Strict mode: when a tool leaves `strict` unset, openai's Responses API makes its schema strict
   where it can, and strict mode marks every parameter required, optional ones included. A caller
-  who wants optional parameters sets `"strict": false` on the tool, as the tools do (TOOLS.md),
-  and the pass-through law carries it. Completion stays non-strict unless asked.
+  who wants optional parameters sets `"strict": false` on the tool, and the pass-through law
+  carries it. Completion stays non-strict unless asked.
 - Scope boundary: `query()` never runs a tool. It returns the model's tool calls; executing and
   looping is the caller's job.
 - Recorded tool loops verify the loop end to end per provider (tests/test_query.py) — we read

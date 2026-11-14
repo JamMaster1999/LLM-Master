@@ -22,7 +22,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — a semaphore over the finished single-call machinery, yielding each result as its request finishes. Done.
-9. **Telemetry** — none for now (Sina, 2026-11-13). The agent loop may add it, where sessions and their messages are tracked.
+9. **Telemetry** — none for now (Sina, 2026-11-13). A caller may add it where it tracks sessions and their messages.
 
 ## Decisions
 
@@ -64,7 +64,7 @@ request, no history and no server state. Any provider can edit any provider's im
 
 Live-checked 2026-10-18: 
 * openai doubles the nucleus and keeps the rest; a gemini-made image edits cleanly on openai; gemini edits keep the image but understate the change. 
-* The media tools own the files and the lineage record (TOOLS.md). 
+* The caller keeps the files and their lineage record; `image()` and `speech()` return the bytes. 
 * OpenAI speech reports its usage only in its streamed format, which `speech()` asks for unless `extra` sets `stream_format`.
 
 **Rate limits.** We keep no table of the providers' limits: they differ per account and tier,
@@ -124,7 +124,7 @@ Retries (step 6), the same for every call and stream:
   try after 600 seconds with nothing new: no answer, or no next chunk of a stream. The timer wraps
   each read from the provider, so a stall mid-stream yields `reset-step` like any other failure.
   genai sets no timeout of its own, and its `timeout` would cap a whole stream, cutting a long
-  agent turn. The other SDKs already end a read after 600 quiet seconds.
+  answer short. The other SDKs already end a read after 600 quiet seconds.
 - Every failed try's error lands, in order, on its candidate's `Attempt.errors`. There every
   error in its chain drops its frames' locals and the HTTP request and response the SDK kept, so a
   kept error holds no copy of the request and its media. Request ids, statuses and codes stay. An
@@ -242,7 +242,7 @@ structured outputs, PDF and audio inputs, cache-token usage, typed errors
 
 ## Deferred
 
-- Provider-hosted tools are not supported. Every tool is ours (TOOLS.md) and runs beside
+- Provider-hosted tools are not supported. Every tool is the caller's and runs beside
   llm_master, not under it. Coding gets its own design round.
 - Consumer migration is a later phase. Old main stays frozen until the last consumer moves.
 - A v2 README.
