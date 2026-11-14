@@ -60,7 +60,9 @@ async def turn(llm: LLM, model: Model, conversation_id: str, conversation: Conve
             try:
                 stream = await llm.query(model, conversation.messages, stream=True)
                 async for chunk in stream:
-                    if chunk["type"] == "text-delta":
+                    if chunk["type"] == "reset-step":  # a failed try's text is dropped, as the browser drops it
+                        streamed = ""
+                    elif chunk["type"] == "text-delta":
                         streamed += chunk["delta"]
                     yield chunk
             except (GeneratorExit, asyncio.CancelledError):  # stopped mid-answer: keep the text the user saw

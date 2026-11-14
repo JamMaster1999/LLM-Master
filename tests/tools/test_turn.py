@@ -4,9 +4,12 @@ from contextlib import aclosing
 from typing import Any
 
 from agent.turn import INTERRUPTED, Conversation, turn, typed_urls
+# tests/conftest.py's, which pytest imports as conftest; pyright looks in tools' own
+from conftest import cut, exchanges  # pyright: ignore[reportAttributeAccessIssue]
 from llm_master.types import Config, Model
 
 MODEL = Model(provider="anthropic", model="claude-haiku-5-5", config=Config(system="Use the tools as the user asks."))
+COUNT = "Count from 1 to 50, one number per line."
 ASK = ("Use ask_user to ask me one question, which grade I teach, with the options Grade 9 and Grade 10. "
        "Then write one sentence for that grade.")
 
@@ -58,7 +61,7 @@ async def test_a_stop_mid_answer_keeps_the_text_the_user_saw(recorded, llm):
     recorded("turn_interrupted")
     conversation = Conversation()
     seen = ""
-    async with aclosing(turn(llm, MODEL, "c", conversation, text="Count from 1 to 50, one number per line.")) as chunks:
+    async with aclosing(turn(llm, MODEL, "c", conversation, text=COUNT)) as chunks:
         async for chunk in chunks:
             if isinstance(chunk, dict) and chunk["type"] == "text-delta":
                 seen += chunk["delta"]
@@ -68,6 +71,20 @@ async def test_a_stop_mid_answer_keeps_the_text_the_user_saw(recorded, llm):
     after = await run(llm, conversation, text="Go on.")
     answer = "".join(c["delta"] for c in after if c["type"] == "text-delta")
     assert answer.split()[0] == str(int(seen.split()[-1]) + 1), answer  # it counts on from the kept text
+
+
+async def test_a_stop_after_a_retry_keeps_only_the_new_try_s_text(recorded, llm):
+    recorded(cut("turn_interrupted", "message_delta"), exchanges("turn_interrupted")[:1])
+    conversation, reset, seen = Conversation(), False, ""
+    async with aclosing(turn(llm, MODEL, "c", conversation, text=COUNT)) as chunks:
+        async for chunk in chunks:
+            if isinstance(chunk, dict) and chunk["type"] == "reset-step":  # the first try broke off
+                reset = True
+            elif reset and isinstance(chunk, dict) and chunk["type"] == "text-delta":
+                seen = chunk["delta"]
+                break
+    kept = [(m.role, m.content) for m in conversation.messages[1:]]
+    assert seen and kept == [("assistant", seen), ("user", INTERRUPTED)], kept
 
 
 def test_typed_urls_leave_out_the_punctuation_around_them():

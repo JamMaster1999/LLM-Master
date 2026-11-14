@@ -123,7 +123,8 @@ save(conversation)
 - **Stopping**: closing or cancelling the turn cancels the running tools and answers every open
   call with `Stopped by the user.` A stop while the model answers keeps the text it streamed as
   the step's message, then adds a user message, `[Request interrupted by user]`, as Claude Code
-  does. Its reasoning and unfinished calls are dropped.
+  does. Its reasoning and unfinished calls are dropped, and so is a retried try's text, which
+  the browser drops at `reset-step`.
 - **Failure**: a provider's error raises, as in llm_master, and the caller sends the `error` chunk.
 
 ## The sandbox
