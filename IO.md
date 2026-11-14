@@ -339,12 +339,6 @@ sum, because Gemini sends a running total on every chunk.
   - The cost may be slightly weaker reasoning on later turns about the in-between progress text.
   - Gemini's implicit cache is unaffected (live-tested: a follow-up read 22.6k of 24.7k prompt
     tokens from cache across the rebuilt messages, the same as an identical repeat).
-- any-llm 1.37.0 drops Gemini's call ids, and Gemini then matches results to calls by position.
-  - Results sent in a different order from the calls come back swapped, with a 200
-    (live-tested).
-  - Fork PR #18 sends ids in both directions.
-  - Until it and PRs #17, #20, #21 and #22 are released upstream, llm_master installs any-llm from
-    a fork build that includes them.
 - Gemini and Vertex AI serve the same models but count as different origins, because AI Studio
   and Vertex reject each other's thought signatures.
 - Parts travel only as inline base64. Files above the inline limits would need a provider's Files
