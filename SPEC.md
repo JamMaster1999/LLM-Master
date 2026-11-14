@@ -24,7 +24,7 @@ spec doc — signatures, response types, stream events — implemented only afte
 6. **Retries** — a jittered, `retry_after`-aware loop around one candidate, its waits capped at 2 minutes. Done.
 7. **Fallback chains** — a loop over candidates. Retries exhausted, or any error that skips them, advances to the next. Done.
 8. **async_query fan-out** — a semaphore over the finished single-call machinery, yielding each result as its request finishes. Done.
-9. **Telemetry** — OpenTelemetry spans, off unless the caller turns them on (Sina, 2026-11-14). Designed, not built: Decisions, Telemetry.
+9. **Telemetry** — OpenTelemetry spans, on by default and saved only when a backend is attached (Sina, 2026-11-14). Designed, not built: Decisions, Telemetry.
 
 ## Decisions
 
@@ -224,18 +224,22 @@ discount manually.
 **Telemetry.** OpenTelemetry spans, designed and not yet built (Sina, 2026-11-14). It replaces
 v1's PostHog wrappers and the closed #24, which put PostHog itself in the library; its branch
 `core/9-telemetry` stays for reference.
-- llm_master depends only on `opentelemetry-api`, which does nothing until the caller installs
-  an SDK and an exporter. A library user who never asks pays nothing, and any backend works:
-  PostHog, Honeycomb, Datadog, Langfuse.
-- Off by default. The caller turns spans on as it turns on moderation, and message content has
-  a switch of its own, also off.
+- llm_master depends only on `opentelemetry-api`. Any backend can take the spans: PostHog,
+  Honeycomb, Datadog, Langfuse.
+- On by default. Spans are saved only when the caller attaches a backend; without one, they do
+  nothing and cost nothing.
+- One switch, per call, as moderation is: `telemetry=False` leaves that call out. Leaving the
+  argument out means on.
 - Each call is a span and each try a child span, named by OpenTelemetry's GenAI conventions
-  (`gen_ai.*`): provider, model, tokens, cost, latency, fallback, and each failed try's error with
-  its wrapped SDK error named (`original_exception`, else `__cause__`), so a timeout reads
+  (`gen_ai.*`): provider, model, tokens, cost, latency, fallback, and each failed try's error
+  with its wrapped SDK error named (`original_exception`, else `__cause__`), so a timeout reads
   `ProviderError APITimeoutError`.
-- With content on, a span holds the messages' text, tool calls and tool results' text. An image,
-  PDF or audio part is never recorded, only its type, mime type and size: parts hold their bytes
-  inline as base64, and PostHog rejects an export over 4 MB and drops a span over 8 MB.
+- A recorded call carries its messages' text: the prompts, the answer, tool calls and tool
+  results' text.
+- An attachment is never recorded. A short note stands in for it, from what the part already
+  holds: `[image/png, 412 KB]`, `[PDF report.pdf, 2.1 MB]`, `[audio/wav, 64 KB]`, its size
+  taken from the base64's length. Parts hold their bytes inline, and PostHog rejects an export
+  over 4 MB and drops a span over 8 MB.
 - The caller's own spans become the parents through OpenTelemetry's context, so no ids pass
   through llm_master. An agent loop's turns, steps and tool calls wrap its calls' spans.
 - PostHog ingests these spans directly: a `gen_ai.operation.name=chat` span becomes an
