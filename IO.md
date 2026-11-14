@@ -1,8 +1,8 @@
 # Messages, responses and streams
 
 This page defines the message format llm_master accepts, how each provider API receives it, the
-response a call returns, and the chunks a stream yields. Config fields are in CONFIG.md, code
-conventions in GRAMMAR.md, and tools in TOOLS.md.
+response a call returns, and the chunks a stream yields. Config fields are in CONFIG.md, and code
+conventions in GRAMMAR.md.
 
 The caller keeps a conversation as a list of messages in llm_master's format. On every call,
 llm_master converts that list into the format of the API it calls: Anthropic Messages, OpenAI
