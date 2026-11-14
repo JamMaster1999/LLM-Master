@@ -1,4 +1,5 @@
 """The skill tool: the listing in its description, a skill's instructions, and its files in the sandbox."""
+import shutil
 import uuid
 from pathlib import Path
 
@@ -74,3 +75,16 @@ async def box():
 async def test_bash_runs_a_skills_script_in_the_sandbox(box):
     result = await box.run("bash", {"command": "python /skills/greet/scripts/greet.py Ada"})
     assert result.content == "Hello, Ada!"
+
+
+@pytest.mark.live
+async def test_the_packages_the_skills_list_are_in_the_sandbox(tmp_path):
+    shutil.copytree(SKILLS / "greet", tmp_path / "greet")
+    (tmp_path / "apt.txt").write_text("# a JSON tool, for the test\njq  # and a comment after it\n")
+    (tmp_path / "requirements.txt").write_text("tabulate==0.9.0\n")
+    box = Toolbox(f"test-{uuid.uuid4().hex[:12]}", skills=tmp_path)
+    try:
+        result = await box.run("bash", {"command": "jq --version && python -c 'import tabulate'"})
+    finally:
+        await delete(box.sandbox.conversation_id)
+    assert not result.error, result.content
