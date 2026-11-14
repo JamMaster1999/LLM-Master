@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from llm_master.config import thinking, tool_choice, tools
 from llm_master.config.tool_choice import ToolChoice
+from llm_master.providers import API
 from llm_master.types import Config
 
 OPENAI_TOOLS = [{"type": "function", "function": {
@@ -28,7 +29,8 @@ def test_dicts_reshape_per_api():
 
 
 def test_callables_convert_then_reshape():
-    for api, name_key in (("messages", "input_schema"), ("responses", "parameters")):
+    cases: list[tuple[API, str]] = [("messages", "input_schema"), ("responses", "parameters")]
+    for api, name_key in cases:
         out = tools.translate([get_time], api)["tools"][0]
         assert out["name"] == "get_time"
         assert out["description"]

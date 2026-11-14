@@ -4,6 +4,7 @@ from typing import get_args
 import pytest
 from any_llm import AnyLLM
 from any_llm.exceptions import ProviderError
+from any_llm.types.messages import MessageResponse
 
 from llm_master.config import max_tokens, system, temperature, thinking, timeout
 from llm_master.providers import API
@@ -36,6 +37,7 @@ def test_system_placement():
 # --- live: one roomy call per API carrying all four, then one tiny call proving truncation ---
 
 S = "You are terse. End every reply with the word BANANA."
+# any-llm types acompletion's messages as list[dict | ChatCompletionMessage], so completion calls pass a fresh list
 HELLO = [{"role": "user", "content": "Say hello."}]
 STORY = [{"role": "user", "content": "Write a 500 word story about a lighthouse."}]
 
@@ -43,8 +45,8 @@ STORY = [{"role": "user", "content": "Write a 500 word story about a lighthouse.
 @pytest.mark.live
 async def test_completion_four_accepted_system_obeyed():
     llm = AnyLLM.create("gemini")
-    msgs = [{"role": "system", "content": S}, *HELLO]  # completion has no system param: prepend
-    r = await llm.acompletion(model="gemini-2.5-flash", messages=msgs,
+    # completion has no system param: prepend
+    r = await llm.acompletion(model="gemini-2.5-flash", messages=[{"role": "system", "content": S}, *HELLO],
                               **temperature.translate(0.2, "completion"),
                               **max_tokens.translate(300, "completion"),
                               **timeout.translate(60, "completion"),
@@ -61,6 +63,7 @@ async def test_messages_accepted_system_obeyed():
                             **timeout.translate(60, "messages"),
                             **thinking.translate("none", "messages"),
                             **system.translate(S, "messages"))
+    assert isinstance(r, MessageResponse)
     text = "".join(b.text for b in r.content if b.type == "text")
     assert "BANANA" in text
 
@@ -82,7 +85,7 @@ async def test_responses_accepted_system_obeyed():
 @pytest.mark.live
 async def test_completion_max_tokens_truncates():
     llm = AnyLLM.create("gemini")
-    r = await llm.acompletion(model="gemini-2.5-flash", messages=STORY,
+    r = await llm.acompletion(model="gemini-2.5-flash", messages=[*STORY],
                               **thinking.translate("none", "completion"), **max_tokens.translate(32, "completion"))
     assert r.choices[0].finish_reason == "length", r.choices[0].finish_reason
 
@@ -91,6 +94,7 @@ async def test_completion_max_tokens_truncates():
 async def test_messages_max_tokens_truncates():
     llm = AnyLLM.create("anthropic")
     r = await llm.amessages("claude-sonnet-5", STORY, 32, **thinking.translate("none", "messages"))
+    assert isinstance(r, MessageResponse)
     assert r.stop_reason == "max_tokens", r.stop_reason
 
 
@@ -106,7 +110,7 @@ async def test_responses_max_tokens_truncates():
 async def test_timeout_enforced_on_all_apis():
     # 1ms expires before any reply; all three dialects surface it as the typed ProviderError
     with pytest.raises(ProviderError):
-        await AnyLLM.create("gemini").acompletion(model="gemini-2.5-flash", messages=HELLO,
+        await AnyLLM.create("gemini").acompletion(model="gemini-2.5-flash", messages=[*HELLO],
                                                   **timeout.translate(0.001, "completion"))
     with pytest.raises(ProviderError):
         await AnyLLM.create("anthropic").amessages("claude-sonnet-5", HELLO, 300,

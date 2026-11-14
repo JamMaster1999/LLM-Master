@@ -1,6 +1,7 @@
 """tool_choice translation: golden shapes for all three APIs, live obedience checks."""
 import pytest
 from any_llm import AnyLLM
+from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
 
 from llm_master.config import thinking, tool_choice, tools
@@ -68,6 +69,7 @@ def test_empty_says_nothing_and_none_forbids_only():
 
 # --- live: require get_time on a weather question — only obedience proves the param landed ---
 
+# any-llm types acompletion's messages as list[dict | ChatCompletionMessage], so completion calls pass a fresh list
 Q = [{"role": "user", "content": "What's the weather in Toronto?"}]
 
 # both target shapes come from the tools translation, so these live tests prove it too
@@ -108,7 +110,7 @@ async def test_responses_required_subset_obeyed():
 @pytest.mark.live
 async def test_completion_gemini_required_single_obeyed():
     llm = AnyLLM.create("gemini")
-    r = await llm.acompletion(model="gemini-2.5-flash", messages=Q, tools=COMPLETION_TOOLS, max_tokens=1000,
+    r = await llm.acompletion(model="gemini-2.5-flash", messages=[*Q], tools=COMPLETION_TOOLS, max_tokens=1000,
                               **thinking.translate("none", "completion"),
                               **tool_choice.translate(ToolChoice(mode="required", only="get_time"), "completion"))
     called = [tc.function.name for tc in (r.choices[0].message.tool_calls or [])]
@@ -118,7 +120,7 @@ async def test_completion_gemini_required_single_obeyed():
 @pytest.mark.live
 async def test_completion_gemini_required_subset_obeyed():
     llm = AnyLLM.create("gemini")
-    r = await llm.acompletion(model="gemini-2.5-flash", messages=Q, tools=COMPLETION_TOOLS, max_tokens=1000,
+    r = await llm.acompletion(model="gemini-2.5-flash", messages=[*Q], tools=COMPLETION_TOOLS, max_tokens=1000,
                               **thinking.translate("none", "completion"),
                               **tool_choice.translate(ToolChoice(mode="required", only=["get_time", "get_news"]),
                                                       "completion"))
@@ -132,6 +134,7 @@ async def test_messages_required_single_obeyed():
     r = await llm.amessages("claude-sonnet-5", Q, 1000, tools=MESSAGES_TOOLS,
                             **thinking.translate("none", "messages"),
                             **tool_choice.translate(ToolChoice(mode="required", only="get_time"), "messages"))
+    assert isinstance(r, MessageResponse)
     called = [b.name for b in r.content if b.type == "tool_use"]
     # anthropic guarantees inclusion, not exclusivity (live-observed: it may add parallel calls)
     assert "get_time" in called, f"required get_time, got {called}"
@@ -144,6 +147,7 @@ async def test_messages_required_plus_no_parallel_is_exclusive():
                             **thinking.translate("none", "messages"),
                             **tool_choice.translate(
                                 ToolChoice(mode="required", only="get_time", parallel=False), "messages"))
+    assert isinstance(r, MessageResponse)
     called = [b.name for b in r.content if b.type == "tool_use"]
     assert called == ["get_time"], f"required + parallel=False must yield exactly one call, got {called}"
 
@@ -155,5 +159,6 @@ async def test_messages_required_subset_becomes_any():
                             **thinking.translate("none", "messages"),
                             **tool_choice.translate(
                                 ToolChoice(mode="required", only=["get_weather", "get_time"]), "messages"))
+    assert isinstance(r, MessageResponse)
     called = [b.name for b in r.content if b.type == "tool_use"]
     assert called, "any must force some tool call"

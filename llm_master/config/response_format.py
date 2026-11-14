@@ -5,6 +5,7 @@ Format(type="json") = valid JSON, any shape. Format(type="schema", schema=X) = t
 exactly, as a pydantic class or a json-schema dict. Format(type="text") = plain text — every
 provider's default, so it emits nothing. None = unset.
 """
+import builtins
 from typing import Any, Literal, assert_never
 
 from anthropic import transform_schema
@@ -17,7 +18,8 @@ from llm_master.providers import API
 
 class Format(BaseModel, extra="forbid", populate_by_name=True):
     type: Literal["text", "json", "schema"]
-    schema_: type | dict[str, Any] | None = Field(default=None, alias="schema")  # "schema" shadows a BaseModel attr
+    # builtins.type: the field above shadows the name here; "schema" shadows a BaseModel attr
+    schema_: builtins.type | dict[str, Any] | None = Field(default=None, alias="schema")
 
     @model_validator(mode="after")
     def _schema_matches_type(self):
